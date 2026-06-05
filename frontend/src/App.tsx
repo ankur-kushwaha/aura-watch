@@ -24,6 +24,20 @@ interface VideoClip {
   summary: string;
   duration: number;
   camera: string;
+  deviceId?: string;
+}
+
+interface EdgeDevice {
+  id: string;
+  deviceId: string;
+  name: string;
+  cameraType: 'webcam' | 'rtsp';
+  streamUrl: string;
+  enabled: boolean;
+  status: string;
+  lastHeartbeat: string;
+  motionThreshold: number;
+  pixelChangeThreshold: number;
 }
 
 interface CameraConfig {
@@ -31,6 +45,8 @@ interface CameraConfig {
   type: 'webcam' | 'rtsp';
   streamUrl: string;
   enabled: boolean;
+  motionThreshold?: number;
+  pixelChangeThreshold?: number;
 }
 
 interface RagResponseClip {
@@ -48,13 +64,18 @@ const WS_BASE = 'ws://localhost:5000';
 
 function App() {
   // App States
+  const [devices, setDevices] = useState<EdgeDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  
   const [config, setConfig] = useState<CameraConfig>({
     name: 'Macbook Air Camera',
     type: 'webcam',
     streamUrl: '0',
     enabled: false,
+    motionThreshold: 25,
+    pixelChangeThreshold: 0.02,
   });
-  const [status, setStatus] = useState<string>('Idle');
+  const [status, setStatus] = useState<string>('Offline');
   const [motionActive, setMotionActive] = useState<boolean>(false);
   const [motionRatio, setMotionRatio] = useState<number>(0);
   const [logs, setLogs] = useState<{ message: string; timestamp: string }[]>([]);
@@ -76,13 +97,16 @@ function App() {
   // WebSocket Ref
   const wsRef = useRef<WebSocket | null>(null);
 
-  const fetchConfig = async () => {
+  const fetchDevices = async (selectFirst = false) => {
     try {
-      const res = await fetch(`${API_BASE}/config`);
+      const res = await fetch(`${API_BASE}/devices`);
       const data = await res.json();
-      setConfig(data);
+      setDevices(data);
+      if (data.length > 0 && (selectFirst || !selectedDeviceId)) {
+        setSelectedDeviceId(data[0].deviceId);
+      }
     } catch (err) {
-      console.error('Failed to fetch config', err);
+      console.error('Failed to fetch devices', err);
     }
   };
 
@@ -107,6 +131,13 @@ function App() {
     const ws = new WebSocket(WS_BASE);
     wsRef.current = ws;
 
+    ws.onopen = () => {
+      console.log('WebSocket open. Subscribing to selected device...');
+      if (selectedDeviceId) {
+        ws.send(JSON.stringify({ type: 'subscribe_device', deviceId: selectedDeviceId }));
+      }
+    };
+
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
@@ -114,7 +145,23 @@ function App() {
         case 'status':
           setStatus(data.status);
           if (data.cameraConfig) {
-            setConfig(data.cameraConfig);
+            const cfg = data.cameraConfig;
+            setConfig({
+              name: cfg.name,
+              type: cfg.cameraType,
+              streamUrl: cfg.streamUrl,
+              enabled: cfg.enabled,
+              motionThreshold: cfg.motionThreshold,
+              pixelChangeThreshold: cfg.pixelChangeThreshold,
+            });
+            // Update device list status locally
+            setDevices((prev) =>
+              prev.map((d) =>
+                d.deviceId === cfg.deviceId
+                  ? { ...d, status: data.status, name: cfg.name, cameraType: cfg.cameraType, streamUrl: cfg.streamUrl, enabled: cfg.enabled, motionThreshold: cfg.motionThreshold, pixelChangeThreshold: cfg.pixelChangeThreshold }
+                  : d
+              )
+            );
           }
           break;
         case 'motion_state':
@@ -126,7 +173,6 @@ function App() {
           break;
         case 'new_clip':
           setClips((prev) => [data.clip, ...prev]);
-          // If no clip is currently selected, highlight this new one
           setSelectedClip(data.clip);
           break;
         case 'frame':
@@ -147,29 +193,44 @@ function App() {
     };
   };
 
-  // Fetch initial config and clips
+  // Fetch initial data
   useEffect(() => {
     Promise.resolve().then(() => {
-      fetchConfig();
+      fetchDevices(true);
       fetchClips();
     });
   }, []);
 
-  // Scroll to bottom of terminal internally without scrolling the main window
+  // Sync WS subscription when device changes
   useEffect(() => {
-    if (terminalContainerRef.current) {
-      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
-    }
-  }, [logs]);
+    if (!selectedDeviceId) return;
 
-  // Scroll to bottom of chat internally without scrolling the main window
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    // Load initial device details into config state
+    const dev = devices.find((d) => d.deviceId === selectedDeviceId);
+    if (dev) {
+      setConfig({
+        name: dev.name,
+        type: dev.cameraType,
+        streamUrl: dev.streamUrl,
+        enabled: dev.enabled,
+        motionThreshold: dev.motionThreshold,
+        pixelChangeThreshold: dev.pixelChangeThreshold,
+      });
+      setStatus(dev.status);
     }
-  }, [chatHistory]);
 
-  // Establish WebSocket connection
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      // Clear logs and canvas for new stream
+      setLogs([]);
+      setLatestFrame(null);
+      setMotionActive(false);
+      setMotionRatio(0);
+      
+      wsRef.current.send(JSON.stringify({ type: 'subscribe_device', deviceId: selectedDeviceId }));
+    }
+  }, [selectedDeviceId]);
+
+  // Establish initial WebSocket connection
   useEffect(() => {
     connectWS();
     return () => {
@@ -177,14 +238,25 @@ function App() {
     };
   }, []);
 
+  // Scroll logs and chat to bottom
+  useEffect(() => {
+    if (terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatHistory]);
+
   // Reset live feed frame when monitoring is disabled
   useEffect(() => {
-    if (!config.enabled) {
-      Promise.resolve().then(() => {
-        setLatestFrame(null);
-      });
+    if (!config.enabled || status === 'Offline') {
+      setLatestFrame(null);
     }
-  }, [config.enabled]);
+  }, [config.enabled, status]);
 
   // Render base64 grayscale frame to the canvas
   useEffect(() => {
@@ -221,28 +293,49 @@ function App() {
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedDeviceId) return;
+
     try {
-      const res = await fetch(`${API_BASE}/config`, {
+      const res = await fetch(`${API_BASE}/devices/${selectedDeviceId}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify({
+          name: config.name,
+          cameraType: config.type,
+          streamUrl: config.streamUrl,
+          enabled: config.enabled,
+          motionThreshold: config.motionThreshold !== undefined ? Number(config.motionThreshold) : 25,
+          pixelChangeThreshold: config.pixelChangeThreshold !== undefined ? Number(config.pixelChangeThreshold) : 0.02,
+        }),
       });
       const data = await res.json();
-      setConfig(data.config);
+      setConfig({
+        name: data.config.name,
+        type: data.config.cameraType,
+        streamUrl: data.config.streamUrl,
+        enabled: data.config.enabled,
+        motionThreshold: data.config.motionThreshold,
+        pixelChangeThreshold: data.config.pixelChangeThreshold,
+      });
+      fetchDevices();
     } catch (err) {
       console.error('Failed to update config', err);
     }
   };
 
   const handleToggleMonitoring = async () => {
+    if (!selectedDeviceId) return;
     const updatedConfig = { ...config, enabled: !config.enabled };
     setConfig(updatedConfig);
     try {
-      await fetch(`${API_BASE}/config`, {
+      await fetch(`${API_BASE}/devices/${selectedDeviceId}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedConfig),
+        body: JSON.stringify({
+          enabled: updatedConfig.enabled,
+        }),
       });
+      fetchDevices();
     } catch (err) {
       console.error('Failed to toggle monitoring', err);
     }
@@ -305,7 +398,6 @@ function App() {
     }
   };
 
-  // Helper to get relative timeline label
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleString();
@@ -327,18 +419,20 @@ function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          {/* Active Status Display */}
-          <div className={`status-indicator ${status.toLowerCase().replace(' ', '')}`}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor', display: 'inline-block' }}></span>
-            {status}
-          </div>
+          {selectedDeviceId && (
+            <div className={`status-indicator ${status.toLowerCase().replace(' ', '')}`}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor', display: 'inline-block' }}></span>
+              {status}
+            </div>
+          )}
 
           <button 
             onClick={handleToggleMonitoring}
-            className={`btn ${config.enabled ? 'btn-primary' : 'btn-secondary'}`}
+            className={`btn ${config.enabled && status !== 'Offline' ? 'btn-primary' : 'btn-secondary'}`}
             style={{ fontWeight: 600 }}
+            disabled={!selectedDeviceId || status === 'Offline'}
           >
-            {config.enabled ? (
+            {config.enabled && status !== 'Offline' ? (
               <>
                 <Activity size={16} /> Disable Monitor
               </>
@@ -354,10 +448,80 @@ function App() {
       {/* DASHBOARD LAYOUT */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.2fr)', gap: '24px' }}>
         
-        {/* LEFT COLUMN: CAMERA & ARCHIVE */}
+        {/* LEFT COLUMN: DEVICES & CAMERA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
-          {/* CAMERA stream / STATUS MONITOR */}
+          {/* DEVICE SELECTOR PANEL */}
+          <div className="glass-panel" style={{ padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Cpu size={18} color="var(--primary)" /> Registered Edge Devices
+              </h2>
+              <button 
+                onClick={() => fetchDevices()} 
+                className="btn btn-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.75rem', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <RefreshCw size={12} /> Refresh List
+              </button>
+            </div>
+
+            {devices.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: '16px', border: '1px dashed var(--border-glass)', borderRadius: '8px' }}>
+                No edge devices registered. Run the edge agent script on a device to register.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  {devices.map((dev) => {
+                    const isSelected = dev.deviceId === selectedDeviceId;
+                    const isOnline = dev.status !== 'Offline';
+                    const statusColor = 
+                      dev.status === 'Monitoring' ? 'var(--success)' :
+                      dev.status === 'Recording' ? 'var(--danger)' :
+                      dev.status === 'Processing Video' || dev.status === 'Processing' ? 'var(--primary)' :
+                      dev.status === 'Idle' ? 'var(--secondary)' : 'var(--text-muted)';
+                    
+                    return (
+                      <button
+                        key={dev.deviceId}
+                        onClick={() => setSelectedDeviceId(dev.deviceId)}
+                        className={`glass-panel interactive ${isSelected ? 'active' : ''}`}
+                        style={{ 
+                          padding: '10px 14px', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '10px', 
+                          cursor: 'pointer',
+                          border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-glass)',
+                          background: isSelected ? 'rgba(124, 58, 237, 0.1)' : 'rgba(255, 255, 255, 0.02)',
+                          borderRadius: '10px',
+                          textAlign: 'left',
+                          flex: '1 1 calc(50% - 10px)',
+                          minWidth: '200px'
+                        }}
+                      >
+                        <span style={{ 
+                          width: '8px', 
+                          height: '8px', 
+                          borderRadius: '50%', 
+                          background: statusColor, 
+                          display: 'inline-block',
+                          boxShadow: isOnline && dev.status !== 'Idle' ? `0 0 8px ${statusColor}` : 'none'
+                        }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{dev.name}</div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>ID: {dev.deviceId} • {dev.status}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* CAMERA FEED */}
           <div className="glass-panel" style={{ padding: '20px', position: 'relative' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -374,14 +538,14 @@ function App() {
             {/* Video Feed Wrapper */}
             <div style={{ background: '#090d16', borderRadius: '12px', height: '240px', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative', overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
               
-              {config.enabled && (status === 'Monitoring' || status === 'Recording' || status === 'Processing Video') ? (
+              {selectedDeviceId && status !== 'Offline' && config.enabled ? (
                 <div style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                   {status === 'Recording' ? (
                     <div style={{ position: 'absolute', zIndex: 2, background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(244,63,94,0.4)', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
                       <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)', display: 'inline-block', animation: 'pulse-red 0.8s infinite' }}></span>
                       <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'white', letterSpacing: '0.05em' }}>RECORDING FOOTAGE...</span>
                     </div>
-                  ) : status === 'Processing Video' ? (
+                  ) : status === 'Processing Video' || status === 'Processing' ? (
                     <div style={{ position: 'absolute', zIndex: 2, background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(124,58,237,0.4)', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
                       <RefreshCw size={12} className="animate-spin" color="var(--primary)" />
                       <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'white', letterSpacing: '0.05em' }}>SUMMARIZING RECORDING...</span>
@@ -401,15 +565,17 @@ function App() {
                         <RefreshCw size={36} color="var(--primary)" />
                       </div>
                       <p style={{ fontSize: '0.9rem' }}>Initializing Live Stream...</p>
-                      <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Connecting to camera device</p>
+                      <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Connecting to edge camera device</p>
                     </div>
                   )}
                 </div>
               ) : (
                 <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                   <Camera size={36} color="var(--text-muted)" style={{ marginBottom: '12px' }} />
-                  <p style={{ fontSize: '0.9rem' }}>Monitoring Inactive</p>
-                  <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Enable monitoring above to view feed</p>
+                  <p style={{ fontSize: '0.9rem' }}>{status === 'Offline' ? 'Device Offline' : 'Monitoring Inactive'}</p>
+                  <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>
+                    {status === 'Offline' ? 'Start the edge agent to connect' : 'Enable monitoring above to view feed'}
+                  </p>
                 </div>
               )}
 
@@ -420,7 +586,7 @@ function App() {
             </div>
             
             {/* Motion sensitivity bar */}
-            {config.enabled && (
+            {selectedDeviceId && status !== 'Offline' && config.enabled && (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
                   <span>Frame Pixel Diff Activity:</span>
@@ -436,7 +602,7 @@ function App() {
           {/* STREAM CONFIGURATION */}
           <div className="glass-panel" style={{ padding: '20px' }}>
             <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <Settings size={18} color="var(--secondary)" /> Stream Configuration
+              <Settings size={18} color="var(--secondary)" /> Configure Selected Edge Agent
             </h2>
             <form onSubmit={handleConfigSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -448,6 +614,7 @@ function App() {
                     onChange={(e) => setConfig({ ...config, name: e.target.value })}
                     placeholder="E.g., Office Entry"
                     required
+                    disabled={!selectedDeviceId}
                   />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -455,8 +622,9 @@ function App() {
                   <select 
                     value={config.type}
                     onChange={(e) => setConfig({ ...config, type: e.target.value as 'webcam' | 'rtsp' })}
+                    disabled={!selectedDeviceId}
                   >
-                    <option value="webcam">Mac/Local Webcam</option>
+                    <option value="webcam">Local Device Camera / Webcam</option>
                     <option value="rtsp">RTSP Network Stream</option>
                   </select>
                 </div>
@@ -464,19 +632,53 @@ function App() {
 
               {config.type === 'rtsp' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>RTSP URL</label>
+                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>RTSP Stream URL</label>
                   <input 
                     type="text" 
                     value={config.streamUrl}
                     onChange={(e) => setConfig({ ...config, streamUrl: e.target.value })}
                     placeholder="rtsp://username:password@ip:port/h264"
                     required
+                    disabled={!selectedDeviceId}
                   />
                 </div>
               )}
 
-              <button type="submit" className="btn btn-secondary" style={{ width: 'fit-content', alignSelf: 'flex-end', fontSize: '0.85rem' }}>
-                Apply Settings
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Motion Detector Threshold (0-255)</label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    max="255"
+                    value={config.motionThreshold || 25}
+                    onChange={(e) => setConfig({ ...config, motionThreshold: parseInt(e.target.value) || 25 } as any)}
+                    required
+                    disabled={!selectedDeviceId}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Pixel Change Ratio (0.01 - 1.00)</label>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    min="0.01"
+                    max="1.00"
+                    value={config.pixelChangeThreshold || 0.02}
+                    onChange={(e) => setConfig({ ...config, pixelChangeThreshold: parseFloat(e.target.value) || 0.02 } as any)}
+                    required
+                    disabled={!selectedDeviceId}
+                  />
+                </div>
+              </div>
+
+              <button 
+                type="submit" 
+                className="btn btn-secondary" 
+                style={{ width: 'fit-content', alignSelf: 'flex-end', fontSize: '0.85rem' }}
+                disabled={!selectedDeviceId}
+              >
+                Apply Configuration
               </button>
             </form>
           </div>
@@ -488,7 +690,9 @@ function App() {
             </h2>
             <div className="terminal-log" ref={terminalContainerRef}>
               {logs.length === 0 ? (
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Waiting for system events...</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                  {selectedDeviceId ? 'Waiting for device events...' : 'Select a device to view logs.'}
+                </div>
               ) : (
                 logs.map((log, index) => (
                   <div key={index} className="log-entry">
@@ -626,7 +830,7 @@ function App() {
               ) : (
                 chatHistory.map((chat, idx) => (
                   <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignSelf: chat.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
-                    <div style={{ 
+                     <div style={{ 
                       background: chat.role === 'user' ? 'linear-gradient(135deg, var(--primary) 0%, #6d28d9 100%)' : 'rgba(255,255,255,0.04)',
                       border: chat.role === 'user' ? 'none' : '1px solid var(--border-glass)',
                       color: 'var(--text-primary)',
@@ -759,7 +963,7 @@ function App() {
               )}
               {isAsking && (
                 <div style={{ alignSelf: 'flex-start', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)', padding: '10px 14px', borderRadius: '12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Searching vectors and summarizing...
+                  <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Searching vectors and answering...
                 </div>
               )}
             </div>

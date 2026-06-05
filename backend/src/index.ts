@@ -11,9 +11,8 @@ dotenv.config();
 
 import clipsRouter from './routes/clips';
 import ragRouter from './routes/rag';
+import devicesRouter, { registerOnConfigUpdated, registerOnClipUploaded } from './routes/devices';
 import { initQdrant, upsertClipVector } from './services/qdrant';
-import { MotionDetector } from './camera/motion-detector';
-import { recordClip, stopActiveRecording } from './camera/recorder';
 import { summarizeVideo, generateTextEmbedding } from './services/gemini';
 import prisma from './services/db';
 
@@ -39,213 +38,68 @@ app.use('/api/videos', express.static(VIDEO_DIR));
 // Mount routes
 app.use('/api/clips', clipsRouter);
 app.use('/api/rag', ragRouter);
+app.use('/api/devices', devicesRouter);
 
-// WebSocket Connections
-const clients = new Set<WebSocket>();
+// WebSocket Maps
+// Maps deviceId -> WebSocket connection
+const activeDevices = new Map<string, WebSocket>();
+// Maps UI WebSocket -> deviceId they are subscribed to
+const uiSubscriptions = new Map<WebSocket, string>();
 
-wss.on('connection', (ws: WebSocket) => {
-  clients.add(ws);
-  console.log(`[WS] Client connected. Total: ${clients.size}`);
-  
-  // Send initial status
-  ws.send(JSON.stringify({ 
-    type: 'status', 
-    status: isDetectorRunning ? 'Monitoring' : 'Idle',
-    cameraConfig
-  }));
-
-  ws.on('close', () => {
-    clients.delete(ws);
-    console.log(`[WS] Client disconnected. Total: ${clients.size}`);
-  });
-});
-
-// Broadcast helper
-function broadcast(data: any) {
+function broadcastToSubscribedUIs(deviceId: string, data: any) {
   const message = JSON.stringify(data);
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
+  for (const [ws, subDeviceId] of uiSubscriptions.entries()) {
+    if (subDeviceId === deviceId && ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
     }
   }
 }
 
-function broadcastLog(message: string) {
-  console.log(`[Log] ${message}`);
-  broadcast({ type: 'log', message, timestamp: new Date().toISOString() });
+function broadcastLogToSubscribedUIs(deviceId: string, message: string) {
+  console.log(`[Log - ${deviceId}] ${message}`);
+  broadcastToSubscribedUIs(deviceId, {
+    type: 'log',
+    message,
+    timestamp: new Date().toISOString()
+  });
 }
 
-// Configuration (In-Memory for demonstration/simplicity, can be saved to JSON file or DB)
-interface CameraConfig {
-  name: string;
-  type: 'webcam' | 'rtsp';
-  streamUrl: string;
-  enabled: boolean;
-}
-
-let cameraConfig: CameraConfig = {
-  name: 'Macbook Camera',
-  type: 'webcam',
-  streamUrl: '0',
-  enabled: false, // Start disabled so user can choose to enable in UI
-};
-
-let activeDetector: MotionDetector | null = null;
-let isDetectorRunning = false;
-let isRecording = false;
-
-// API camera configuration routes
-app.get('/api/config', (req, res) => {
-  res.json(cameraConfig);
+// Register callbacks for device changes
+registerOnConfigUpdated((deviceId, config) => {
+  const deviceSocket = activeDevices.get(deviceId);
+  if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+    console.log(`[WS Hub] Pushing configure command to edge device: ${deviceId}`);
+    deviceSocket.send(JSON.stringify({ type: 'configure', config }));
+  } else {
+    console.log(`[WS Hub] Edge device ${deviceId} is currently offline. Config saved in DB.`);
+  }
 });
 
-app.post('/api/config', async (req, res) => {
-  const { name, type, streamUrl, enabled } = req.body;
-  
-  if (!name || !type || enabled === undefined) {
-    return res.status(400).json({ error: 'Invalid config fields' });
-  }
-
-  broadcastLog(`Updating camera configuration to: ${name} (${type})`);
-  
-  cameraConfig = { name, type, streamUrl: streamUrl || '0', enabled };
-  
-  // Restart detector with new configuration
-  await restartDetector();
-  
-  res.json({ message: 'Configuration updated successfully', config: cameraConfig });
+registerOnClipUploaded(async (filepath, filename, timestamp, deviceId) => {
+  await processVideoClipInBackground(filepath, filename, timestamp, deviceId);
 });
-
-async function stopDetector() {
-  if (activeDetector) {
-    broadcastLog('Stopping camera motion detector...');
-    activeDetector.stop();
-    activeDetector = null;
-  }
-  isDetectorRunning = false;
-  broadcast({ type: 'status', status: 'Idle' });
-}
-
-async function startDetector() {
-  if (!cameraConfig.enabled) {
-    broadcastLog('Camera monitoring is disabled in config.');
-    return;
-  }
-
-  if (isRecording) {
-    broadcastLog('Currently recording. Detector will start once recording completes.');
-    return;
-  }
-
-  broadcastLog(`Starting motion detector for camera: ${cameraConfig.name}`);
-  
-  activeDetector = new MotionDetector({
-    streamUrl: cameraConfig.streamUrl,
-    cameraType: cameraConfig.type,
-    motionThreshold: 25,
-    pixelChangeThreshold: 0.02,
-  });
-
-  activeDetector.on('log', (msg) => {
-    broadcastLog(`[Detector] ${msg}`);
-  });
-
-  activeDetector.on('motion-start', async (ratio) => {
-    broadcastLog(`Motion detected! Pixel change ratio: ${(ratio * 100).toFixed(2)}%`);
-    broadcast({ type: 'motion_state', active: true, ratio });
-    
-    // Trigger recording clip
-    await triggerClipRecording();
-  });
-
-  activeDetector.on('motion-update', (ratio) => {
-    broadcast({ type: 'motion_state', active: true, ratio });
-  });
-
-  activeDetector.on('motion-end', (ratio) => {
-    broadcastLog(`Motion stopped.`);
-    broadcast({ type: 'motion_state', active: false, ratio });
-  });
-
-  activeDetector.on('error', (err) => {
-    broadcastLog(`[Detector Error] ${err.message}`);
-    stopDetector();
-  });
-
-  activeDetector.on('frame', (frameData: Buffer) => {
-    broadcast({
-      type: 'frame',
-      width: 320,
-      height: 240,
-      image: frameData.toString('base64')
-    });
-  });
-
-  activeDetector.start();
-  isDetectorRunning = true;
-  broadcast({ type: 'status', status: 'Monitoring' });
-}
-
-async function restartDetector() {
-  await stopDetector();
-  if (cameraConfig.enabled) {
-    await startDetector();
-  }
-}
-
-/**
- * Handle motion detection -> pause detection -> record 10s -> resume detection -> process Gemini/DB in background
- */
-async function triggerClipRecording() {
-  if (isRecording) return;
-  isRecording = true;
-
-  // 1. Pause motion detector so recording can access the camera device without lock conflict
-  await stopDetector();
-  broadcast({ type: 'status', status: 'Recording' });
-  broadcastLog(`Camera stream released. Starting 10-second recording...`);
-
-  const timestamp = new Date();
-  const filename = `clip_${timestamp.getTime()}.mp4`;
-  const outputPath = path.join(VIDEO_DIR, filename);
-
-  try {
-    // 2. Record video clip
-    await recordClip({
-      streamUrl: cameraConfig.streamUrl,
-      cameraType: cameraConfig.type,
-      outputPath: outputPath,
-      durationSeconds: 10
-    });
-
-    broadcastLog(`Clip recording finished: ${filename}`);
-  } catch (error: any) {
-    broadcastLog(`Recording failed: ${error.message}`);
-    // Restart detector and exit
-    isRecording = false;
-    await startDetector();
-    return;
-  }
-
-  // 3. Resume detector so we don't miss future events while processing the current clip
-  isRecording = false;
-  await startDetector();
-
-  // 4. Process the recorded video in the background (Gemini API & Databases)
-  processVideoClipInBackground(outputPath, filename, timestamp);
-}
 
 /**
  * Upload to Gemini, fetch summary, generate vector embeddings, and save to MongoDB + Qdrant
  */
-async function processVideoClipInBackground(filepath: string, filename: string, timestamp: Date) {
-  broadcast({ type: 'status', status: 'Processing Video' });
-  broadcastLog(`Processing video clip: ${filename} via Gemini...`);
+async function processVideoClipInBackground(filepath: string, filename: string, timestamp: Date, deviceId: string) {
+  const device = await prisma.edgeDevice.findUnique({
+    where: { deviceId }
+  });
+  const cameraName = device ? device.name : 'Unknown Camera';
+
+  await prisma.edgeDevice.update({
+    where: { deviceId },
+    data: { status: 'Processing' }
+  });
+
+  broadcastToSubscribedUIs(deviceId, { type: 'status', status: 'Processing Video' });
+  broadcastLogToSubscribedUIs(deviceId, `Processing video clip: ${filename} via Gemini...`);
 
   try {
     // 1. Send to Gemini for summarization
-    const summary = await summarizeVideo(filepath, cameraConfig.name);
-    broadcastLog(`Gemini summary generated successfully.`);
+    const summary = await summarizeVideo(filepath, cameraName);
+    broadcastLogToSubscribedUIs(deviceId, `Gemini summary generated successfully.`);
 
     // 2. Save metadata to MongoDB via Prisma
     const clipDb = await prisma.videoClip.create({
@@ -255,10 +109,11 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
         timestamp,
         summary,
         duration: 10.0,
-        camera: cameraConfig.name,
+        camera: cameraName,
+        deviceId: deviceId,
       }
     });
-    broadcastLog(`Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
+    broadcastLogToSubscribedUIs(deviceId, `Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
 
     // 3. Generate embedding vector of the summary
     const vector = await generateTextEmbedding(summary);
@@ -269,46 +124,198 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
       filename,
       timestamp: timestamp.toISOString(),
       summary,
-      camera: cameraConfig.name,
+      camera: cameraName,
+      deviceId: deviceId,
     });
 
-    broadcastLog(`Successfully indexed clip in Qdrant.`);
+    broadcastLogToSubscribedUIs(deviceId, `Successfully indexed clip in Qdrant.`);
     
-    // Notify all frontend clients of the new clip
-    broadcast({
+    // Notify subscribed UI clients of the new clip
+    broadcastToSubscribedUIs(deviceId, {
       type: 'new_clip',
       clip: clipDb
     });
 
   } catch (error: any) {
-    broadcastLog(`[Pipeline Error] Failed to process ${filename}: ${error.message}`);
+    console.error(`[Pipeline Error] Failed to process ${filename}:`, error);
+    broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);
   } finally {
-    // Send status back to normal monitoring/idle
-    broadcast({ 
+    // Restore device status
+    const refreshedDevice = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    const finalStatus = refreshedDevice?.enabled ? 'Monitoring' : 'Idle';
+    
+    await prisma.edgeDevice.update({
+      where: { deviceId },
+      data: { status: finalStatus }
+    });
+
+    broadcastToSubscribedUIs(deviceId, { 
       type: 'status', 
-      status: isDetectorRunning ? 'Monitoring' : 'Idle' 
+      status: finalStatus 
     });
   }
 }
+
+// WebSocket Connections
+wss.on('connection', async (ws: WebSocket, req) => {
+  // Parse role and deviceId from query parameters
+  const url = new URL(req.url || '', 'http://localhost');
+  const role = url.searchParams.get('role') || 'ui';
+  const deviceId = url.searchParams.get('deviceId');
+
+  if (role === 'device') {
+    if (!deviceId) {
+      console.log('[WS] Rejected device connection: missing deviceId');
+      ws.close(4000, 'Missing deviceId');
+      return;
+    }
+
+    activeDevices.set(deviceId, ws);
+    console.log(`[WS] Edge device connected: ${deviceId}. Online count: ${activeDevices.size}`);
+
+    // Fetch device and set its status
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    const currentStatus = device?.enabled ? 'Monitoring' : 'Idle';
+
+    await prisma.edgeDevice.update({
+      where: { deviceId },
+      data: { status: currentStatus, lastHeartbeat: new Date() }
+    });
+
+    // Notify UI subscribers
+    broadcastToSubscribedUIs(deviceId, { type: 'status', status: currentStatus, cameraConfig: device });
+    broadcastLogToSubscribedUIs(deviceId, `Edge device connected.`);
+
+    // If there is already a UI client subscribed, toggle camera stream on the edge
+    const hasSubscribers = Array.from(uiSubscriptions.values()).includes(deviceId);
+    if (hasSubscribers) {
+      ws.send(JSON.stringify({ type: 'toggle_stream', stream: true }));
+    }
+
+    ws.on('message', async (messageData: string) => {
+      try {
+        const data = JSON.parse(messageData);
+        switch (data.type) {
+          case 'heartbeat':
+            await prisma.edgeDevice.update({
+              where: { deviceId },
+              data: { lastHeartbeat: new Date() }
+            });
+            break;
+          case 'status_change':
+            await prisma.edgeDevice.update({
+              where: { deviceId },
+              data: { status: data.status }
+            });
+            broadcastToSubscribedUIs(deviceId, { type: 'status', status: data.status });
+            break;
+          case 'frame':
+            broadcastToSubscribedUIs(deviceId, {
+              type: 'frame',
+              image: data.image
+            });
+            break;
+          case 'log':
+            broadcastLogToSubscribedUIs(deviceId, data.message);
+            break;
+        }
+      } catch (err) {
+        console.error(`[WS Error - Device ${deviceId}]`, err);
+      }
+    });
+
+    ws.on('close', async () => {
+      activeDevices.delete(deviceId);
+      console.log(`[WS] Edge device disconnected: ${deviceId}. Online count: ${activeDevices.size}`);
+
+      await prisma.edgeDevice.update({
+        where: { deviceId },
+        data: { status: 'Offline' }
+      });
+
+      broadcastToSubscribedUIs(deviceId, { type: 'status', status: 'Offline' });
+      broadcastLogToSubscribedUIs(deviceId, `Edge device disconnected.`);
+    });
+
+  } else {
+    // UI connection
+    console.log('[WS] UI client connected');
+
+    ws.on('message', async (messageData: string) => {
+      try {
+        const data = JSON.parse(messageData);
+        
+        if (data.type === 'subscribe_device') {
+          const targetDeviceId = data.deviceId;
+          uiSubscriptions.set(ws, targetDeviceId);
+          console.log(`[WS] UI client subscribed to device: ${targetDeviceId}`);
+
+          // Send current status of the subscribed device
+          const device = await prisma.edgeDevice.findUnique({ where: { deviceId: targetDeviceId } });
+          const isOnline = activeDevices.has(targetDeviceId);
+          const currentStatus = isOnline ? (device?.status || 'Idle') : 'Offline';
+
+          ws.send(JSON.stringify({
+            type: 'status',
+            status: currentStatus,
+            cameraConfig: device
+          }));
+
+          // Notify the edge device to start sending frames since a UI client is listening
+          const deviceSocket = activeDevices.get(targetDeviceId);
+          if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+            deviceSocket.send(JSON.stringify({ type: 'toggle_stream', stream: true }));
+          }
+        } else if (data.type === 'unsubscribe_device') {
+          const prevDeviceId = uiSubscriptions.get(ws);
+          uiSubscriptions.delete(ws);
+
+          if (prevDeviceId) {
+            console.log(`[WS] UI client unsubscribed from device: ${prevDeviceId}`);
+            // Stop streaming from device if no more UI subscribers are active
+            const hasOtherSubscribers = Array.from(uiSubscriptions.values()).includes(prevDeviceId);
+            if (!hasOtherSubscribers) {
+              const deviceSocket = activeDevices.get(prevDeviceId);
+              if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+                deviceSocket.send(JSON.stringify({ type: 'toggle_stream', stream: false }));
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[WS Error - UI]', err);
+      }
+    });
+
+    ws.on('close', () => {
+      const prevDeviceId = uiSubscriptions.get(ws);
+      uiSubscriptions.delete(ws);
+      console.log('[WS] UI client disconnected');
+
+      if (prevDeviceId) {
+        const hasOtherSubscribers = Array.from(uiSubscriptions.values()).includes(prevDeviceId);
+        if (!hasOtherSubscribers) {
+          const deviceSocket = activeDevices.get(prevDeviceId);
+          if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+            deviceSocket.send(JSON.stringify({ type: 'toggle_stream', stream: false }));
+          }
+        }
+      }
+    });
+  }
+});
 
 // Graceful shutdown helper
 async function shutdown() {
   console.log('[Server] Graceful shutdown initiated. Cleaning up...');
   
-  // 1. Stop motion detector (kills its ffmpeg child process)
-  await stopDetector();
-  
-  // 2. Stop any active recording process (kills its ffmpeg child process)
-  stopActiveRecording();
-  
-  // 3. Close all active WebSocket connections and close the WebSocket server
+  // Close all active WebSocket connections
   console.log('[Server] Closing WebSocket connections...');
-  for (const client of clients) {
-    try {
-      client.terminate();
-    } catch (e) {
-      console.error('[Server] Error terminating WS client:', e);
-    }
+  for (const ws of activeDevices.values()) {
+    try { ws.terminate(); } catch (e) {}
+  }
+  for (const ws of uiSubscriptions.keys()) {
+    try { ws.terminate(); } catch (e) {}
   }
   
   await new Promise<void>((resolve) => {
@@ -318,7 +325,7 @@ async function shutdown() {
     });
   });
 
-  // 4. Close the Express/HTTP server to release the port
+  // Close HTTP server
   console.log('[Server] Closing HTTP server...');
   if (typeof (server as any).closeAllConnections === 'function') {
     (server as any).closeAllConnections();
@@ -330,7 +337,7 @@ async function shutdown() {
     });
   });
 
-  // 5. Disconnect Prisma client
+  // Disconnect database
   console.log('[Server] Disconnecting from database...');
   await prisma.$disconnect();
   
@@ -350,15 +357,11 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-// nodemon sends SIGUSR2 on restarts.
-// We must call process.kill(process.pid, 'SIGUSR2') once cleanup is complete
-// to allow nodemon to proceed with restarting.
 process.once('SIGUSR2', async () => {
   console.log('[Server] SIGUSR2 received (nodemon restarting).');
   await shutdown();
   process.kill(process.pid, 'SIGUSR2');
 });
-
 
 server.listen(PORT, async () => {
   console.log(`[Server] Express listening on port ${PORT}`);
@@ -366,8 +369,8 @@ server.listen(PORT, async () => {
   // Initialize Qdrant Collection
   await initQdrant();
   
-  // Start detector if enabled on boot
-  if (cameraConfig.enabled) {
-    await startDetector();
-  }
+  // Set all devices to Offline initially (until they connect and send WS link)
+  await prisma.edgeDevice.updateMany({
+    data: { status: 'Offline' }
+  });
 });

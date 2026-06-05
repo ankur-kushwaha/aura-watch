@@ -15,4 +15,18 @@ model VideoClip {
   summary   String
   duration  Float    @default(10.0)
   camera    String
+  deviceId  String?
+}
+
+model EdgeDevice {
+  id                   String   @id @default(auto()) @map("_id") @db.ObjectId
+  deviceId             String   @unique
+  name                 String
+  cameraType           String   @default("webcam") // "webcam" or "rtsp"
+  streamUrl            String   @default("0")
+  enabled              Boolean  @default(false)
+  status               String   @default("Offline") // "Offline", "Idle", "Monitoring", "Recording", "Processing"
+  lastHeartbeat        DateTime @default(now())
+  motionThreshold      Int      @default(25)
+  pixelChangeThreshold Float    @default(0.02)
 }
