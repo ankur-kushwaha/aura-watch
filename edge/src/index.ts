@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import * as https from 'https';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { WebSocket } from 'ws';
 import dotenv from 'dotenv';
 import { MotionDetector } from './motion-detector';
@@ -183,6 +183,16 @@ function clearHlsDirectory() {
 function startStandaloneHls() {
   if (standaloneHlsProcess) return;
   
+  // Kill any existing/dangling ffmpeg processes using the same HLS output directory
+  try {
+    if (process.platform !== 'win32') {
+      console.log(`[Edge Standalone HLS] Killing any running ffmpeg processes writing to ${HLS_DIR}...`);
+      execSync(`pkill -9 -f "ffmpeg.*${HLS_DIR}"`, { stdio: 'ignore' });
+    }
+  } catch (e) {
+    // Ignore error if no process was found
+  }
+  
   sendLog('Starting standalone HLS streaming process...');
   prepareHlsDirectory();
   
@@ -294,6 +304,16 @@ async function startDetector() {
   if (!currentConfig.enabled) {
     sendLog('Monitoring is disabled.');
     return;
+  }
+
+  // Kill any existing/dangling ffmpeg processes using the same HLS output directory
+  try {
+    if (process.platform !== 'win32') {
+      console.log(`[Edge Detector] Killing any running ffmpeg processes writing to ${HLS_DIR}...`);
+      execSync(`pkill -9 -f "ffmpeg.*${HLS_DIR}"`, { stdio: 'ignore' });
+    }
+  } catch (e) {
+    // Ignore error if no process was found
   }
 
   sendLog(`Starting motion detector for camera: ${currentConfig.name}`);
