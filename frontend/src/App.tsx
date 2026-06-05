@@ -13,7 +13,8 @@ import {
   HelpCircle,
   Clock,
   Sparkles,
-  Link2
+  Link2,
+  Terminal
 } from 'lucide-react';
 
 interface VideoClip {
@@ -256,18 +257,11 @@ function App() {
     };
   }, [connectWS]);
 
-  // Scroll logs and chat to bottom
-  useEffect(() => {
-    if (terminalContainerRef.current) {
-      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
-    }
-  }, [logs]);
-
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    }
-  }, [chatHistory]);
+  // useEffect(() => {
+  //   if (chatContainerRef.current) {
+  //     chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+  //   }
+  // }, [chatHistory]);
 
   // Reset stream loading status on changes
   useEffect(() => {
@@ -769,7 +763,7 @@ function App() {
           </div>
 
           {/* LIVE TERMINAL LOGS */}
-          {/* <div className="glass-panel" style={{ padding: '20px' }}>
+          <div className="glass-panel" style={{ padding: '20px' }}>
             <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
               <Terminal size={18} color="var(--secondary)" /> System Status Logs
             </h2>
@@ -787,7 +781,7 @@ function App() {
                 ))
               )}
             </div>
-          </div> */}
+          </div>
         </div>
 
         {/* RIGHT COLUMN: CLIPS PLAYBACK & AI CHAT */}

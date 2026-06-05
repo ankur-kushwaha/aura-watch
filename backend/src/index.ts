@@ -13,7 +13,7 @@ import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, { registerOnConfigUpdated, registerOnClipUploaded, registerOnStreamFileRequest } from './routes/devices';
 import { initQdrant, upsertClipVector } from './services/qdrant';
-import { summarizeVideo, generateTextEmbedding } from './services/gemini';
+import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import prisma from './services/db';
 
 const app = express();

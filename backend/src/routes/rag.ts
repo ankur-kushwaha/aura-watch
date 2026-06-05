@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { generateTextEmbedding, answerQuestionWithContext } from '../services/gemini';
+import { generateTextEmbedding, answerQuestionWithContext } from '../services/ai';
 import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
 
 const router = Router();
