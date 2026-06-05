@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Hls from 'hls.js';
 import {
   Camera,
@@ -7,7 +7,6 @@ import {
   Trash2,
   Send,
   Activity,
-  Terminal,
   Video,
   RefreshCw,
   Cpu,
@@ -67,6 +66,11 @@ function App() {
   // App States
   const [devices, setDevices] = useState<EdgeDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const selectedDeviceIdRef = useRef(selectedDeviceId);
+
+  useEffect(() => {
+    selectedDeviceIdRef.current = selectedDeviceId;
+  }, [selectedDeviceId]);
 
   const [config, setConfig] = useState<CameraConfig>({
     name: 'Macbook Air Camera',
@@ -98,44 +102,53 @@ function App() {
   // WebSocket Ref
   const wsRef = useRef<WebSocket | null>(null);
 
-  const fetchDevices = async (selectFirst = false) => {
+  const fetchDevices = useCallback(async (selectFirst = false) => {
     try {
       const res = await fetch(`${API_BASE}/devices`);
       const data = await res.json();
       setDevices(data);
-      if (data.length > 0 && (selectFirst || !selectedDeviceId)) {
-        setSelectedDeviceId(data[0].deviceId);
+      if (data.length > 0) {
+        setSelectedDeviceId((prevId) => {
+          if (selectFirst || !prevId) {
+            return data[0].deviceId;
+          }
+          return prevId;
+        });
       }
     } catch (err) {
       console.error('Failed to fetch devices', err);
     }
-  };
+  }, []);
 
-  const fetchClips = async () => {
+  const fetchClips = useCallback(async () => {
     setLoadingClips(true);
     try {
       const res = await fetch(`${API_BASE}/clips`);
       const data = await res.json();
       setClips(data);
-      if (data.length > 0 && !selectedClip) {
-        setSelectedClip(data[0]);
-      }
+      setSelectedClip((prevSelected) => {
+        if (data.length > 0 && !prevSelected) {
+          return data[0];
+        }
+        return prevSelected;
+      });
     } catch (err) {
       console.error('Failed to fetch clips', err);
     } finally {
       setLoadingClips(false);
     }
-  };
+  }, []);
 
-  const connectWS = () => {
+  const connectWS = useCallback(function connect() {
     console.log('Connecting to websocket...');
     const ws = new WebSocket(WS_BASE);
     wsRef.current = ws;
 
     ws.onopen = () => {
       console.log('WebSocket open. Subscribing to selected device...');
-      if (selectedDeviceId) {
-        ws.send(JSON.stringify({ type: 'subscribe_device', deviceId: selectedDeviceId }));
+      const currentId = selectedDeviceIdRef.current;
+      if (currentId) {
+        ws.send(JSON.stringify({ type: 'subscribe_device', deviceId: currentId }));
       }
     };
 
@@ -186,13 +199,13 @@ function App() {
 
     ws.onclose = () => {
       console.log('WebSocket closed. Reconnecting in 5s...');
-      setTimeout(connectWS, 5000);
+      setTimeout(connect, 5000);
     };
 
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
     };
-  };
+  }, []);
 
   // Fetch initial data
   useEffect(() => {
@@ -200,25 +213,30 @@ function App() {
       fetchDevices(true);
       fetchClips();
     });
-  }, []);
+  }, [fetchDevices, fetchClips]);
+
+  // Sync selected device details when selectedDeviceId or devices list changes
+  useEffect(() => {
+    if (!selectedDeviceId) return;
+    const dev = devices.find((d) => d.deviceId === selectedDeviceId);
+    if (dev) {
+      Promise.resolve().then(() => {
+        setConfig({
+          name: dev.name,
+          type: dev.cameraType,
+          streamUrl: dev.streamUrl,
+          enabled: dev.enabled,
+          motionThreshold: dev.motionThreshold,
+          pixelChangeThreshold: dev.pixelChangeThreshold,
+        });
+        setStatus(dev.status);
+      });
+    }
+  }, [selectedDeviceId, devices]);
 
   // Sync WS subscription when device changes
   useEffect(() => {
     if (!selectedDeviceId) return;
-
-    // Load initial device details into config state
-    const dev = devices.find((d) => d.deviceId === selectedDeviceId);
-    if (dev) {
-      setConfig({
-        name: dev.name,
-        type: dev.cameraType,
-        streamUrl: dev.streamUrl,
-        enabled: dev.enabled,
-        motionThreshold: dev.motionThreshold,
-        pixelChangeThreshold: dev.pixelChangeThreshold,
-      });
-      setStatus(dev.status);
-    }
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Clear logs for new stream
@@ -236,7 +254,7 @@ function App() {
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
-  }, []);
+  }, [connectWS]);
 
   // Scroll logs and chat to bottom
   useEffect(() => {
@@ -253,7 +271,9 @@ function App() {
 
   // Reset stream loading status on changes
   useEffect(() => {
-    setStreamLoading(true);
+    Promise.resolve().then(() => {
+      setStreamLoading(true);
+    });
   }, [selectedDeviceId, status, config.enabled]);
 
   // Initialize HLS player
@@ -717,7 +737,7 @@ function App() {
                     min="0"
                     max="255"
                     value={config.motionThreshold || 25}
-                    onChange={(e) => setConfig({ ...config, motionThreshold: parseInt(e.target.value) || 25 } as any)}
+                    onChange={(e) => setConfig({ ...config, motionThreshold: parseInt(e.target.value) || 25 })}
                     required
                     disabled={!selectedDeviceId}
                   />
@@ -730,7 +750,7 @@ function App() {
                     min="0.01"
                     max="1.00"
                     value={config.pixelChangeThreshold || 0.02}
-                    onChange={(e) => setConfig({ ...config, pixelChangeThreshold: parseFloat(e.target.value) || 0.02 } as any)}
+                    onChange={(e) => setConfig({ ...config, pixelChangeThreshold: parseFloat(e.target.value) || 0.02 })}
                     required
                     disabled={!selectedDeviceId}
                   />

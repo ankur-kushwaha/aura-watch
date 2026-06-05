@@ -29,7 +29,19 @@ router.get('/', async (req: Request, res: Response) => {
     const devices = await prisma.edgeDevice.findMany({
       orderBy: { lastHeartbeat: 'desc' },
     });
-    res.json(devices);
+    
+    // Dynamically adjust status to Offline if the last heartbeat is older than 30 seconds
+    const now = new Date();
+    const threshold = 30000; // 30 seconds
+    const sanitizedDevices = devices.map(device => {
+      const isStale = now.getTime() - new Date(device.lastHeartbeat).getTime() > threshold;
+      if (isStale && device.status !== 'Offline') {
+        return { ...device, status: 'Offline' };
+      }
+      return device;
+    });
+
+    res.json(sanitizedDevices);
   } catch (error) {
     console.error('Error fetching devices:', error);
     res.status(500).json({ error: 'Failed to fetch edge devices' });
@@ -49,6 +61,15 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
+    
+    // Dynamically adjust status to Offline if the last heartbeat is older than 30 seconds
+    const now = new Date();
+    const threshold = 30000; // 30 seconds
+    const isStale = now.getTime() - new Date(device.lastHeartbeat).getTime() > threshold;
+    if (isStale && device.status !== 'Offline') {
+      device.status = 'Offline';
+    }
+
     res.json(device);
   } catch (error) {
     console.error('Error fetching device:', error);

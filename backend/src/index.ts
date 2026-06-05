@@ -244,7 +244,8 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
 
     // Restore device status
     const refreshedDevice = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    const finalStatus = refreshedDevice?.enabled ? 'Monitoring' : 'Idle';
+    const isOnline = activeDevices.has(deviceId);
+    const finalStatus = isOnline ? (refreshedDevice?.enabled ? 'Monitoring' : 'Idle') : 'Offline';
     
     await prisma.edgeDevice.update({
       where: { deviceId },
@@ -493,4 +494,41 @@ server.listen(PORT, async () => {
   await prisma.edgeDevice.updateMany({
     data: { status: 'Offline' }
   });
+
+  // Periodically check for inactive edge devices (heartbeat timeout every 15s)
+  setInterval(async () => {
+    const timeoutThreshold = new Date(Date.now() - 30000); // 30 seconds ago
+    
+    try {
+      const staleDevices = await prisma.edgeDevice.findMany({
+        where: {
+          status: { not: 'Offline' },
+          lastHeartbeat: { lt: timeoutThreshold }
+        }
+      });
+
+      for (const device of staleDevices) {
+        console.log(`[Heartbeat Check] Device ${device.name} (${device.deviceId}) heartbeat timeout. Marking Offline.`);
+        
+        await prisma.edgeDevice.update({
+          where: { deviceId: device.deviceId },
+          data: { status: 'Offline' }
+        });
+
+        // Clean up socket if exists in activeDevices
+        const ws = activeDevices.get(device.deviceId);
+        if (ws) {
+          try {
+            ws.terminate();
+          } catch (e) {}
+          activeDevices.delete(device.deviceId);
+        }
+
+        broadcastToSubscribedUIs(device.deviceId, { type: 'status', status: 'Offline' });
+        broadcastLogToSubscribedUIs(device.deviceId, `Edge device heartbeat timed out. Marked Offline.`);
+      }
+    } catch (error) {
+      console.error('[Heartbeat Check] Error checking stale devices:', error);
+    }
+  }, 15000);
 });
