@@ -370,14 +370,14 @@ function App() {
         }),
       });
       const data = await res.json();
-      
+
       if (deviceId === selectedDeviceId) {
         setConfig((prev) => ({
           ...prev,
           enabled: data.config.enabled,
         }));
       }
-      
+
       fetchDevices();
     } catch (err) {
       console.error('Failed to toggle monitoring', err);
@@ -749,7 +749,7 @@ function App() {
           </div>
 
           {/* LIVE TERMINAL LOGS */}
-          <div className="glass-panel" style={{ padding: '20px' }}>
+          {/* <div className="glass-panel" style={{ padding: '20px' }}>
             <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
               <Terminal size={18} color="var(--secondary)" /> System Status Logs
             </h2>
@@ -767,7 +767,7 @@ function App() {
                 ))
               )}
             </div>
-          </div>
+          </div> */}
         </div>
 
         {/* RIGHT COLUMN: CLIPS PLAYBACK & AI CHAT */}

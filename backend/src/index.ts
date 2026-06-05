@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
-import clipsRouter from './routes/clips';
+import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, { registerOnConfigUpdated, registerOnClipUploaded, registerOnStreamFileRequest } from './routes/devices';
 import { initQdrant, upsertClipVector } from './services/qdrant';
@@ -32,8 +32,55 @@ if (!fs.existsSync(VIDEO_DIR)) {
 app.use(cors());
 app.use(express.json());
 
-// Serve static videos
-app.use('/api/videos', express.static(VIDEO_DIR));
+// Serve static videos or proxy them from the edge device
+app.get('/api/videos/:filename', async (req, res) => {
+  const { filename } = req.params;
+  try {
+    const clip = await prisma.videoClip.findFirst({
+      where: { filename }
+    });
+
+    if (!clip || !clip.deviceId) {
+      return res.status(404).json({ error: `Clip metadata not found for ${filename}` });
+    }
+
+    const deviceId = clip.deviceId;
+    const deviceSocket = activeDevices.get(deviceId);
+    if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) {
+      return res.status(503).json({ error: `Edge device ${deviceId} is offline` });
+    }
+
+    const requestId = `req_${Date.now()}_${nextStreamRequestId++}`;
+    
+    // 15 seconds timeout
+    const timeout = setTimeout(() => {
+      pendingStreamRequests.delete(requestId);
+      res.status(504).json({ error: `Timeout waiting for clip file ${filename} from device` });
+    }, 15000);
+
+    pendingStreamRequests.set(requestId, {
+      resolve: (result) => {
+        clearTimeout(timeout);
+        res.setHeader('Content-Type', result.contentType);
+        res.send(result.data);
+      },
+      reject: (err) => {
+        clearTimeout(timeout);
+        res.status(500).json({ error: err.message });
+      },
+      timeout
+    });
+
+    deviceSocket.send(JSON.stringify({
+      type: 'request_stream_file',
+      requestId,
+      filename
+    }));
+  } catch (error: any) {
+    console.error(`[Video Proxy] Error fetching video ${filename}:`, error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Mount routes
 app.use('/api/clips', clipsRouter);
@@ -77,6 +124,17 @@ registerOnConfigUpdated((deviceId, config) => {
 
 registerOnClipUploaded(async (filepath, filename, timestamp, deviceId) => {
   await processVideoClipInBackground(filepath, filename, timestamp, deviceId);
+});
+
+registerOnClipDeleted((deviceId, filename) => {
+  const deviceSocket = activeDevices.get(deviceId);
+  if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+    console.log(`[WS Hub] Requesting edge device ${deviceId} to delete clip: ${filename}`);
+    deviceSocket.send(JSON.stringify({
+      type: 'delete_clip_file',
+      filename
+    }));
+  }
 });
 
 interface PendingStreamRequest {
@@ -174,6 +232,16 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
     console.error(`[Pipeline Error] Failed to process ${filename}:`, error);
     broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);
   } finally {
+    // Delete temporary backend video file
+    if (fs.existsSync(filepath)) {
+      try {
+        fs.unlinkSync(filepath);
+        console.log(`[Cloud Hub] Deleted temporary upload file: ${filepath}`);
+      } catch (err: any) {
+        console.error(`[Cloud Hub] Failed to delete temporary file ${filepath}:`, err);
+      }
+    }
+
     // Restore device status
     const refreshedDevice = await prisma.edgeDevice.findUnique({ where: { deviceId } });
     const finalStatus = refreshedDevice?.enabled ? 'Monitoring' : 'Idle';

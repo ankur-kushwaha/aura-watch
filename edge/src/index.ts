@@ -431,6 +431,48 @@ function concatHlsSegments(outputMp4Path: string): Promise<void> {
   });
 }
 
+function transcodeForGemini(
+  inputPath: string,
+  outputPath: string,
+  fps: string,
+  resolution: string,
+  crf: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    // Transcode using ffmpeg: reduce FPS, scale resolution, apply CRF compression, remove audio
+    const args = [
+      '-y',
+      '-i', inputPath,
+      '-vf', `fps=${fps},scale=${resolution}`,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', crf,
+      '-an',
+      outputPath
+    ];
+
+    console.log(`[Transcoder] Spawning: ffmpeg ${args.join(' ')}`);
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    
+    proc.stderr?.on('data', (d) => {
+      stderr += d.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`FFmpeg transcoding exited with code ${code}: ${stderr}`));
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
 /**
  * Trigger recording of a 10s video clip using HLS segments without interrupting live stream
  */
@@ -450,18 +492,56 @@ async function triggerClipRecording() {
     try {
       sendLog(`Compiling HLS segments into clip: ${filename}...`);
       await concatHlsSegments(outputPath);
+      sendLog(`Clip compiled successfully: ${filename}`);
+
+      const optimizeGemini = process.env.GEMINI_OPTIMIZE === 'true';
+      let uploadPath = outputPath;
+      let tempGeminiPath = '';
+
+      if (optimizeGemini) {
+        const geminiFps = process.env.GEMINI_OPTIMIZE_FPS || '1';
+        const geminiRes = process.env.GEMINI_OPTIMIZE_RESOLUTION || '640:480';
+        const geminiCrf = process.env.GEMINI_OPTIMIZE_CRF || '28';
+        
+        tempGeminiPath = path.join(LOCAL_VIDEO_DIR, `temp_gemini_${timestamp.getTime()}_${deviceId}.mp4`);
+        
+        sendLog(`Optimizing clip for Gemini (FPS: ${geminiFps}, Res: ${geminiRes}, CRF: ${geminiCrf})...`);
+        try {
+          await transcodeForGemini(outputPath, tempGeminiPath, geminiFps, geminiRes, geminiCrf);
+          
+          if (fs.existsSync(tempGeminiPath)) {
+            const originalSize = fs.statSync(outputPath).size;
+            const optimizedSize = fs.statSync(tempGeminiPath).size;
+            const reduction = ((1 - optimizedSize / originalSize) * 100).toFixed(1);
+            sendLog(`Optimization success: ${(optimizedSize / 1024).toFixed(1)} KB (vs ${(originalSize / 1024).toFixed(1)} KB original, ${reduction}% bandwidth saved)`);
+            uploadPath = tempGeminiPath;
+          }
+        } catch (transcodeErr: any) {
+          sendLog(`[Transcode Warning] Transcoding failed: ${transcodeErr.message}. Falling back to original clip.`);
+          uploadPath = outputPath;
+        }
+      }
+
+      sendLog(`Uploading clip to Cloud: ${filename}...`);
       
-      sendLog(`Clip compiled successfully: ${filename}. Uploading to Cloud...`);
-      
-      uploadRecordedClip(outputPath, filename)
+      uploadRecordedClip(uploadPath, filename)
         .then(() => {
           sendLog(`Successfully uploaded clip to Cloud: ${filename}`);
-          if (fs.existsSync(outputPath)) {
-            fs.unlinkSync(outputPath);
+          // Clean up the temp optimized file if it was created
+          if (tempGeminiPath && fs.existsSync(tempGeminiPath)) {
+            try {
+              fs.unlinkSync(tempGeminiPath);
+              sendLog(`Cleaned up temporary Gemini-optimized video file.`);
+            } catch (e) {}
           }
         })
         .catch((err) => {
           sendLog(`[Upload Error] Failed to upload clip: ${err.message}`);
+          if (tempGeminiPath && fs.existsSync(tempGeminiPath)) {
+            try {
+              fs.unlinkSync(tempGeminiPath);
+            } catch (e) {}
+          }
         });
 
     } catch (error: any) {
@@ -537,7 +617,8 @@ function connectWS() {
         }
         case 'request_stream_file': {
           const { requestId, filename } = data;
-          const filePath = path.join(HLS_DIR, filename);
+          const isClip = filename.startsWith('clip_') && filename.endsWith('.mp4');
+          const filePath = isClip ? path.join(LOCAL_VIDEO_DIR, filename) : path.join(HLS_DIR, filename);
           
           if (!fs.existsSync(filePath)) {
             ws?.send(JSON.stringify({
@@ -551,7 +632,10 @@ function connectWS() {
 
           try {
             const isPlaylist = filename.endsWith('.m3u8');
-            const contentType = isPlaylist ? 'application/x-mpegURL' : 'video/MP2T';
+            const isMp4 = filename.endsWith('.mp4');
+            const contentType = isPlaylist 
+              ? 'application/x-mpegURL' 
+              : (isMp4 ? 'video/mp4' : 'video/MP2T');
             
             if (isPlaylist) {
               const fileContent = fs.readFileSync(filePath, 'utf8');
@@ -579,6 +663,19 @@ function connectWS() {
               success: false,
               error: `Error reading file: ${err.message}`
             }));
+          }
+          break;
+        }
+        case 'delete_clip_file': {
+          const { filename } = data;
+          const filePath = path.join(LOCAL_VIDEO_DIR, filename);
+          if (fs.existsSync(filePath)) {
+            try {
+              fs.unlinkSync(filePath);
+              sendLog(`Deleted clip file on edge: ${filename}`);
+            } catch (err: any) {
+              sendLog(`Error deleting clip file on edge: ${err.message}`);
+            }
           }
           break;
         }

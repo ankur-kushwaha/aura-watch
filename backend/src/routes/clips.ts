@@ -6,6 +6,13 @@ import * as path from 'path';
 
 const router = Router();
 
+export type ClipDeletedCallback = (deviceId: string, filename: string) => void;
+let onClipDeletedCallback: ClipDeletedCallback | null = null;
+
+export function registerOnClipDeleted(cb: ClipDeletedCallback) {
+  onClipDeletedCallback = cb;
+}
+
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
 
 /**
@@ -69,6 +76,11 @@ router.delete('/:id', async (req: Request, res: Response) => {
       } catch (err) {
         console.error(`[Clips] Failed to delete file at ${clip.filepath}:`, err);
       }
+    }
+
+    // Also trigger deletion on edge device
+    if (clip.deviceId && onClipDeletedCallback) {
+      onClipDeletedCallback(clip.deviceId, clip.filename);
     }
 
     // 3. Delete vector from Qdrant

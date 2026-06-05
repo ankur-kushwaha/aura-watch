@@ -62,4 +62,4 @@ lerna-debug.log*
 ehthumbs.db
 Thumbs.db
 
-edge/storage/hls/
+edge/storage/

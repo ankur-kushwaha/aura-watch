@@ -163,7 +163,8 @@ router.delete('/:deviceId', async (req: Request, res: Response) => {
 router.post('/:deviceId/upload', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
   const filename = req.headers['x-filename'] as string || `clip_${Date.now()}_${deviceId}.mp4`;
-  const filepath = path.join(VIDEO_DIR, filename);
+  const tempDir = path.join(__dirname, '../../storage/temp');
+  const filepath = path.join(tempDir, filename);
 
   try {
     const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
@@ -171,9 +172,9 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Device not found. Register first.' });
     }
 
-    // Ensure video directory exists
-    if (!fs.existsSync(VIDEO_DIR)) {
-      fs.mkdirSync(VIDEO_DIR, { recursive: true });
+    // Ensure temp directory exists
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
     }
 
     console.log(`[Cloud Hub] Receiving video file upload: ${filename} for device: ${device.name}`);
