@@ -1,0 +1,18 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model VideoClip {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  filepath  String
+  filename  String
+  timestamp DateTime @default(now())
+  summary   String
+  duration  Float    @default(10.0)
+  camera    String
+}
