@@ -4,6 +4,7 @@
   "description": "AI Video Surveillance Backend",
   "main": "dist/index.js",
   "scripts": {
+    "predev": "lsof -t -i tcp:5000 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true",
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",

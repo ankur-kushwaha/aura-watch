@@ -9,6 +9,8 @@ export interface RecordOptions {
   durationSeconds?: number;
 }
 
+let activeRecordingProcess: any = null;
+
 /**
  * Records a video clip from the specified stream or camera device.
  */
@@ -71,6 +73,7 @@ export function recordClip(options: RecordOptions): Promise<void> {
 
     console.log(`[Recorder] Spawning: ffmpeg ${args.join(' ')}`);
     const ffmpeg = spawn('ffmpeg', args);
+    activeRecordingProcess = ffmpeg;
 
     let stderrOutput = '';
     ffmpeg.stderr.on('data', (data) => {
@@ -78,6 +81,7 @@ export function recordClip(options: RecordOptions): Promise<void> {
     });
 
     ffmpeg.on('close', (code) => {
+      activeRecordingProcess = null;
       if (code === 0) {
         console.log(`[Recorder] Recording successful. File saved: ${outputPath}`);
         resolve();
@@ -89,8 +93,22 @@ export function recordClip(options: RecordOptions): Promise<void> {
     });
 
     ffmpeg.on('error', (err) => {
+      activeRecordingProcess = null;
       console.error(`[Recorder] Error starting FFmpeg:`, err);
       reject(err);
     });
   });
 }
+
+export function stopActiveRecording() {
+  if (activeRecordingProcess) {
+    console.log('[Recorder] Stopping active recording process...');
+    try {
+      activeRecordingProcess.kill('SIGKILL');
+    } catch (err) {
+      console.error('[Recorder] Failed to kill active recording process:', err);
+    }
+    activeRecordingProcess = null;
+  }
+}
+

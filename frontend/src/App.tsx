@@ -39,6 +39,7 @@ interface RagResponseClip {
   timestamp: string;
   summary: string;
   filepath: string;
+  filename?: string;
   score: number;
 }
 
@@ -66,46 +67,40 @@ function App() {
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; clips?: RagResponseClip[] }[]>([]);
   const [isAsking, setIsAsking] = useState<boolean>(false);
 
-  // UI Web Feed State (for local browser webcam preview)
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [localStreamActive, setLocalStreamActive] = useState<boolean>(false);
-  const terminalEndRef = useRef<HTMLDivElement | null>(null);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  // Live Camera Feed Canvas States
+  const [latestFrame, setLatestFrame] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const terminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
   // WebSocket Ref
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Fetch initial config and clips
-  useEffect(() => {
-    fetchConfig();
-    fetchClips();
-  }, []);
-
-  // Scroll to bottom of terminal and chat
-  useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory]);
-
-  // Establish WebSocket connection
-  useEffect(() => {
-    connectWS();
-    return () => {
-      if (wsRef.current) wsRef.current.close();
-    };
-  }, []);
-
-  // Handle local webcam preview in the browser for testing
-  useEffect(() => {
-    if (config.type === 'webcam' && config.enabled) {
-      startBrowserWebcam();
-    } else {
-      stopBrowserWebcam();
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/config`);
+      const data = await res.json();
+      setConfig(data);
+    } catch (err) {
+      console.error('Failed to fetch config', err);
     }
-  }, [config.enabled, config.type]);
+  };
+
+  const fetchClips = async () => {
+    setLoadingClips(true);
+    try {
+      const res = await fetch(`${API_BASE}/clips`);
+      const data = await res.json();
+      setClips(data);
+      if (data.length > 0 && !selectedClip) {
+        setSelectedClip(data[0]);
+      }
+    } catch (err) {
+      console.error('Failed to fetch clips', err);
+    } finally {
+      setLoadingClips(false);
+    }
+  };
 
   const connectWS = () => {
     console.log('Connecting to websocket...');
@@ -134,6 +129,9 @@ function App() {
           // If no clip is currently selected, highlight this new one
           setSelectedClip(data.clip);
           break;
+        case 'frame':
+          setLatestFrame(data.image);
+          break;
         default:
           break;
       }
@@ -149,53 +147,77 @@ function App() {
     };
   };
 
-  const startBrowserWebcam = async () => {
+  // Fetch initial config and clips
+  useEffect(() => {
+    Promise.resolve().then(() => {
+      fetchConfig();
+      fetchClips();
+    });
+  }, []);
+
+  // Scroll to bottom of terminal internally without scrolling the main window
+  useEffect(() => {
+    if (terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  // Scroll to bottom of chat internally without scrolling the main window
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatHistory]);
+
+  // Establish WebSocket connection
+  useEffect(() => {
+    connectWS();
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
+
+  // Reset live feed frame when monitoring is disabled
+  useEffect(() => {
+    if (!config.enabled) {
+      Promise.resolve().then(() => {
+        setLatestFrame(null);
+      });
+    }
+  }, [config.enabled]);
+
+  // Render base64 grayscale frame to the canvas
+  useEffect(() => {
+    if (!latestFrame) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setLocalStreamActive(true);
+      const binaryString = atob(latestFrame);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
       }
-    } catch (err) {
-      console.warn('Could not open webcam in browser. (Check permissions)', err);
-      setLocalStreamActive(false);
-    }
-  };
 
-  const stopBrowserWebcam = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-      setLocalStreamActive(false);
-    }
-  };
-
-  const fetchConfig = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/config`);
-      const data = await res.json();
-      setConfig(data);
-    } catch (err) {
-      console.error('Failed to fetch config', err);
-    }
-  };
-
-  const fetchClips = async () => {
-    setLoadingClips(true);
-    try {
-      const res = await fetch(`${API_BASE}/clips`);
-      const data = await res.json();
-      setClips(data);
-      if (data.length > 0 && !selectedClip) {
-        setSelectedClip(data[0]);
+      const width = 320;
+      const height = 240;
+      const imgData = ctx.createImageData(width, height);
+      for (let i = 0; i < bytes.length; i++) {
+        const val = bytes[i];
+        const idx = i * 4;
+        imgData.data[idx] = val;     // R
+        imgData.data[idx + 1] = val; // G
+        imgData.data[idx + 2] = val; // B
+        imgData.data[idx + 3] = 255; // A
       }
-    } catch (err) {
-      console.error('Failed to fetch clips', err);
-    } finally {
-      setLoadingClips(false);
+      ctx.putImageData(imgData, 0, 0);
+    } catch (e) {
+      console.error('Error rendering live frame:', e);
     }
-  };
+  }, [latestFrame]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -280,8 +302,6 @@ function App() {
     const clip = clips.find(c => c.id === clipId);
     if (clip) {
       setSelectedClip(clip);
-      // Scroll to video player
-      document.getElementById('video-player-section')?.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -354,31 +374,48 @@ function App() {
             {/* Video Feed Wrapper */}
             <div style={{ background: '#090d16', borderRadius: '12px', height: '240px', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative', overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
               
-              {localStreamActive ? (
-                <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              ) : (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                  {config.enabled ? (
-                    <>
+              {config.enabled && (status === 'Monitoring' || status === 'Recording' || status === 'Processing Video') ? (
+                <div style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  {status === 'Recording' ? (
+                    <div style={{ position: 'absolute', zIndex: 2, background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(244,63,94,0.4)', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)', display: 'inline-block', animation: 'pulse-red 0.8s infinite' }}></span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'white', letterSpacing: '0.05em' }}>RECORDING FOOTAGE...</span>
+                    </div>
+                  ) : status === 'Processing Video' ? (
+                    <div style={{ position: 'absolute', zIndex: 2, background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(124,58,237,0.4)', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
+                      <RefreshCw size={12} className="animate-spin" color="var(--primary)" />
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'white', letterSpacing: '0.05em' }}>SUMMARIZING RECORDING...</span>
+                    </div>
+                  ) : null}
+                  
+                  {latestFrame ? (
+                    <canvas 
+                      ref={canvasRef} 
+                      width={320} 
+                      height={240} 
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                    />
+                  ) : (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                       <div style={{ animation: 'spin 4s linear infinite', marginBottom: '12px', display: 'inline-block' }}>
                         <RefreshCw size={36} color="var(--primary)" />
                       </div>
-                      <p style={{ fontSize: '0.9rem' }}>Camera Stream Active in Backend</p>
-                      <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Webcam browser preview disabled or unavailable</p>
-                    </>
-                  ) : (
-                    <>
-                      <Camera size={36} color="var(--text-muted)" style={{ marginBottom: '12px' }} />
-                      <p style={{ fontSize: '0.9rem' }}>Monitoring Inactive</p>
-                      <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Enable monitoring above to view feed</p>
-                    </>
+                      <p style={{ fontSize: '0.9rem' }}>Initializing Live Stream...</p>
+                      <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Connecting to camera device</p>
+                    </div>
                   )}
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <Camera size={36} color="var(--text-muted)" style={{ marginBottom: '12px' }} />
+                  <p style={{ fontSize: '0.9rem' }}>Monitoring Inactive</p>
+                  <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Enable monitoring above to view feed</p>
                 </div>
               )}
 
               {/* Dynamic Overlay HUD when motion occurs */}
               {motionActive && (
-                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, border: '2px solid var(--danger)', pointerEvents: 'none', boxShadow: 'inset 0 0 30px rgba(244, 63, 94, 0.25)', borderRadius: '12px' }} />
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, border: '2px solid var(--danger)', pointerEvents: 'none', boxShadow: 'inset 0 0 30px rgba(244, 63, 94, 0.25)', borderRadius: '12px', zIndex: 3 }} />
               )}
             </div>
             
@@ -449,7 +486,7 @@ function App() {
             <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
               <Terminal size={18} color="var(--secondary)" /> System Status Logs
             </h2>
-            <div className="terminal-log">
+            <div className="terminal-log" ref={terminalContainerRef}>
               {logs.length === 0 ? (
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Waiting for system events...</div>
               ) : (
@@ -460,7 +497,6 @@ function App() {
                   </div>
                 ))
               )}
-              <div ref={terminalEndRef} />
             </div>
           </div>
         </div>
@@ -468,42 +504,106 @@ function App() {
         {/* RIGHT COLUMN: CLIPS PLAYBACK & AI CHAT */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
-          {/* VIDEO PLAYER SECTION (Toggled when clip is selected) */}
-          <div id="video-player-section" className="glass-panel" style={{ padding: '20px' }}>
-            <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-              <Video size={18} color="var(--primary)" /> Recorded Clip Viewer
-            </h2>
-            {selectedClip ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ background: '#000', borderRadius: '12px', overflow: 'hidden', height: '280px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <video 
-                    key={selectedClip.id}
-                    src={`${API_BASE}/videos/${selectedClip.filename}`} 
-                    controls 
-                    autoPlay
-                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                  />
-                </div>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <h3 style={{ fontSize: '0.95rem', fontWeight: 600 }}>{selectedClip.filename}</h3>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <Clock size={12} /> {formatDate(selectedClip.timestamp)}
-                    </span>
+          {/* EVENT ARCHIVE & PLAYBACK PANEL */}
+          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '480px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Video size={18} color="var(--primary)" /> Event Archive & Playback
+              </h2>
+              <button 
+                onClick={fetchClips} 
+                className="btn btn-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.75rem', borderRadius: '6px' }}
+                disabled={loadingClips}
+              >
+                <RefreshCw size={12} className={loadingClips ? 'animate-spin' : ''} /> Refresh
+              </button>
+            </div>
+
+            <div className="event-archive-layout">
+              {/* Left pane: Clips History List */}
+              <div className="event-archive-list">
+                {clips.length === 0 ? (
+                  <div style={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    No clips recorded yet.
                   </div>
-                  <div style={{ background: 'rgba(124, 58, 237, 0.05)', border: '1px solid rgba(124, 58, 237, 0.15)', borderRadius: '8px', padding: '12px' }}>
-                    <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <Sparkles size={12} /> Gemini Video Summary
-                    </p>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>{selectedClip.summary}</p>
+                ) : (
+                  clips.map((c) => (
+                    <div 
+                      key={c.id} 
+                      onClick={() => setSelectedClip(c)}
+                      className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''}`}
+                      style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                        <div style={{ background: 'var(--primary-glow)', padding: '8px', borderRadius: '8px', color: 'var(--primary)', flexShrink: 0 }}>
+                          <Play size={16} fill="currentColor" />
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.camera}</span>
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {c.summary}
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <button 
+                        onClick={(e) => handleDeleteClip(c.id, e)}
+                        className="btn" 
+                        style={{ padding: '6px', background: 'transparent', color: 'var(--text-muted)', border: 'none' }}
+                        onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
+                        onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Vertical Divider */}
+              <div className="event-archive-divider" />
+
+              {/* Right pane: Clip Viewer */}
+              <div className="event-archive-viewer">
+                {selectedClip ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ background: '#000', borderRadius: '12px', overflow: 'hidden', height: '220px', border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
+                      <video 
+                        key={selectedClip.id}
+                        src={`${API_BASE}/videos/${selectedClip.filename}`} 
+                        controls 
+                        autoPlay
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '4px' }}>
+                        <h3 style={{ fontSize: '0.85rem', fontWeight: 600, wordBreak: 'break-all', color: 'var(--text-primary)' }}>{selectedClip.filename}</h3>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                          <Clock size={12} /> {formatDate(selectedClip.timestamp)}
+                        </span>
+                      </div>
+                      <div style={{ background: 'rgba(124, 58, 237, 0.05)', border: '1px solid rgba(124, 58, 237, 0.15)', borderRadius: '8px', padding: '10px' }}>
+                        <p style={{ fontSize: '0.7rem', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Sparkles size={12} /> Gemini Video Summary
+                        </p>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>{selectedClip.summary}</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', border: '1px dashed var(--border-glass)', borderRadius: '12px', color: 'var(--text-muted)', padding: '20px', textAlign: 'center' }}>
+                    <Video size={32} color="var(--text-muted)" style={{ marginBottom: '10px' }} />
+                    <p style={{ fontSize: '0.85rem', fontWeight: 500 }}>No Event Selected</p>
+                    <p style={{ fontSize: '0.75rem', marginTop: '4px', maxWidth: '220px' }}>Select a clip from the history list to play and view the AI summary.</p>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div style={{ height: '180px', display: 'flex', justifyContent: 'center', alignItems: 'center', border: '1px dashed var(--border-glass)', borderRadius: '12px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                Select a clip from the gallery below to play and read summary.
-              </div>
-            )}
+            </div>
           </div>
 
           {/* AI ANALYST PANEL (RAG CHAT) */}
@@ -513,7 +613,10 @@ function App() {
             </h2>
             
             {/* Chat message space */}
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px', marginBottom: '14px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            <div 
+              ref={chatContainerRef}
+              style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px', marginBottom: '14px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}
+            >
               {chatHistory.length === 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
                   <HelpCircle size={32} color="var(--text-muted)" style={{ marginBottom: '10px' }} />
@@ -538,28 +641,117 @@ function App() {
 
                     {/* Cited references when assistant responds */}
                     {chat.role === 'assistant' && chat.clips && chat.clips.length > 0 && (
-                      <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', width: '100%' }}>Cited Clips:</span>
-                        {chat.clips.map((c, cIdx) => (
-                          <button 
-                            key={cIdx} 
-                            onClick={() => selectAndPlayClip(c.id)}
-                            className="btn"
-                            style={{ 
-                              padding: '3px 8px', 
-                              fontSize: '0.7rem', 
-                              background: 'rgba(6, 182, 212, 0.08)', 
-                              border: '1px solid rgba(6, 182, 212, 0.25)', 
-                              color: 'var(--secondary)',
-                              borderRadius: '4px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                          >
-                            <Link2 size={10} /> {c.camera} ({new Date(c.timestamp).toLocaleTimeString()})
-                          </button>
-                        ))}
+                      <div style={{ marginTop: '8px', width: '100%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          <Video size={12} color="var(--primary)" />
+                          <span>Cited Video Footage:</span>
+                        </div>
+                        <div 
+                          className="cited-clips-scroll"
+                          style={{ 
+                            display: 'flex', 
+                            gap: '10px', 
+                            overflowX: 'auto', 
+                            paddingBottom: '8px', 
+                            width: '100%',
+                            scrollBehavior: 'smooth'
+                          }}
+                        >
+                          {chat.clips.map((c, cIdx) => {
+                            const filename = c.filename || c.filepath.split(/[/\\]/).pop() || '';
+                            const videoUrl = `${API_BASE}/videos/${filename}`;
+                            const matchPercentage = c.score ? Math.round(c.score * 100) : null;
+                            
+                            return (
+                              <div 
+                                key={cIdx} 
+                                className="glass-panel"
+                                style={{ 
+                                  flexShrink: 0, 
+                                  width: '200px', 
+                                  padding: '8px', 
+                                  borderRadius: '10px', 
+                                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                                  background: 'rgba(15, 23, 42, 0.6)',
+                                }}
+                              >
+                                <div style={{ 
+                                  width: '100%', 
+                                  height: '112px', 
+                                  background: '#020617', 
+                                  borderRadius: '6px', 
+                                  overflow: 'hidden', 
+                                  position: 'relative',
+                                  border: '1px solid rgba(255, 255, 255, 0.05)',
+                                  marginBottom: '6px'
+                                }}>
+                                  <video 
+                                    src={videoUrl} 
+                                    controls 
+                                    preload="metadata"
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                                  />
+                                </div>
+                                
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span 
+                                      title={c.camera}
+                                      style={{ 
+                                        fontSize: '0.75rem', 
+                                        fontWeight: 600, 
+                                        color: 'var(--text-primary)',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                        maxWidth: '110px'
+                                      }}
+                                    >
+                                      {c.camera}
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                                      {new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                    </span>
+                                  </div>
+                                  
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                                    {matchPercentage !== null && (
+                                      <span 
+                                        style={{ 
+                                          fontSize: '0.65rem', 
+                                          color: 'var(--secondary)', 
+                                          background: 'rgba(6, 182, 212, 0.1)', 
+                                          padding: '1px 5px', 
+                                          borderRadius: '4px',
+                                          fontWeight: 600
+                                        }}
+                                      >
+                                        {matchPercentage}% Match
+                                      </span>
+                                    )}
+                                    <button 
+                                      onClick={() => selectAndPlayClip(c.id)}
+                                      className="btn btn-secondary"
+                                      style={{ 
+                                        padding: '2px 8px', 
+                                        fontSize: '0.65rem', 
+                                        height: '20px',
+                                        borderRadius: '4px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        background: 'rgba(255, 255, 255, 0.05)',
+                                        border: '1px solid rgba(255, 255, 255, 0.08)'
+                                      }}
+                                    >
+                                      <Link2 size={10} /> View
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -570,7 +762,6 @@ function App() {
                   <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Searching vectors and summarizing...
                 </div>
               )}
-              <div ref={chatEndRef} />
             </div>
 
             {/* Question query input */}
@@ -587,65 +778,6 @@ function App() {
                 <Send size={16} />
               </button>
             </form>
-          </div>
-
-          {/* EVENTS ARCHIVE / CLIPS GALLERY */}
-          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '350px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Clock size={18} color="var(--secondary)" /> Event Clip History
-              </h2>
-              <button 
-                onClick={fetchClips} 
-                className="btn btn-secondary" 
-                style={{ padding: '4px 8px', fontSize: '0.75rem', borderRadius: '6px' }}
-                disabled={loadingClips}
-              >
-                <RefreshCw size={12} className={loadingClips ? 'animate-spin' : ''} /> Refresh
-              </button>
-            </div>
-
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {clips.length === 0 ? (
-                <div style={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  No clips recorded yet.
-                </div>
-              ) : (
-                clips.map((c) => (
-                  <div 
-                    key={c.id} 
-                    onClick={() => setSelectedClip(c)}
-                    className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''}`}
-                    style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s' }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
-                      <div style={{ background: 'var(--primary-glow)', padding: '8px', borderRadius: '8px', color: 'var(--primary)', flexShrink: 0 }}>
-                        <Play size={16} fill="currentColor" />
-                      </div>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.camera}</span>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{new Date(c.timestamp).toLocaleTimeString()}</span>
-                        </div>
-                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {c.summary}
-                        </p>
-                      </div>
-                    </div>
-                    
-                    <button 
-                      onClick={(e) => handleDeleteClip(c.id, e)}
-                      className="btn" 
-                      style={{ padding: '6px', background: 'transparent', color: 'var(--text-muted)', border: 'none' }}
-                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
-                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
           </div>
           
         </div>

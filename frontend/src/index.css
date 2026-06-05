@@ -283,3 +283,52 @@ input:focus, select:focus, textarea:focus {
   color: var(--text-muted);
   margin-right: 8px;
 }
+
+/* Merged Event Archive & Playback Layout */
+.event-archive-layout {
+  display: flex;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.event-archive-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-width: 0;
+  padding-right: 4px;
+}
+
+.event-archive-viewer {
+  flex: 1.2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.event-archive-divider {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  align-self: stretch;
+}
+
+@media (max-width: 1024px) {
+  .event-archive-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .event-archive-list, .event-archive-viewer {
+    flex: none;
+    height: auto;
+    overflow-y: visible;
+  }
+  .event-archive-divider {
+    display: none;
+  }
+}
+

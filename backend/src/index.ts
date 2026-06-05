@@ -13,7 +13,7 @@ import clipsRouter from './routes/clips';
 import ragRouter from './routes/rag';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { MotionDetector } from './camera/motion-detector';
-import { recordClip } from './camera/recorder';
+import { recordClip, stopActiveRecording } from './camera/recorder';
 import { summarizeVideo, generateTextEmbedding } from './services/gemini';
 import prisma from './services/db';
 
@@ -172,6 +172,15 @@ async function startDetector() {
     stopDetector();
   });
 
+  activeDetector.on('frame', (frameData: Buffer) => {
+    broadcast({
+      type: 'frame',
+      width: 320,
+      height: 240,
+      image: frameData.toString('base64')
+    });
+  });
+
   activeDetector.start();
   isDetectorRunning = true;
   broadcast({ type: 'status', status: 'Monitoring' });
@@ -282,13 +291,74 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
   }
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  broadcastLog('SIGTERM received. Cleaning up...');
+// Graceful shutdown helper
+async function shutdown() {
+  console.log('[Server] Graceful shutdown initiated. Cleaning up...');
+  
+  // 1. Stop motion detector (kills its ffmpeg child process)
   await stopDetector();
+  
+  // 2. Stop any active recording process (kills its ffmpeg child process)
+  stopActiveRecording();
+  
+  // 3. Close all active WebSocket connections and close the WebSocket server
+  console.log('[Server] Closing WebSocket connections...');
+  for (const client of clients) {
+    try {
+      client.terminate();
+    } catch (e) {
+      console.error('[Server] Error terminating WS client:', e);
+    }
+  }
+  
+  await new Promise<void>((resolve) => {
+    wss.close(() => {
+      console.log('[Server] WebSocket server closed.');
+      resolve();
+    });
+  });
+
+  // 4. Close the Express/HTTP server to release the port
+  console.log('[Server] Closing HTTP server...');
+  if (typeof (server as any).closeAllConnections === 'function') {
+    (server as any).closeAllConnections();
+  }
+  await new Promise<void>((resolve) => {
+    server.close(() => {
+      console.log('[Server] HTTP server closed.');
+      resolve();
+    });
+  });
+
+  // 5. Disconnect Prisma client
+  console.log('[Server] Disconnecting from database...');
   await prisma.$disconnect();
+  
+  console.log('[Server] Cleanup complete.');
+}
+
+// Signal handlers
+process.on('SIGINT', async () => {
+  console.log('[Server] SIGINT received.');
+  await shutdown();
   process.exit(0);
 });
+
+process.on('SIGTERM', async () => {
+  console.log('[Server] SIGTERM received.');
+  await shutdown();
+  process.exit(0);
+});
+
+// nodemon sends SIGUSR2 on restarts.
+// We must call process.kill(process.pid, 'SIGUSR2') once cleanup is complete
+// to allow nodemon to proceed with restarting.
+process.once('SIGUSR2', async () => {
+  console.log('[Server] SIGUSR2 received (nodemon restarting).');
+  await shutdown();
+  process.kill(process.pid, 'SIGUSR2');
+});
+
 
 server.listen(PORT, async () => {
   console.log(`[Server] Express listening on port ${PORT}`);

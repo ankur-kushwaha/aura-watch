@@ -179,6 +179,9 @@ export class MotionDetector extends EventEmitter {
    * Calculate pixel differences between current frame and previous frame.
    */
   private processFrame(frameData: Buffer) {
+    // Emit the raw frame copy for streaming
+    this.emit('frame', Buffer.from(frameData));
+
     if (!this.prevFrame) {
       this.prevFrame = Buffer.from(frameData);
       return;

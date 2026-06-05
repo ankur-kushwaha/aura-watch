@@ -60,7 +60,7 @@ export async function summarizeVideo(filepath: string, cameraName: string): Prom
   try {
     // 3. Generate content from the video
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
       contents: [
         {
           role: 'user',
@@ -106,8 +106,11 @@ export async function generateTextEmbedding(text: string): Promise<number[]> {
   
   try {
     const response = await ai.models.embedContent({
-      model: 'text-embedding-004',
+      model: 'gemini-embedding-2',
       contents: text,
+      config: {
+        outputDimensionality: 768,
+      }
     });
 
     // Check embeddings array in the response
@@ -148,7 +151,7 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
     });
 

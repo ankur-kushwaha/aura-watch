@@ -49,12 +49,14 @@ router.post('/query', async (req: Request, res: Response) => {
     // 5. Construct list of cited clips for the frontend
     const citedClips = searchResults.map((result: any) => {
       const payload = result.payload;
+      const filename = payload.filename || (payload.filepath ? payload.filepath.split(/[/\\]/).pop() : '');
       return {
         id: payload.mongoId,
         camera: payload.camera,
         timestamp: payload.timestamp,
         summary: payload.summary,
         filepath: payload.filepath,
+        filename: filename,
         score: result.score,
       };
     });
