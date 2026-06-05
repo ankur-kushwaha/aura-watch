@@ -203,4 +203,38 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
   }
 });
 
+export type StreamFileRequestHandler = (deviceId: string, filename: string) => Promise<{ contentType: string, data: Buffer | string }>;
+let onStreamFileRequestCallback: StreamFileRequestHandler | null = null;
+
+export function registerOnStreamFileRequest(cb: StreamFileRequestHandler) {
+  onStreamFileRequestCallback = cb;
+}
+
+/**
+ * GET /api/devices/:deviceId/stream/:filename
+ * Proxy endpoint to pull HLS playlist/segments from edge device over WebSocket
+ */
+router.get('/:deviceId/stream/:filename', async (req: Request, res: Response) => {
+  const { deviceId, filename } = req.params;
+
+  if (!onStreamFileRequestCallback) {
+    return res.status(500).json({ error: 'Stream proxy not initialized' });
+  }
+
+  try {
+    const result = await onStreamFileRequestCallback(deviceId, filename);
+    res.setHeader('Content-Type', result.contentType);
+    res.send(result.data);
+  } catch (error: any) {
+    console.error(`[Stream Proxy] Error proxying ${filename} for ${deviceId}:`, error.message);
+    if (error.message.includes('offline')) {
+      res.status(503).send(error.message);
+    } else if (error.message.includes('Timeout') || error.message.includes('timeout')) {
+      res.status(504).send(error.message);
+    } else {
+      res.status(404).send(error.message);
+    }
+  }
+});
+
 export default router;

@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import * as path from 'path';
 
 export interface MotionDetectorOptions {
   streamUrl: string;
@@ -7,6 +8,7 @@ export interface MotionDetectorOptions {
   motionThreshold?: number;       // Pixel intensity difference threshold (0-255)
   pixelChangeThreshold?: number;  // Ratio of changed pixels to trigger motion (0-1)
   fps?: number;                   // Frames per second to analyze
+  hlsOutputDir?: string;          // Optional HLS stream output directory
 }
 
 export class MotionDetector extends EventEmitter {
@@ -15,6 +17,7 @@ export class MotionDetector extends EventEmitter {
   private motionThreshold: number;
   private pixelChangeThreshold: number;
   private fps: number;
+  public hlsOutputDir?: string;
   
   private ffmpegProcess: ChildProcess | null = null;
   private prevFrame: Buffer | null = null;
@@ -31,6 +34,7 @@ export class MotionDetector extends EventEmitter {
     this.motionThreshold = options.motionThreshold ?? 25;
     this.pixelChangeThreshold = options.pixelChangeThreshold ?? 0.02; // 2% change
     this.fps = options.fps ?? 2; // Check 2 frames per second
+    this.hlsOutputDir = options.hlsOutputDir;
   }
 
   /**
@@ -44,41 +48,58 @@ export class MotionDetector extends EventEmitter {
     this.isMotionActive = false;
     
     let args: string[] = [];
+    const hlsPlaylistPath = this.hlsOutputDir ? path.join(this.hlsOutputDir, 'index.m3u8') : null;
     
     if (this.cameraType === 'webcam') {
       if (process.platform === 'darwin') {
         // macOS Webcam capture using avfoundation
         args = [
+          '-y',
           '-f', 'avfoundation',
           '-framerate', '30',
-          '-i', '0',
-          '-vf', `fps=${this.fps},scale=${this.width}:${this.height},format=gray`,
-          '-f', 'image2pipe',
-          '-vcodec', 'pgm',
-          '-'
+          '-i', '0'
         ];
       } else {
         // Linux Webcam capture using v4l2
         args = [
+          '-y',
           '-f', 'v4l2',
-          '-i', '/dev/video0',
-          '-vf', `fps=${this.fps},scale=${this.width}:${this.height},format=gray`,
-          '-f', 'image2pipe',
-          '-vcodec', 'pgm',
-          '-'
+          '-i', '/dev/video0'
         ];
       }
     } else {
       // RTSP Stream capture
       args = [
+        '-y',
         '-rtsp_transport', 'tcp',
-        '-i', this.streamUrl,
-        '-vf', `fps=${this.fps},scale=${this.width}:${this.height},format=gray`,
-        '-f', 'image2pipe',
-        '-vcodec', 'pgm',
-        '-'
+        '-i', this.streamUrl
       ];
     }
+
+    if (hlsPlaylistPath) {
+      // Output 1: HLS Stream
+      args.push(
+        '-r', '30',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-g', '30',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        '-hls_time', '2',
+        '-hls_list_size', '5',
+        '-hls_flags', 'delete_segments',
+        hlsPlaylistPath
+      );
+    }
+
+    // Output 2: stdout pipe for grayscale motion detection
+    args.push(
+      '-vf', `fps=${this.fps},scale=${this.width}:${this.height},format=gray`,
+      '-f', 'image2pipe',
+      '-vcodec', 'pgm',
+      '-'
+    );
 
     console.log(`[Detector] Spawning: ffmpeg ${args.join(' ')}`);
     this.emit('log', `Starting detector ffmpeg process...`);

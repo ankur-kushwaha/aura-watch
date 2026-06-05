@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import * as https from 'https';
+import { spawn } from 'child_process';
 import { WebSocket } from 'ws';
 import dotenv from 'dotenv';
 import { MotionDetector } from './motion-detector';
@@ -14,6 +15,7 @@ const CLOUD_URL = process.env.CLOUD_URL || 'http://localhost:5000';
 const CLOUD_WS_URL = process.env.CLOUD_WS_URL || 'ws://localhost:5000';
 const DEVICE_NAME = process.env.DEVICE_NAME || 'Office Edge Device';
 const LOCAL_VIDEO_DIR = process.env.LOCAL_VIDEO_DIR || path.join(__dirname, '../storage/temp_clips');
+const HLS_DIR = path.join(__dirname, '../storage/hls');
 
 // Global state
 let deviceId = '';
@@ -24,6 +26,8 @@ let ws: WebSocket | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let streamFrames = false;
+let isStreaming = true; // HLS stream is on by default and always available
+let standaloneHlsProcess: any = null;
 
 // Ensure local storage directory exists
 if (!fs.existsSync(LOCAL_VIDEO_DIR)) {
@@ -157,6 +161,119 @@ async function registerDevice(): Promise<any> {
   });
 }
 
+function prepareHlsDirectory() {
+  if (!fs.existsSync(HLS_DIR)) {
+    fs.mkdirSync(HLS_DIR, { recursive: true });
+  } else {
+    clearHlsDirectory();
+  }
+}
+
+function clearHlsDirectory() {
+  if (fs.existsSync(HLS_DIR)) {
+    const files = fs.readdirSync(HLS_DIR);
+    for (const file of files) {
+      try {
+        fs.unlinkSync(path.join(HLS_DIR, file));
+      } catch (e) {}
+    }
+  }
+}
+
+function startStandaloneHls() {
+  if (standaloneHlsProcess) return;
+  
+  sendLog('Starting standalone HLS streaming process...');
+  prepareHlsDirectory();
+  
+  let args: string[] = [];
+  const hlsPlaylistPath = path.join(HLS_DIR, 'index.m3u8');
+  
+  if (currentConfig.cameraType === 'webcam') {
+    if (process.platform === 'darwin') {
+      args = [
+        '-y',
+        '-f', 'avfoundation',
+        '-framerate', '30',
+        '-i', '0',
+        '-r', '30',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-g', '30',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        '-hls_time', '2',
+        '-hls_list_size', '5',
+        '-hls_flags', 'delete_segments',
+        hlsPlaylistPath
+      ];
+    } else {
+      args = [
+        '-y',
+        '-f', 'v4l2',
+        '-i', '/dev/video0',
+        '-r', '30',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-g', '30',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        '-hls_time', '2',
+        '-hls_list_size', '5',
+        '-hls_flags', 'delete_segments',
+        hlsPlaylistPath
+      ];
+    }
+  } else {
+    args = [
+      '-y',
+      '-rtsp_transport', 'tcp',
+      '-i', currentConfig.streamUrl,
+      '-r', '30',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-g', '30',
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      '-hls_time', '2',
+      '-hls_list_size', '5',
+      '-hls_flags', 'delete_segments',
+      hlsPlaylistPath
+    ];
+  }
+  
+  console.log(`[Edge Standalone HLS] Spawning: ffmpeg ${args.join(' ')}`);
+  standaloneHlsProcess = spawn('ffmpeg', args);
+  
+  standaloneHlsProcess.stderr?.on('data', (data: any) => {
+    console.error(`[Edge Standalone HLS ffmpeg stderr] ${data.toString().trim()}`);
+  });
+  
+  standaloneHlsProcess.on('error', (err: any) => {
+    console.error(`[Edge Standalone HLS] Failed to start process:`, err);
+    standaloneHlsProcess = null;
+  });
+  
+  standaloneHlsProcess.on('close', (code: number) => {
+    console.log(`[Edge Standalone HLS] Process exited with code ${code}`);
+    standaloneHlsProcess = null;
+  });
+}
+
+function stopStandaloneHls() {
+  if (standaloneHlsProcess) {
+    sendLog('Stopping standalone HLS streaming process...');
+    try {
+      standaloneHlsProcess.kill('SIGKILL');
+    } catch (e) {}
+    standaloneHlsProcess = null;
+  }
+  clearHlsDirectory();
+}
+
 /**
  * Stop motion detector process
  */
@@ -179,18 +296,15 @@ async function startDetector() {
     return;
   }
 
-  if (isRecording) {
-    sendLog('Currently recording. Detector will start once recording completes.');
-    return;
-  }
-
   sendLog(`Starting motion detector for camera: ${currentConfig.name}`);
+  prepareHlsDirectory();
   
   activeDetector = new MotionDetector({
     streamUrl: currentConfig.streamUrl,
     cameraType: currentConfig.cameraType,
     motionThreshold: currentConfig.motionThreshold,
     pixelChangeThreshold: currentConfig.pixelChangeThreshold,
+    hlsOutputDir: HLS_DIR // Always generate HLS output in combined mode
   });
 
   activeDetector.on('log', (msg) => {
@@ -202,9 +316,10 @@ async function startDetector() {
     await triggerClipRecording();
   });
 
-  activeDetector.on('error', (err) => {
+  activeDetector.on('error', async (err) => {
     sendLog(`[Detector Error] ${err.message}`);
-    stopDetector();
+    await stopDetector();
+    await updateCameraState();
   });
 
   activeDetector.on('frame', (frameData: Buffer) => {
@@ -221,53 +336,121 @@ async function startDetector() {
   sendStatusChange('Monitoring');
 }
 
+async function updateCameraState() {
+  console.log(`[Edge State Machine] Updating processes. Enabled: ${currentConfig.enabled}, Streaming: ${isStreaming}`);
+  
+  if (currentConfig.enabled) {
+    stopStandaloneHls();
+    if (!activeDetector) {
+      await startDetector();
+    }
+  } else {
+    await stopDetector();
+    startStandaloneHls();
+  }
+}
+
+function concatHlsSegments(outputMp4Path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      const files = fs.readdirSync(HLS_DIR)
+        .filter(f => f.endsWith('.ts'))
+        .map(f => {
+          const match = f.match(/(\d+)\.ts$/);
+          const num = match ? parseInt(match[1]) : 0;
+          return { name: f, num };
+        })
+        .sort((a, b) => a.num - b.num)
+        .map(f => path.join(HLS_DIR, f.name));
+
+      if (files.length === 0) {
+        return reject(new Error('No segments found to concatenate'));
+      }
+
+      // Write a temp text file for the concat demuxer
+      const txtPath = path.join(HLS_DIR, `concat_${Date.now()}.txt`);
+      const content = files.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n');
+      fs.writeFileSync(txtPath, content, 'utf8');
+
+      const args = [
+        '-y',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', txtPath,
+        '-c', 'copy',
+        outputMp4Path
+      ];
+
+      console.log(`[Concat] Spawning ffmpeg ${args.join(' ')}`);
+      const proc = spawn('ffmpeg', args);
+
+      let stderr = '';
+      proc.stderr?.on('data', (d) => stderr += d.toString());
+
+      proc.on('close', (code) => {
+        try {
+          fs.unlinkSync(txtPath);
+        } catch (e) {}
+
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`FFmpeg concat exited with code ${code}: ${stderr}`));
+        }
+      });
+
+      proc.on('error', (err) => {
+        try {
+          fs.unlinkSync(txtPath);
+        } catch (e) {}
+        reject(err);
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 /**
- * Trigger recording of a 10s video clip
+ * Trigger recording of a 10s video clip using HLS segments without interrupting live stream
  */
 async function triggerClipRecording() {
   if (isRecording) return;
   isRecording = true;
 
-  // 1. Stop detector to release camera lock
-  await stopDetector();
   sendStatusChange('Recording');
-  sendLog(`Camera stream released. Starting 10-second recording...`);
+  sendLog(`Motion detected. Collecting 10 seconds of video feed...`);
 
   const timestamp = new Date();
   const filename = `clip_${timestamp.getTime()}_${deviceId}.mp4`;
   const outputPath = path.join(LOCAL_VIDEO_DIR, filename);
 
-  try {
-    // 2. Record video
-    await recordClip({
-      streamUrl: currentConfig.streamUrl,
-      cameraType: currentConfig.cameraType,
-      outputPath: outputPath,
-      durationSeconds: 10
-    });
+  // Wait 10 seconds for the current segments to be generated fully
+  setTimeout(async () => {
+    try {
+      sendLog(`Compiling HLS segments into clip: ${filename}...`);
+      await concatHlsSegments(outputPath);
+      
+      sendLog(`Clip compiled successfully: ${filename}. Uploading to Cloud...`);
+      
+      uploadRecordedClip(outputPath, filename)
+        .then(() => {
+          sendLog(`Successfully uploaded clip to Cloud: ${filename}`);
+          if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
+          }
+        })
+        .catch((err) => {
+          sendLog(`[Upload Error] Failed to upload clip: ${err.message}`);
+        });
 
-    sendLog(`Clip recording finished: ${filename}. Uploading to Cloud...`);
-    
-    // 3. Upload to cloud backend asynchronously so we can resume monitoring fast
-    uploadRecordedClip(outputPath, filename)
-      .then(() => {
-        sendLog(`Successfully uploaded clip to Cloud: ${filename}`);
-        // Delete local temp video clip
-        if (fs.existsSync(outputPath)) {
-          fs.unlinkSync(outputPath);
-        }
-      })
-      .catch((err) => {
-        sendLog(`[Upload Error] Failed to upload clip: ${err.message}`);
-      });
-
-  } catch (error: any) {
-    sendLog(`Recording failed: ${error.message}`);
-  }
-
-  // 4. Resume detector
-  isRecording = false;
-  await startDetector();
+    } catch (error: any) {
+      sendLog(`Clip generation failed: ${error.message}`);
+    } finally {
+      isRecording = false;
+      await updateCameraState();
+    }
+  }, 10000);
 }
 
 /**
@@ -315,8 +498,6 @@ function connectWS() {
           const newConfig = data.config;
           sendLog(`Applying new configuration: ${newConfig.name}`);
           
-          const wasRunning = currentConfig.enabled;
-          
           currentConfig = {
             name: newConfig.name,
             cameraType: newConfig.cameraType,
@@ -326,18 +507,62 @@ function connectWS() {
             pixelChangeThreshold: newConfig.pixelChangeThreshold,
           };
 
-          // Restart detector if it was running or should run
-          await stopDetector();
-          if (currentConfig.enabled) {
-            await startDetector();
-          }
+          await updateCameraState();
           break;
         }
         case 'toggle_stream': {
-          streamFrames = !!data.stream;
-          console.log(`[Edge WS] Frame streaming toggled: ${streamFrames}`);
+          // Keep this structure for compatibility but our HLS stream is always active
+          console.log(`[Edge WS] HLS stream always active. Toggle ignored.`);
           break;
         }
+        case 'request_stream_file': {
+          const { requestId, filename } = data;
+          const filePath = path.join(HLS_DIR, filename);
+          
+          if (!fs.existsSync(filePath)) {
+            ws?.send(JSON.stringify({
+              type: 'response_stream_file',
+              requestId,
+              success: false,
+              error: `File ${filename} not found`
+            }));
+            break;
+          }
+
+          try {
+            const isPlaylist = filename.endsWith('.m3u8');
+            const contentType = isPlaylist ? 'application/x-mpegURL' : 'video/MP2T';
+            
+            if (isPlaylist) {
+              const fileContent = fs.readFileSync(filePath, 'utf8');
+              ws?.send(JSON.stringify({
+                type: 'response_stream_file',
+                requestId,
+                success: true,
+                contentType,
+                data: fileContent
+              }));
+            } else {
+              const fileContent = fs.readFileSync(filePath);
+              ws?.send(JSON.stringify({
+                type: 'response_stream_file',
+                requestId,
+                success: true,
+                contentType,
+                data: fileContent.toString('base64')
+              }));
+            }
+          } catch (err: any) {
+            ws?.send(JSON.stringify({
+              type: 'response_stream_file',
+              requestId,
+              success: false,
+              error: `Error reading file: ${err.message}`
+            }));
+          }
+          break;
+        }
+
       }
     } catch (err) {
       console.error('[Edge WS] Error processing message:', err);
@@ -372,7 +597,11 @@ async function shutdown() {
   cleanupWS();
   if (reconnectTimer) clearTimeout(reconnectTimer);
   
-  await stopDetector();
+  if (activeDetector) {
+    activeDetector.stop();
+    activeDetector = null;
+  }
+  stopStandaloneHls();
   stopActiveRecording();
 
   if (ws) {
@@ -385,6 +614,10 @@ async function shutdown() {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+process.once('SIGUSR2', async () => {
+  console.log('[Edge] SIGUSR2 received (nodemon restarting).');
+  await shutdown();
+});
 
 // Main bootstrap function
 async function bootstrap() {
@@ -406,10 +639,8 @@ async function bootstrap() {
     // Connect real-time socket
     connectWS();
 
-    // Start detector if enabled
-    if (currentConfig.enabled) {
-      await startDetector();
-    }
+    // Start appropriate camera/streaming processes
+    await updateCameraState();
   } catch (err: any) {
     console.error('[Edge] Bootstrap failed:', err.message);
     console.log('[Edge] Retrying registration in 10s...');

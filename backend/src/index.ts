@@ -11,7 +11,7 @@ dotenv.config();
 
 import clipsRouter from './routes/clips';
 import ragRouter from './routes/rag';
-import devicesRouter, { registerOnConfigUpdated, registerOnClipUploaded } from './routes/devices';
+import devicesRouter, { registerOnConfigUpdated, registerOnClipUploaded, registerOnStreamFileRequest } from './routes/devices';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { summarizeVideo, generateTextEmbedding } from './services/gemini';
 import prisma from './services/db';
@@ -77,6 +77,40 @@ registerOnConfigUpdated((deviceId, config) => {
 
 registerOnClipUploaded(async (filepath, filename, timestamp, deviceId) => {
   await processVideoClipInBackground(filepath, filename, timestamp, deviceId);
+});
+
+interface PendingStreamRequest {
+  resolve: (value: { contentType: string; data: Buffer | string }) => void;
+  reject: (reason: any) => void;
+  timeout: NodeJS.Timeout;
+}
+
+const pendingStreamRequests = new Map<string, PendingStreamRequest>();
+let nextStreamRequestId = 0;
+
+registerOnStreamFileRequest((deviceId, filename) => {
+  return new Promise((resolve, reject) => {
+    const deviceSocket = activeDevices.get(deviceId);
+    if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) {
+      return reject(new Error(`Edge device ${deviceId} is offline`));
+    }
+
+    const requestId = `req_${Date.now()}_${nextStreamRequestId++}`;
+    
+    // 5 second timeout
+    const timeout = setTimeout(() => {
+      pendingStreamRequests.delete(requestId);
+      reject(new Error(`Timeout waiting for file ${filename} from device`));
+    }, 5000);
+
+    pendingStreamRequests.set(requestId, { resolve, reject, timeout });
+
+    deviceSocket.send(JSON.stringify({
+      type: 'request_stream_file',
+      requestId,
+      filename
+    }));
+  });
 });
 
 /**
@@ -215,6 +249,24 @@ wss.on('connection', async (ws: WebSocket, req) => {
               image: data.image
             });
             break;
+          case 'response_stream_file': {
+            const { requestId, success, contentType, data: fileData, error } = data;
+            const pending = pendingStreamRequests.get(requestId);
+            if (pending) {
+              clearTimeout(pending.timeout);
+              pendingStreamRequests.delete(requestId);
+              
+              if (success) {
+                const bufferOrString = contentType.startsWith('text/') || contentType === 'application/x-mpegURL'
+                  ? fileData
+                  : Buffer.from(fileData, 'base64');
+                pending.resolve({ contentType, data: bufferOrString });
+              } else {
+                pending.reject(new Error(error || 'Failed to fetch HLS file from device'));
+              }
+            }
+            break;
+          }
           case 'log':
             broadcastLogToSubscribedUIs(deviceId, data.message);
             break;
