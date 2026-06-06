@@ -461,24 +461,24 @@ function App() {
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1440px', margin: '0 auto' }}>
+    <div className="p-6 max-w-[1440px] mx-auto">
 
       {/* HEADER SECTION */}
-      <header className="glass-panel" style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ background: 'var(--primary)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 15px var(--primary-glow)' }}>
+      <header className="glass-panel p-5 px-6 flex justify-between items-center mb-6">
+        <div className="flex items-center gap-3">
+          <div className="bg-primary p-2.5 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(124,58,237,0.2)]">
             <Cpu size={24} color="white" />
           </div>
           <div>
-            <h1 className="text-gradient-purple" style={{ fontSize: '1.6rem', fontWeight: 800 }}>AURA WATCH AI</h1>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Edge Surveillance Vector Search & RAG Dashboard</p>
+            <h1 className="text-gradient-purple text-[1.6rem] font-extrabold">AURA WATCH AI</h1>
+            <p className="text-[0.8rem] text-text-muted">Edge Surveillance Vector Search & RAG Dashboard</p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="flex items-center gap-4">
           {selectedDeviceId && (
             <div className={`status-indicator ${status.toLowerCase().replace(' ', '')}`}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor', display: 'inline-block' }}></span>
+              <span className="w-2 h-2 rounded-full bg-current inline-block"></span>
               {status}
             </div>
           )}
@@ -486,75 +486,58 @@ function App() {
       </header>
 
       {/* DASHBOARD LAYOUT */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.2fr)', gap: '24px' }}>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
         {/* LEFT COLUMN: DEVICES & CAMERA */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div className="lg:col-span-4 flex flex-col gap-6">
 
           {/* DEVICE SELECTOR PANEL */}
-          <div className="glass-panel" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Cpu size={18} color="var(--primary)" /> Registered Edge Devices
+          <div className="glass-panel p-5">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-[1.1rem] flex items-center gap-2">
+                <Cpu size={18} color="var(--color-primary)" /> Registered Edge Devices
               </h2>
               <button
                 onClick={() => fetchDevices()}
-                className="btn btn-secondary"
-                style={{ padding: '4px 8px', fontSize: '0.75rem', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
               >
                 <RefreshCw size={12} /> Refresh List
               </button>
             </div>
 
             {devices.length === 0 ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: '16px', border: '1px dashed var(--border-glass)', borderRadius: '8px' }}>
+              <div className="text-text-muted text-[0.85rem] text-center p-4 border border-dashed border-border-glass rounded-lg">
                 No edge devices registered. Run the edge agent script on a device to register.
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <div className="flex flex-col gap-2.5">
+                <div className="flex gap-2.5 flex-wrap">
                   {devices.map((dev) => {
                     const isSelected = dev.deviceId === selectedDeviceId;
                     const isOnline = dev.status !== 'Offline';
                     const statusColor =
-                      dev.status === 'Monitoring' ? 'var(--success)' :
-                        dev.status === 'Recording' ? 'var(--danger)' :
-                          dev.status === 'Processing Video' || dev.status === 'Processing' ? 'var(--primary)' :
-                            dev.status === 'Idle' ? 'var(--secondary)' : 'var(--text-muted)';
+                      dev.status === 'Monitoring' ? 'var(--color-success)' :
+                        dev.status === 'Recording' ? 'var(--color-danger)' :
+                          dev.status === 'Processing Video' || dev.status === 'Processing' ? 'var(--color-primary)' :
+                            dev.status === 'Idle' ? 'var(--color-secondary)' : 'var(--color-text-muted)';
 
                     return (
                       <div
                         key={dev.deviceId}
                         onClick={() => setSelectedDeviceId(dev.deviceId)}
-                        className={`glass-panel interactive ${isSelected ? 'active' : ''}`}
-                        style={{
-                          padding: '10px 14px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '12px',
-                          cursor: 'pointer',
-                          border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-glass)',
-                          background: isSelected ? 'rgba(124, 58, 237, 0.1)' : 'rgba(255, 255, 255, 0.02)',
-                          borderRadius: '10px',
-                          textAlign: 'left',
-                          flex: '1 1 calc(50% - 10px)',
-                          minWidth: '220px'
-                        }}
+                        className={`glass-panel interactive ${isSelected ? 'active border-primary bg-[rgba(124,58,237,0.1)]' : 'border-border-glass bg-[rgba(255,255,255,0.02)]'} py-2.5 px-3.5 flex items-center justify-between gap-3 cursor-pointer rounded-[10px] text-left flex-auto w-full sm:w-[calc(50%-10px)] min-w-[220px]`}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-                          <span style={{
-                            width: '8px',
-                            height: '8px',
-                            borderRadius: '50%',
-                            background: statusColor,
-                            display: 'inline-block',
-                            flexShrink: 0,
-                            boxShadow: isOnline && dev.status !== 'Idle' ? `0 0 8px ${statusColor}` : 'none'
-                          }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dev.name}</div>
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>ID: {dev.deviceId} • {dev.status}</div>
+                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          <span
+                            className="w-2 h-2 rounded-full inline-block flex-shrink-0"
+                            style={{
+                              background: statusColor,
+                              boxShadow: isOnline && dev.status !== 'Idle' ? `0 0 8px ${statusColor}` : 'none'
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[0.85rem] font-semibold text-text-primary overflow-hidden text-ellipsis whitespace-nowrap">{dev.name}</div>
+                            <div className="text-[0.7rem] text-text-muted overflow-hidden text-ellipsis whitespace-nowrap">ID: {dev.deviceId} • {dev.status}</div>
                           </div>
                         </div>
 
@@ -563,18 +546,7 @@ function App() {
                             e.stopPropagation();
                             handleToggleDeviceMonitoring(dev.deviceId, dev.enabled);
                           }}
-                          className={`btn ${dev.enabled && isOnline ? 'btn-primary' : 'btn-secondary'}`}
-                          style={{
-                            padding: '4px 8px',
-                            fontSize: '0.7rem',
-                            borderRadius: '6px',
-                            height: '28px',
-                            flexShrink: 0,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            fontWeight: 600
-                          }}
+                          className={`btn ${dev.enabled && isOnline ? 'btn-primary' : 'btn-secondary'} py-1 px-2 text-[0.7rem] rounded-md h-[28px] shrink-0 flex items-center gap-1 font-semibold`}
                           disabled={!isOnline}
                         >
                           {dev.enabled && isOnline ? (
@@ -596,33 +568,33 @@ function App() {
           </div>
 
           {/* CAMERA FEED */}
-          <div className="glass-panel" style={{ padding: '20px', position: 'relative' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Video size={18} color="var(--secondary)" /> Live Camera Feed
+          <div className="glass-panel p-5 relative">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-[1.1rem] flex items-center gap-2">
+                <Video size={18} color="var(--color-secondary)" /> Live Camera Feed
               </h2>
               {motionActive && (
-                <div style={{ color: 'var(--danger)', fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor', display: 'inline-block', animation: 'pulse-red 0.5s infinite' }}></span>
+                <div className="text-danger text-[0.8rem] font-semibold flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-current inline-block animate-[pulse-danger_0.5s_infinite]"></span>
                   MOTION DETECTED: {(motionRatio * 100).toFixed(1)}%
                 </div>
               )}
             </div>
 
             {/* Video Feed Wrapper */}
-            <div style={{ background: '#090d16', borderRadius: '12px', height: '240px', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative', overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            <div className="bg-[#090d16] rounded-xl h-[240px] flex justify-center items-center relative overflow-hidden border border-[rgba(255,255,255,0.05)]">
 
               {selectedDeviceId && status !== 'Offline' ? (
-                <div style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                <div className="w-full h-full relative flex justify-center items-center">
                   {status === 'Recording' ? (
-                    <div style={{ position: 'absolute', zIndex: 2, background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(244,63,94,0.4)', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
-                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)', display: 'inline-block', animation: 'pulse-red 0.8s infinite' }}></span>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'white', letterSpacing: '0.05em' }}>RECORDING FOOTAGE...</span>
+                    <div className="absolute z-10 bg-[rgba(0,0,0,0.7)] py-2 px-4 rounded-[20px] flex items-center gap-2 border border-[rgba(244,63,94,0.4)] shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
+                      <span className="w-2 h-2 rounded-full bg-danger inline-block animate-[pulse-danger_0.8s_infinite]"></span>
+                      <span className="text-[0.8rem] font-bold text-white tracking-wider">RECORDING FOOTAGE...</span>
                     </div>
                   ) : status === 'Processing Video' || status === 'Processing' ? (
-                    <div style={{ position: 'absolute', zIndex: 2, background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(124,58,237,0.4)', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
-                      <RefreshCw size={12} className="animate-spin" color="var(--primary)" />
-                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'white', letterSpacing: '0.05em' }}>SUMMARIZING RECORDING...</span>
+                    <div className="absolute z-10 bg-[rgba(0,0,0,0.7)] py-2 px-4 rounded-[20px] flex items-center gap-2 border border-[rgba(124,58,237,0.4)] shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
+                      <RefreshCw size={12} className="animate-spin" color="var(--color-primary)" />
+                      <span className="text-[0.8rem] font-bold text-white tracking-wider">SUMMARIZING RECORDING...</span>
                     </div>
                   ) : null}
 
@@ -630,29 +602,24 @@ function App() {
                     ref={videoRef}
                     muted
                     controls
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'contain',
-                      display: streamLoading ? 'none' : 'block'
-                    }}
+                    className={`w-full h-full object-contain ${streamLoading ? 'hidden' : 'block'}`}
                   />
 
                   {streamLoading && (
-                    <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                      <div style={{ animation: 'spin 4s linear infinite', marginBottom: '12px', display: 'inline-block' }}>
-                        <RefreshCw size={36} color="var(--primary)" />
+                    <div className="text-center text-text-muted">
+                      <div className="animate-[spin_4s_linear_infinite] mb-3 inline-block">
+                        <RefreshCw size={36} color="var(--color-primary)" />
                       </div>
-                      <p style={{ fontSize: '0.9rem' }}>Initializing Live Stream...</p>
-                      <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Connecting to edge camera device (HLS)</p>
+                      <p className="text-[0.9rem]">Initializing Live Stream...</p>
+                      <p className="text-[0.75rem] mt-1">Connecting to edge camera device (HLS)</p>
                     </div>
                   )}
                 </div>
               ) : (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                  <Camera size={36} color="var(--text-muted)" style={{ marginBottom: '12px' }} />
-                  <p style={{ fontSize: '0.9rem' }}>Device Offline</p>
-                  <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>
+                <div className="text-center text-text-muted">
+                  <Camera size={36} className="text-text-muted mb-3 mx-auto" />
+                  <p className="text-[0.9rem]">Device Offline</p>
+                  <p className="text-[0.75rem] mt-1">
                     Start the edge agent to connect
                   </p>
                 </div>
@@ -660,33 +627,39 @@ function App() {
 
               {/* Dynamic Overlay HUD when motion occurs */}
               {motionActive && (
-                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, border: '2px solid var(--danger)', pointerEvents: 'none', boxShadow: 'inset 0 0 30px rgba(244, 63, 94, 0.25)', borderRadius: '12px', zIndex: 3 }} />
+                <div className="absolute inset-0 border-2 border-danger pointer-events-none shadow-[inset_0_0_30px_rgba(244,63,94,0.25)] rounded-xl z-20" />
               )}
             </div>
 
             {/* Motion sensitivity bar */}
             {selectedDeviceId && status !== 'Offline' && config.enabled && (
-              <div style={{ marginTop: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+              <div className="mt-3">
+                <div className="flex justify-between text-[0.75rem] text-text-muted mb-1">
                   <span>Frame Pixel Diff Activity:</span>
-                  <span style={{ color: motionActive ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }}>{(motionRatio * 100).toFixed(2)}%</span>
+                  <span className={`font-semibold ${motionActive ? 'text-danger' : 'text-success'}`}>{(motionRatio * 100).toFixed(2)}%</span>
                 </div>
-                <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ width: `${Math.min(motionRatio * 100, 100)}%`, height: '100%', background: motionActive ? 'var(--danger)' : 'var(--primary)', transition: 'width 0.1s ease-out' }}></div>
+                <div className="w-full h-1.5 bg-[rgba(255,255,255,0.05)] rounded-[3px] overflow-hidden">
+                  <div
+                    className="h-full transition-[width] duration-100 ease-out"
+                    style={{
+                      width: `${Math.min(motionRatio * 100, 100)}%`,
+                      background: motionActive ? 'var(--color-danger)' : 'var(--color-primary)'
+                    }}
+                  />
                 </div>
               </div>
             )}
           </div>
 
           {/* STREAM CONFIGURATION */}
-          <div className="glass-panel" style={{ padding: '20px' }}>
-            <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <Settings size={18} color="var(--secondary)" /> Configure Selected Edge Agent
+          <div className="glass-panel p-5">
+            <h2 className="text-[1.1rem] flex items-center gap-2 mb-4">
+              <Settings size={18} color="var(--color-secondary)" /> Configure Selected Edge Agent
             </h2>
-            <form onSubmit={handleConfigSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Camera Name</label>
+            <form onSubmit={handleConfigSubmit} className="flex flex-col gap-3.5">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[0.8rem] text-text-secondary">Camera Name</label>
                   <input
                     type="text"
                     value={config.name}
@@ -696,8 +669,8 @@ function App() {
                     disabled={!selectedDeviceId}
                   />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Source Type</label>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[0.8rem] text-text-secondary">Source Type</label>
                   <select
                     value={config.type}
                     onChange={(e) => setConfig({ ...config, type: e.target.value as 'webcam' | 'rtsp' })}
@@ -710,8 +683,8 @@ function App() {
               </div>
 
               {config.type === 'rtsp' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>RTSP Stream URL</label>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[0.8rem] text-text-secondary">RTSP Stream URL</label>
                   <input
                     type="text"
                     value={config.streamUrl}
@@ -723,9 +696,9 @@ function App() {
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Motion Detector Threshold (0-255)</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[0.8rem] text-text-secondary">Motion Detector Threshold (0-255)</label>
                   <input
                     type="number"
                     min="0"
@@ -736,8 +709,8 @@ function App() {
                     disabled={!selectedDeviceId}
                   />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Pixel Change Ratio (0.01 - 1.00)</label>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[0.8rem] text-text-secondary">Pixel Change Ratio (0.01 - 1.00)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -753,8 +726,7 @@ function App() {
 
               <button
                 type="submit"
-                className="btn btn-secondary"
-                style={{ width: 'fit-content', alignSelf: 'flex-end', fontSize: '0.85rem' }}
+                className="btn btn-secondary w-fit self-end text-[0.85rem]"
                 disabled={!selectedDeviceId}
               >
                 Apply Configuration
@@ -763,19 +735,19 @@ function App() {
           </div>
 
           {/* LIVE TERMINAL LOGS */}
-          <div className="glass-panel" style={{ padding: '20px' }}>
-            <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <Terminal size={18} color="var(--secondary)" /> System Status Logs
+          <div className="glass-panel p-5">
+            <h2 className="text-[1.1rem] flex items-center gap-2 mb-3">
+              <Terminal size={18} color="var(--color-secondary)" /> System Status Logs
             </h2>
-            <div className="terminal-log" ref={terminalContainerRef}>
+            <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3.5 text-[0.85rem] leading-[1.4] text-[#38bdf8] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]" ref={terminalContainerRef}>
               {logs.length === 0 ? (
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                <div className="text-text-muted text-[0.8rem]">
                   {selectedDeviceId ? 'Waiting for device events...' : 'Select a device to view logs.'}
                 </div>
               ) : (
                 logs.map((log, index) => (
-                  <div key={index} className="log-entry">
-                    <span className="log-time">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                  <div key={index} className="mb-1">
+                    <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
                     <span>{log.message}</span>
                   </div>
                 ))
@@ -785,29 +757,28 @@ function App() {
         </div>
 
         {/* RIGHT COLUMN: CLIPS PLAYBACK & AI CHAT */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div className="lg:col-span-8 flex flex-col gap-6">
 
           {/* EVENT ARCHIVE & PLAYBACK PANEL */}
-          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '480px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Video size={18} color="var(--primary)" /> Event Archive & Playback
+          <div className="glass-panel p-5 flex flex-col h-[480px]">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-[1.1rem] flex items-center gap-2">
+                <Video size={18} color="var(--color-primary)" /> Event Archive & Playback
               </h2>
               <button
                 onClick={fetchClips}
-                className="btn btn-secondary"
-                style={{ padding: '4px 8px', fontSize: '0.75rem', borderRadius: '6px' }}
+                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
                 disabled={loadingClips}
               >
                 <RefreshCw size={12} className={loadingClips ? 'animate-spin' : ''} /> Refresh
               </button>
             </div>
 
-            <div className="event-archive-layout">
+            <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0 lg:overflow-hidden">
               {/* Left pane: Clips History List */}
-              <div className="event-archive-list">
+              <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2.5 overflow-y-auto min-w-0 pr-1 lg:h-full">
                 {clips.length === 0 ? (
-                  <div style={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  <div className="h-full flex justify-center items-center text-text-muted text-[0.85rem]">
                     No clips recorded yet.
                   </div>
                 ) : (
@@ -815,19 +786,18 @@ function App() {
                     <div
                       key={c.id}
                       onClick={() => setSelectedClip(c)}
-                      className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''}`}
-                      style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s' }}
+                      className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-center cursor-pointer transition-all duration-200 w-full min-w-0`}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
-                        <div style={{ background: 'var(--primary-glow)', padding: '8px', borderRadius: '8px', color: 'var(--primary)', flexShrink: 0 }}>
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0">
                           <Play size={16} fill="currentColor" />
                         </div>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.camera}</span>
-                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex justify-between items-center mb-0.5">
+                            <span className="text-[0.85rem] font-semibold text-text-primary">{c.camera}</span>
+                            <span className="text-[0.7rem] text-text-muted">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
-                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
                             {c.summary}
                           </p>
                         </div>
@@ -835,10 +805,7 @@ function App() {
 
                       <button
                         onClick={(e) => handleDeleteClip(c.id, e)}
-                        className="btn"
-                        style={{ padding: '6px', background: 'transparent', color: 'var(--text-muted)', border: 'none' }}
-                        onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
-                        onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                        className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -848,41 +815,41 @@ function App() {
               </div>
 
               {/* Vertical Divider */}
-              <div className="event-archive-divider" />
+              <div className="hidden lg:block w-[1px] bg-[rgba(255,255,255,0.08)] self-stretch" />
 
               {/* Right pane: Clip Viewer */}
-              <div className="event-archive-viewer">
+              <div className="flex-1 flex flex-col min-w-0 overflow-y-auto pr-1 lg:h-full">
                 {selectedClip ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ background: '#000', borderRadius: '12px', overflow: 'hidden', height: '220px', border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
+                  <div className="flex flex-col gap-3">
+                    <div className="bg-[#000] rounded-xl overflow-hidden h-[220px] border border-[rgba(255,255,255,0.08)] shrink-0">
                       <video
                         key={selectedClip.id}
                         src={`${API_BASE}/videos/${selectedClip.filename}`}
                         controls
                         autoPlay
-                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                        className="w-full h-full object-contain"
                       />
                     </div>
                     <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '4px' }}>
-                        <h3 style={{ fontSize: '0.85rem', fontWeight: 600, wordBreak: 'break-all', color: 'var(--text-primary)' }}>{selectedClip.filename}</h3>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                      <div className="flex justify-between items-center mb-1.5 flex-wrap gap-1">
+                        <h3 className="text-[0.85rem] font-semibold break-all text-text-primary">{selectedClip.filename}</h3>
+                        <span className="text-[0.7rem] text-text-muted flex items-center gap-1 whitespace-nowrap">
                           <Clock size={12} /> {formatDate(selectedClip.timestamp)}
                         </span>
                       </div>
-                      <div style={{ background: 'rgba(124, 58, 237, 0.05)', border: '1px solid rgba(124, 58, 237, 0.15)', borderRadius: '8px', padding: '10px' }}>
-                        <p style={{ fontSize: '0.7rem', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <Sparkles size={12} /> Gemini Video Summary
+                      <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
+                        <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
+                          <Sparkles size={12} />Video Summary
                         </p>
-                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>{selectedClip.summary}</p>
+                        <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{selectedClip.summary}</p>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', border: '1px dashed var(--border-glass)', borderRadius: '12px', color: 'var(--text-muted)', padding: '20px', textAlign: 'center' }}>
-                    <Video size={32} color="var(--text-muted)" style={{ marginBottom: '10px' }} />
-                    <p style={{ fontSize: '0.85rem', fontWeight: 500 }}>No Event Selected</p>
-                    <p style={{ fontSize: '0.75rem', marginTop: '4px', maxWidth: '220px' }}>Select a clip from the history list to play and view the AI summary.</p>
+                  <div className="h-full flex flex-col justify-center items-center border border-dashed border-border-glass rounded-xl text-text-muted p-5 text-center">
+                    <Video size={32} className="text-text-muted mb-2.5 mx-auto" />
+                    <p className="text-[0.85rem] font-semibold">No Event Selected</p>
+                    <p className="text-[0.75rem] mt-1 max-w-[220px] mx-auto">Select a clip from the history list to play and view the AI summary.</p>
                   </div>
                 )}
               </div>
@@ -890,56 +857,40 @@ function App() {
           </div>
 
           {/* AI ANALYST PANEL (RAG CHAT) */}
-          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '420px' }}>
-            <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <Sparkles size={18} color="var(--primary)" /> Ask Camera AI (RAG)
+          <div className="glass-panel p-5 flex flex-col h-[420px]">
+            <h2 className="text-[1.1rem] flex items-center gap-2 mb-3">
+              <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
             </h2>
 
             {/* Chat message space */}
             <div
               ref={chatContainerRef}
-              style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px', marginBottom: '14px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}
+              className="flex-1 overflow-y-auto flex flex-col gap-3 pr-1 mb-3.5 border-b border-[rgba(255,255,255,0.05)]"
             >
               {chatHistory.length === 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
-                  <HelpCircle size={32} color="var(--text-muted)" style={{ marginBottom: '10px' }} />
-                  <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>No active session query.</p>
-                  <p style={{ fontSize: '0.75rem', maxWidth: '300px', marginTop: '4px' }}>Ask questions about video events, e.g.: "Has anyone walked past in a red shirt?" or "What activity was recorded on my camera?"</p>
+                <div className="flex flex-col items-center justify-center h-full text-text-muted text-center p-5">
+                  <HelpCircle size={32} className="text-text-muted mb-2.5 mx-auto" />
+                  <p className="text-[0.85rem] font-semibold">No active session query.</p>
+                  <p className="text-[0.75rem] max-w-[300px] mt-1">Ask questions about video events, e.g.: "Has anyone walked past in a red shirt?" or "What activity was recorded on my camera?"</p>
                 </div>
               ) : (
                 chatHistory.map((chat, idx) => (
-                  <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignSelf: chat.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
-                    <div style={{
-                      background: chat.role === 'user' ? 'linear-gradient(135deg, var(--primary) 0%, #6d28d9 100%)' : 'rgba(255,255,255,0.04)',
-                      border: chat.role === 'user' ? 'none' : '1px solid var(--border-glass)',
-                      color: 'var(--text-primary)',
-                      padding: '10px 14px',
-                      borderRadius: '12px',
-                      fontSize: '0.85rem',
-                      lineHeight: 1.4,
-                      boxShadow: chat.role === 'user' ? '0 4px 10px rgba(124, 58, 237, 0.15)' : 'none',
-                    }}>
+                  <div key={idx} className={`flex flex-col max-w-[85%] ${chat.role === 'user' ? 'self-end' : 'self-start'}`}>
+                    <div className={`p-2.5 px-3.5 rounded-xl text-[0.85rem] leading-[1.4] ${chat.role === 'user'
+                      ? 'bg-gradient-to-br from-primary to-[#6d28d9] text-white shadow-[0_4px_10px_rgba(124,58,237,0.15)] border-none'
+                      : 'bg-[rgba(255,255,255,0.04)] border border-border-glass text-text-primary'
+                      }`}>
                       {chat.content}
                     </div>
 
                     {/* Cited references when assistant responds */}
                     {chat.role === 'assistant' && chat.clips && chat.clips.length > 0 && (
-                      <div style={{ marginTop: '8px', width: '100%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          <Video size={12} color="var(--primary)" />
+                      <div className="mt-2 w-full flex flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5 text-[0.75rem] text-text-muted">
+                          <Video size={12} color="var(--color-primary)" />
                           <span>Cited Video Footage:</span>
                         </div>
-                        <div
-                          className="cited-clips-scroll"
-                          style={{
-                            display: 'flex',
-                            gap: '10px',
-                            overflowX: 'auto',
-                            paddingBottom: '8px',
-                            width: '100%',
-                            scrollBehavior: 'smooth'
-                          }}
-                        >
+                        <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
                           {chat.clips.map((c, cIdx) => {
                             const filename = c.filename || c.filepath.split(/[/\\]/).pop() || '';
                             const videoUrl = `${API_BASE}/videos/${filename}`;
@@ -948,84 +899,39 @@ function App() {
                             return (
                               <div
                                 key={cIdx}
-                                className="glass-panel"
-                                style={{
-                                  flexShrink: 0,
-                                  width: '200px',
-                                  padding: '8px',
-                                  borderRadius: '10px',
-                                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                                  background: 'rgba(15, 23, 42, 0.6)',
-                                }}
+                                className="glass-panel shrink-0 w-[200px] p-2 rounded-[10px] border border-[rgba(255,255,255,0.06)] bg-[rgba(15,23,42,0.6)]"
                               >
-                                <div style={{
-                                  width: '100%',
-                                  height: '112px',
-                                  background: '#020617',
-                                  borderRadius: '6px',
-                                  overflow: 'hidden',
-                                  position: 'relative',
-                                  border: '1px solid rgba(255, 255, 255, 0.05)',
-                                  marginBottom: '6px'
-                                }}>
+                                <div className="w-full h-[112px] bg-[#020617] rounded-md overflow-hidden relative border border-[rgba(255,255,255,0.05)] mb-1.5">
                                   <video
                                     src={videoUrl}
                                     controls
                                     preload="metadata"
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                    className="w-full h-full object-cover"
                                   />
                                 </div>
 
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="flex justify-between items-center">
                                     <span
                                       title={c.camera}
-                                      style={{
-                                        fontSize: '0.75rem',
-                                        fontWeight: 600,
-                                        color: 'var(--text-primary)',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap',
-                                        maxWidth: '110px'
-                                      }}
+                                      className="text-[0.75rem] font-semibold text-text-primary overflow-hidden text-ellipsis whitespace-nowrap max-w-[110px]"
                                     >
                                       {c.camera}
                                     </span>
-                                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                                    <span className="text-[0.65rem] text-text-muted">
                                       {new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                     </span>
                                   </div>
 
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                                  <div className="flex justify-between items-center mt-0.5">
                                     {matchPercentage !== null && (
-                                      <span
-                                        style={{
-                                          fontSize: '0.65rem',
-                                          color: 'var(--secondary)',
-                                          background: 'rgba(6, 182, 212, 0.1)',
-                                          padding: '1px 5px',
-                                          borderRadius: '4px',
-                                          fontWeight: 600
-                                        }}
-                                      >
+                                      <span className="text-[0.65rem] text-secondary bg-[rgba(6,182,212,0.1)] py-0.5 px-1.5 rounded font-semibold">
                                         {matchPercentage}% Match
                                       </span>
                                     )}
                                     <button
                                       onClick={() => selectAndPlayClip(c.id)}
-                                      className="btn btn-secondary"
-                                      style={{
-                                        padding: '2px 8px',
-                                        fontSize: '0.65rem',
-                                        height: '20px',
-                                        borderRadius: '4px',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '3px',
-                                        background: 'rgba(255, 255, 255, 0.05)',
-                                        border: '1px solid rgba(255, 255, 255, 0.08)'
-                                      }}
+                                      className="btn btn-secondary py-0.5 px-2 text-[0.65rem] h-[20px] rounded flex items-center gap-0.5 bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.08)]"
                                     >
                                       <Link2 size={10} /> View
                                     </button>
@@ -1041,23 +947,23 @@ function App() {
                 ))
               )}
               {isAsking && (
-                <div style={{ alignSelf: 'flex-start', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)', padding: '10px 14px', borderRadius: '12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Searching vectors and answering...
+                <div className="self-start bg-[rgba(255,255,255,0.04)] border border-border-glass p-2.5 px-3.5 rounded-xl text-[0.85rem] flex items-center gap-2">
+                  <RefreshCw size={12} className="animate-spin" /> Searching vectors and answering...
                 </div>
               )}
             </div>
 
             {/* Question query input */}
-            <form onSubmit={handleAskQuestion} style={{ display: 'flex', gap: '8px' }}>
+            <form onSubmit={handleAskQuestion} className="flex gap-2">
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Ask about your camera recordings..."
-                style={{ flex: 1 }}
+                className="flex-1"
                 disabled={isAsking}
               />
-              <button type="submit" className="btn btn-primary" style={{ padding: '10px 15px' }} disabled={isAsking}>
+              <button type="submit" className="btn btn-primary py-2.5 px-3.5" disabled={isAsking}>
                 <Send size={16} />
               </button>
             </form>
@@ -1066,16 +972,6 @@ function App() {
         </div>
 
       </div>
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .animate-spin {
-          animation: spin 1s linear infinite;
-        }
-      `}</style>
     </div>
   );
 }
