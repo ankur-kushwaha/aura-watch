@@ -14,7 +14,8 @@ import {
   Clock,
   Sparkles,
   Link2,
-  Terminal
+  Terminal,
+  SlidersHorizontal
 } from 'lucide-react';
 
 interface VideoClip {
@@ -93,6 +94,10 @@ function App() {
   const [query, setQuery] = useState<string>('');
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; clips?: RagResponseClip[] }[]>([]);
   const [isAsking, setIsAsking] = useState<boolean>(false);
+  const [filterStartTime, setFilterStartTime] = useState<string>('');
+  const [filterEndTime, setFilterEndTime] = useState<string>('');
+  const [filterDeviceId, setFilterDeviceId] = useState<string>('');
+  const [showFilters, setShowFilters] = useState<boolean>(false);
 
   // Live Camera Feed Video States
   const [streamLoading, setStreamLoading] = useState<boolean>(true);
@@ -428,7 +433,13 @@ function App() {
       const res = await fetch(`${API_BASE}/rag/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: userMessage }),
+        body: JSON.stringify({ 
+          question: userMessage,
+          history: chatHistory.map(h => ({ role: h.role, content: h.content })),
+          startTime: filterStartTime ? new Date(filterStartTime).toISOString() : undefined,
+          endTime: filterEndTime ? new Date(filterEndTime).toISOString() : undefined,
+          deviceId: filterDeviceId || undefined,
+        }),
       });
 
       const data = await res.json();
@@ -857,10 +868,81 @@ function App() {
           </div>
 
           {/* AI ANALYST PANEL (RAG CHAT) */}
-          <div className="glass-panel p-5 flex flex-col h-[420px]">
-            <h2 className="text-[1.1rem] flex items-center gap-2 mb-3">
-              <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
-            </h2>
+          <div className="glass-panel p-5 flex flex-col h-[480px]">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-[1.1rem] flex items-center gap-2">
+                <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowFilters(!showFilters)}
+                className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
+                  showFilters || filterStartTime || filterEndTime || filterDeviceId
+                    ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
+                    : ''
+                }`}
+              >
+                <SlidersHorizontal size={12} />
+                Search Filters
+                {(filterStartTime || filterEndTime || filterDeviceId) && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
+                )}
+              </button>
+            </div>
+
+            {/* Collapsible Filter Inputs */}
+            {showFilters && (
+              <div className="glass-panel p-3.5 mb-3.5 bg-[rgba(255,255,255,0.01)] border-[rgba(255,255,255,0.08)] rounded-[10px] flex flex-col gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[0.7rem] text-text-secondary">Target Camera</label>
+                    <select
+                      value={filterDeviceId}
+                      onChange={(e) => setFilterDeviceId(e.target.value)}
+                      className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                    >
+                      <option value="">All Cameras</option>
+                      {devices.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[0.7rem] text-text-secondary">Start Time</label>
+                    <input
+                      type="datetime-local"
+                      value={filterStartTime}
+                      onChange={(e) => setFilterStartTime(e.target.value)}
+                      className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[0.7rem] text-text-secondary">End Time</label>
+                    <input
+                      type="datetime-local"
+                      value={filterEndTime}
+                      onChange={(e) => setFilterEndTime(e.target.value)}
+                      className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                    />
+                  </div>
+                </div>
+                {(filterStartTime || filterEndTime || filterDeviceId) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterStartTime('');
+                      setFilterEndTime('');
+                      setFilterDeviceId('');
+                    }}
+                    className="btn btn-secondary py-1 px-2 text-[0.7rem] self-end rounded flex items-center gap-1 hover:text-danger hover:border-danger bg-transparent font-semibold border-none"
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Chat message space */}
             <div

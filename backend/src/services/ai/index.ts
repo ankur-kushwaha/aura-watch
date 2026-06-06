@@ -17,3 +17,4 @@ if (provider === 'openai') {
 export const summarizeVideo = activeService.summarizeVideo.bind(activeService);
 export const generateTextEmbedding = activeService.generateTextEmbedding.bind(activeService);
 export const answerQuestionWithContext = activeService.answerQuestionWithContext.bind(activeService);
+export const answerWithTools = activeService.answerWithTools.bind(activeService);

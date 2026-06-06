@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import * as fs from 'fs';
 import { AIService } from './types';
 
@@ -21,7 +21,7 @@ export class GeminiService implements AIService {
     }
 
     console.log(`[Gemini] Starting video upload for: ${filepath}`);
-    
+
     // 1. Upload the video file
     const uploadResult = await this.ai.files.upload({
       file: filepath,
@@ -29,7 +29,7 @@ export class GeminiService implements AIService {
         mimeType: 'video/mp4',
       }
     });
-    
+
     const fileId = uploadResult.name;
     if (!fileId) {
       throw new Error('Failed to upload video to Gemini - file identifier name is missing.');
@@ -40,7 +40,7 @@ export class GeminiService implements AIService {
     let fileInfo = await this.ai.files.get({ name: fileId });
     let attempts = 0;
     const maxAttempts = 24; // 2 minutes max
-    
+
     while (fileInfo.state === 'PROCESSING' && attempts < maxAttempts) {
       console.log(`[Gemini] Processing state: ${fileInfo.state}. Waiting 5 seconds...`);
       await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -56,7 +56,7 @@ export class GeminiService implements AIService {
       // If it failed or timed out, attempt cleanup and throw
       try {
         await this.ai.files.delete({ name: fileId });
-      } catch (e) {}
+      } catch (e) { }
       throw new Error(`Gemini video processing failed or timed out. State: ${fileInfo.state}`);
     }
 
@@ -89,7 +89,7 @@ Be objective, precise, and descriptive. Do not assume context not shown in the v
 
       const summary = response.text || 'No summary could be generated.';
       console.log(`[Gemini] Summary generated: "${summary}"`);
-      
+
       return summary;
     } finally {
       // 4. Cleanup the file from Gemini storage
@@ -108,7 +108,7 @@ Be objective, precise, and descriptive. Do not assume context not shown in the v
    */
   async generateTextEmbedding(text: string): Promise<number[]> {
     console.log(`[Gemini] Generating embedding for text: "${text.substring(0, 40)}..."`);
-    
+
     try {
       const response = await this.ai.models.embedContent({
         model: 'gemini-embedding-2',
@@ -122,7 +122,7 @@ Be objective, precise, and descriptive. Do not assume context not shown in the v
       if (response.embeddings && response.embeddings.length > 0 && response.embeddings[0].values) {
         return response.embeddings[0].values;
       }
-      
+
       // Fallback if returned in another structure
       const fallbackEmbedding = (response as any).embedding;
       if (fallbackEmbedding && fallbackEmbedding.values) {
@@ -141,7 +141,7 @@ Be objective, precise, and descriptive. Do not assume context not shown in the v
    */
   async answerQuestionWithContext(question: string, contexts: string[]): Promise<string> {
     const contextText = contexts.map((c, i) => `[Clip ${i + 1}]: ${c}`).join('\n\n');
-    
+
     const prompt = `You are an AI video surveillance analyst dashboard.
 The user is asking a question about the security camera recordings: "${question}".
 
@@ -163,6 +163,141 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
       return response.text || 'Could not formulate an answer.';
     } catch (error) {
       console.error('[Gemini] Error answering question with context:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Answers a user query by calling search tools if necessary, maintaining conversation history.
+   */
+  async answerWithTools(
+    question: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>
+  ): Promise<{ answer: string; clips: any[] }> {
+    const currentLocalTime = new Date().toISOString();
+    const systemInstruction = `You are an AI video surveillance analyst dashboard.
+The user is asking a question about the security camera recordings.
+The current system time is ${currentLocalTime}. Use this reference to resolve relative timestamps like "yesterday", "today", "last 2 hours", "8:00 AM", etc. into absolute ISO-8601 strings.
+You have access to a tool 'searchQdrant' to search the database of video summaries.
+When the user asks about events, motion, people, times, or camera footage, you should call 'searchQdrant' with a clear search query describing the events.
+If the query implies a time filter (e.g. "between 8 and 9", "since yesterday", "in the last 2 hours"), specify those as startTime and endTime arguments.
+Answer the user's question accurately and objectively using only the retrieved summaries.
+If the search returns no clips or no relevant information, state that clearly.
+Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where appropriate. Keep the answer concise and helpful.`;
+
+    const contents: any[] = [
+      ...history.map(h => ({
+        role: h.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: h.content }]
+      })),
+      { role: 'user', parts: [{ text: question }] }
+    ];
+
+    console.log('[Gemini] Requesting answer with tools...');
+
+    const searchToolDeclaration = {
+      name: 'searchQdrant',
+      description: 'Search the vector database or MongoDB fallback for video surveillance summaries matching the query.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          queryText: {
+            type: Type.STRING,
+            description: 'The search query/description of the video clip/event to search for.'
+          },
+          startTime: {
+            type: Type.STRING,
+            description: 'ISO-8601 string representing the start of the time range query filter (optional). Always resolve relative queries relative to current system time.'
+          },
+          endTime: {
+            type: Type.STRING,
+            description: 'ISO-8601 string representing the end of the time range query filter (optional). Always resolve relative queries relative to current system time.'
+          }
+        },
+        required: ['queryText']
+      }
+    };
+
+    try {
+      const response = await this.ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: contents,
+        config: {
+          systemInstruction,
+          tools: [{
+            functionDeclarations: [searchToolDeclaration]
+          }]
+        }
+      });
+
+      let finalAnswer = '';
+      let clips: any[] = [];
+
+      const candidate = response.candidates?.[0];
+      const part = candidate?.content?.parts?.[0];
+
+      if (part?.functionCall) {
+        const call = part.functionCall;
+        if (call.name === 'searchQdrant') {
+          const queryText = (call.args as any)?.queryText;
+          const toolStartTime = (call.args as any)?.startTime;
+          const toolEndTime = (call.args as any)?.endTime;
+          console.log(`[Gemini Tool Call] Model requested searchQdrant with query: "${queryText}", startTime: "${toolStartTime}", endTime: "${toolEndTime}"`);
+
+          // Execute the tool function
+          const searchResults = await searchQdrantFn(queryText, toolStartTime, toolEndTime);
+          clips = searchResults;
+
+          const contexts = searchResults.map((result: any, i: number) => {
+            const payload = result.payload;
+            return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
+          });
+
+          const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
+
+          // Construct response payload
+          const secondContents = [
+            ...contents,
+            {
+              role: 'model',
+              parts: [part]
+            },
+            {
+              role: 'tool',
+              parts: [
+                {
+                  functionResponse: {
+                    name: 'searchQdrant',
+                    response: { result: contextText }
+                  }
+                }
+              ]
+            }
+          ];
+
+          console.log('[Gemini] Resubmitting tool response to get final answer...');
+          const secondResponse = await this.ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: secondContents,
+            config: {
+              systemInstruction,
+              tools: [{
+                functionDeclarations: [searchToolDeclaration]
+              }]
+            }
+          });
+
+          finalAnswer = secondResponse.text || 'Could not formulate an answer.';
+        }
+      } else {
+        console.log('[Gemini] Model responded directly without calling a tool.');
+        finalAnswer = response.text || 'Could not formulate an answer.';
+      }
+
+      return { answer: finalAnswer, clips };
+    } catch (error) {
+      console.error('[Gemini] Error generating content with tools:', error);
       throw error;
     }
   }

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { generateTextEmbedding, answerQuestionWithContext } from '../services/ai';
+import { generateTextEmbedding, answerWithTools } from '../services/ai';
 import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
 
 const router = Router();
@@ -9,45 +9,52 @@ const router = Router();
  * Perform a vector search on video summaries and answer the user's question with citations.
  */
 router.post('/query', async (req: Request, res: Response) => {
-  const { question } = req.body;
+  const { question, history = [], startTime, endTime, deviceId } = req.body;
 
   if (!question || typeof question !== 'string') {
     return res.status(400).json({ error: 'A valid question string is required.' });
   }
 
   try {
-    console.log(`[RAG] Received query: "${question}"`);
+    console.log(`[RAG] Received query: "${question}" with history size: ${history.length}, filters:`, { startTime, endTime, deviceId });
 
-    // 1. Generate text embedding for the question
-    const questionEmbedding = await generateTextEmbedding(question);
+    // Call AI service with tools
+    const { answer, clips } = await answerWithTools(
+      question,
+      history,
+      async (queryText: string, toolStartTime?: string, toolEndTime?: string) => {
+        // Prioritize UI-provided filter over LLM-parsed filter
+        const finalStartTime = startTime || toolStartTime;
+        const finalEndTime = endTime || toolEndTime;
 
-    // 2. Query Qdrant for top matching clips
-    let searchResults = await searchClipVectors(questionEmbedding, 5);
+        console.log(`[RAG Router callback] Executing Qdrant search tool for: "${queryText}"`, {
+          finalStartTime,
+          finalEndTime,
+          deviceId
+        });
 
-    // Fallback if Qdrant returned nothing (e.g. if it is offline or has no results)
-    if (searchResults.length === 0) {
-      console.log('[RAG] Qdrant returned no results. Attempting MongoDB fallback keyword search...');
-      searchResults = await fallbackSearchClips(question, 5);
-    }
+        const queryEmbedding = await generateTextEmbedding(queryText);
+        let searchResults = await searchClipVectors(queryEmbedding, 5, { 
+          startTime: finalStartTime, 
+          endTime: finalEndTime, 
+          deviceId 
+        });
 
-    if (searchResults.length === 0) {
-      return res.json({
-        answer: "No relevant recorded video events were found to answer your question. Please ensure the camera has captured and processed motion clips.",
-        clips: [],
-      });
-    }
+        if (searchResults.length === 0) {
+          console.log('[RAG Router callback] Qdrant returned no results. Attempting MongoDB fallback keyword search...');
+          searchResults = await fallbackSearchClips(queryText, 5, { 
+            startTime: finalStartTime, 
+            endTime: finalEndTime, 
+            deviceId 
+          });
+        }
 
-    // 3. Extract matching summaries and construct context
-    const contexts = searchResults.map((result: any) => {
-      const payload = result.payload;
-      return `Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
-    });
+        return searchResults;
+      }
+    );
 
-    // 4. Ask Gemini to answer the question using the retrieved context
-    const answer = await answerQuestionWithContext(question, contexts);
-
-    // 5. Construct list of cited clips for the frontend
-    const citedClips = searchResults.map((result: any) => {
+    // Construct list of cited clips for the frontend
+    const citedClips = clips.map((result: any) => {
       const payload = result.payload;
       const filename = payload.filename || (payload.filepath ? payload.filepath.split(/[/\\]/).pop() : '');
       return {
@@ -57,11 +64,11 @@ router.post('/query', async (req: Request, res: Response) => {
         summary: payload.summary,
         filepath: payload.filepath,
         filename: filename,
-        score: result.score,
+        score: result.score || 1.0,
       };
     });
 
-    // 6. Return response
+    // Return response
     res.json({
       answer,
       clips: citedClips,

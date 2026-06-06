@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
-    "prisma:db-push": "prisma db push"
+    "prisma:db-push": "prisma db push",
+    "create-index": "ts-node src/create-index.ts"
   },
   "dependencies": {
     "@google/genai": "^2.8.0",

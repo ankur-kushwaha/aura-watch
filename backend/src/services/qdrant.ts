@@ -73,11 +73,43 @@ export async function deleteClipVector(mongoId: string) {
   }
 }
 
-export async function searchClipVectors(vector: number[], limit = 5) {
+export async function searchClipVectors(
+  vector: number[],
+  limit = 5,
+  options?: { startTime?: string; endTime?: string; deviceId?: string }
+) {
   try {
+    const filterConditions: any[] = [];
+
+    // Add time range filter if provided
+    if (options?.startTime || options?.endTime) {
+      const rangeCondition: any = {};
+      if (options.startTime) {
+        rangeCondition.gte = options.startTime;
+      }
+      if (options.endTime) {
+        rangeCondition.lte = options.endTime;
+      }
+      filterConditions.push({
+        key: 'timestamp',
+        range: rangeCondition,
+      });
+    }
+
+    // Add device ID filter if provided
+    if (options?.deviceId) {
+      filterConditions.push({
+        key: 'deviceId',
+        match: {
+          value: options.deviceId,
+        },
+      });
+    }
+
     const results = await qdrant.search(COLLECTION_NAME, {
       vector: vector,
       limit: limit,
+      filter: filterConditions.length > 0 ? { must: filterConditions } : undefined,
       with_payload: true,
     });
     return results;
@@ -90,7 +122,11 @@ export async function searchClipVectors(vector: number[], limit = 5) {
 /**
  * Fallback search using MongoDB Contains filters if Qdrant is offline.
  */
-export async function fallbackSearchClips(queryText: string, limit = 5) {
+export async function fallbackSearchClips(
+  queryText: string,
+  limit = 5,
+  options?: { startTime?: string; endTime?: string; deviceId?: string }
+) {
   try {
     console.log(`[Qdrant Fallback] Searching MongoDB for keywords matching: "${queryText}"`);
     
@@ -101,9 +137,24 @@ export async function fallbackSearchClips(queryText: string, limit = 5) {
       .split(/\s+/)
       .filter(t => t.length > 2);
 
+    const baseWhere: any = {};
+    if (options?.deviceId) {
+      baseWhere.deviceId = options.deviceId;
+    }
+    if (options?.startTime || options?.endTime) {
+      baseWhere.timestamp = {};
+      if (options.startTime) {
+        baseWhere.timestamp.gte = new Date(options.startTime);
+      }
+      if (options.endTime) {
+        baseWhere.timestamp.lte = new Date(options.endTime);
+      }
+    }
+
     if (terms.length === 0) {
       // Return recent clips if no search terms
       const recentClips = await prisma.videoClip.findMany({
+        where: baseWhere,
         orderBy: { timestamp: 'desc' },
         take: limit,
       });
@@ -118,6 +169,7 @@ export async function fallbackSearchClips(queryText: string, limit = 5) {
           timestamp: clip.timestamp.toISOString(),
           summary: clip.summary,
           camera: clip.camera,
+          deviceId: clip.deviceId,
         }
       }));
     }
@@ -125,6 +177,7 @@ export async function fallbackSearchClips(queryText: string, limit = 5) {
     // Search clips matching any of the terms in the summary
     const matchingClips = await prisma.videoClip.findMany({
       where: {
+        ...baseWhere,
         OR: terms.map(term => ({
           summary: {
             contains: term,
@@ -156,6 +209,7 @@ export async function fallbackSearchClips(queryText: string, limit = 5) {
           timestamp: clip.timestamp.toISOString(),
           summary: clip.summary,
           camera: clip.camera,
+          deviceId: clip.deviceId,
         }
       };
     });
@@ -165,3 +219,4 @@ export async function fallbackSearchClips(queryText: string, limit = 5) {
     return [];
   }
 }
+

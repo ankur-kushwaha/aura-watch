@@ -191,4 +191,129 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
       throw error;
     }
   }
+
+  /**
+   * Answers a user query by calling search tools if necessary, maintaining conversation history.
+   */
+  async answerWithTools(
+    question: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>
+  ): Promise<{ answer: string; clips: any[] }> {
+    const currentLocalTime = new Date().toISOString();
+    const systemMessage = {
+      role: 'system',
+      content: `You are an AI video surveillance analyst dashboard.
+The user is asking a question about the security camera recordings.
+The current system time is ${currentLocalTime}. Use this reference to resolve relative timestamps like "yesterday", "today", "last 2 hours", "8:00 AM", etc. into absolute ISO-8601 strings.
+You have access to a tool 'searchQdrant' to search the database of video summaries.
+When the user asks about events, motion, people, times, or camera footage, you should call 'searchQdrant' with a clear search query describing the events.
+If the query implies a time filter (e.g. "between 8 and 9", "since yesterday", "in the last 2 hours"), specify those as startTime and endTime arguments.
+Answer the user's question accurately and objectively using only the retrieved summaries.
+If the search returns no clips or no relevant information, state that clearly.
+Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where appropriate. Keep the answer concise and helpful.`
+    };
+
+    const messages: any[] = [
+      systemMessage,
+      ...history.map(h => ({
+        role: h.role === 'assistant' ? 'assistant' : 'user',
+        content: h.content
+      })),
+      { role: 'user', content: question }
+    ];
+
+    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+    console.log('[OpenAI] Requesting answer with tools...');
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: model,
+        messages: messages,
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'searchQdrant',
+              description: 'Search the vector database or MongoDB fallback for video surveillance summaries matching the query.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  queryText: {
+                    type: 'string',
+                    description: 'The search query/description of the video clip/event to search for.'
+                  },
+                  startTime: {
+                    type: 'string',
+                    description: 'ISO-8601 string representing the start of the time range query filter (optional). Always resolve relative queries relative to current system time.'
+                  },
+                  endTime: {
+                    type: 'string',
+                    description: 'ISO-8601 string representing the end of the time range query filter (optional). Always resolve relative queries relative to current system time.'
+                  }
+                },
+                required: ['queryText']
+              }
+            }
+          }
+        ]
+      });
+
+      let finalAnswer = '';
+      let clips: any[] = [];
+
+      const choice = response.choices[0];
+      const message = choice.message;
+
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        const toolCall = message.tool_calls[0] as any;
+        if (toolCall.function && toolCall.function.name === 'searchQdrant') {
+          const args = JSON.parse(toolCall.function.arguments);
+          const queryText = args.queryText;
+          const toolStartTime = args.startTime;
+          const toolEndTime = args.endTime;
+          console.log(`[OpenAI Tool Call] Model requested searchQdrant with query: "${queryText}", startTime: "${toolStartTime}", endTime: "${toolEndTime}"`);
+
+          // Execute function
+          const searchResults = await searchQdrantFn(queryText, toolStartTime, toolEndTime);
+          clips = searchResults;
+
+          const contexts = searchResults.map((result: any, i: number) => {
+            const payload = result.payload;
+            return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
+          });
+
+          const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
+
+          // Append assistant tool request and tool response
+          const secondMessages = [
+            ...messages,
+            message,
+            {
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: contextText
+            }
+          ];
+
+          console.log('[OpenAI] Resubmitting tool response to get final answer...');
+          const secondResponse = await this.openai.chat.completions.create({
+            model: model,
+            messages: secondMessages
+          });
+
+          finalAnswer = secondResponse.choices[0].message?.content || 'Could not formulate an answer.';
+        }
+      } else {
+        console.log('[OpenAI] Model responded directly without calling a tool.');
+        finalAnswer = message.content || 'Could not formulate an answer.';
+      }
+
+      return { answer: finalAnswer, clips };
+    } catch (error) {
+      console.error('[OpenAI] Error answering with tools:', error);
+      throw error;
+    }
+  }
 }

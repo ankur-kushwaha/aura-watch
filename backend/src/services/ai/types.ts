@@ -21,4 +21,16 @@ export interface AIService {
    * @returns The generated answer.
    */
   answerQuestionWithContext(question: string, contexts: string[]): Promise<string>;
+
+  /**
+   * Answers a user query by calling search tools if necessary, maintaining conversation history.
+   * @param question The user's current question.
+   * @param history The conversation history.
+   * @param searchQdrantFn Function to run Qdrant/MongoDB search query.
+   */
+  answerWithTools(
+    question: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>
+  ): Promise<{ answer: string; clips: any[] }>;
 }
