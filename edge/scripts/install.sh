@@ -119,6 +119,52 @@ EOT
 echo "   ✅ Generated configuration file: $INSTALL_DIR/edge/.env"
 echo ""
 
+# Create .device-id file
+echo "🆔 Generating Device ID from hardware/CPU serial..."
+DEVICE_ID=""
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    DEVICE_ID=$(ioreg -rd1 -c IOPlatformExpertDevice | awk -F'"' '/IOPlatformSerialNumber/ {print $4}')
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux
+    if [ -f /proc/cpuinfo ]; then
+        # Try Raspberry Pi serial number
+        DEVICE_ID=$(awk '/Serial/ {print $3}' /proc/cpuinfo)
+    fi
+    
+    # If not found (e.g., standard PC/VM), try reading DMI system/product serial
+    if [ -z "$DEVICE_ID" ] && [ -f /sys/class/dmi/id/product_serial ]; then
+        DEVICE_ID=$(cat /sys/class/dmi/id/product_serial 2>/dev/null || true)
+    fi
+    
+    if [ -z "$DEVICE_ID" ] && [ -f /sys/class/dmi/id/board_serial ]; then
+        DEVICE_ID=$(cat /sys/class/dmi/id/board_serial 2>/dev/null || true)
+    fi
+fi
+
+# Trim whitespace
+DEVICE_ID=$(echo "$DEVICE_ID" | xargs)
+
+# If empty or placeholder/generic serial, fall back to random
+if [ -z "$DEVICE_ID" ] || [ "$DEVICE_ID" = "None" ] || [ "$DEVICE_ID" = "0000000000000000" ] || [ "$DEVICE_ID" = "System Serial Number" ] || [ "$DEVICE_ID" = "Not Specified" ]; then
+    RANDOM_ID=$(head /dev/urandom | tr -dc a-z0-9 | head -c 16 || true)
+    if [ -z "$RANDOM_ID" ]; then
+        RANDOM_ID="edge_\$(date +%s)_\$RANDOM"
+    fi
+    DEVICE_ID="edge_$RANDOM_ID"
+    echo "   ⚠️  Could not retrieve hardware serial number. Generated random ID: $DEVICE_ID"
+else
+    # Clean up serial number (remove non-alphanumeric, prefix with edge_)
+    CLEAN_ID=$(echo "$DEVICE_ID" | tr -dc 'a-zA-Z0-9_-')
+    DEVICE_ID="edge_$CLEAN_ID"
+    echo "   ✅ Found hardware serial number: $DEVICE_ID"
+fi
+
+echo "$DEVICE_ID" > .device-id
+echo "   ✅ Saved Device ID to $INSTALL_DIR/edge/.device-id"
+echo ""
+
 # 5. Build and Installation
 echo "📦 Installing npm dependencies & building client..."
 npm install
