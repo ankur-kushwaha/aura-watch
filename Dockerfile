@@ -8,6 +8,7 @@ RUN npm run build
 
 # Stage 2: Build the backend and prepare production node_modules
 FROM node:20-alpine AS backend-builder
+RUN apk add --no-cache openssl
 WORKDIR /app/backend
 COPY backend/package*.json ./
 RUN npm ci
@@ -21,6 +22,7 @@ RUN npm prune --omit=dev
 
 # Stage 3: Production runner
 FROM node:20-alpine AS runner
+RUN apk add --no-cache openssl
 WORKDIR /app
 
 ENV NODE_ENV=production
