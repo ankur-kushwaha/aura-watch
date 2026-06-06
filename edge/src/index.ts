@@ -73,7 +73,7 @@ function uploadRecordedClip(filepath: string, filename: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const isHttps = CLOUD_URL.startsWith('https');
     const url = new URL(`${CLOUD_URL}/api/devices/${deviceId}/upload`);
-    
+
     const options = {
       hostname: url.hostname,
       port: url.port || (isHttps ? 443 : 80),
@@ -115,7 +115,7 @@ async function registerDevice(): Promise<any> {
   return new Promise((resolve, reject) => {
     const isHttps = CLOUD_URL.startsWith('https');
     const url = new URL(`${CLOUD_URL}/api/devices/register`);
-    
+
     const payload = JSON.stringify({
       deviceId,
       name: DEVICE_NAME,
@@ -175,14 +175,14 @@ function clearHlsDirectory() {
     for (const file of files) {
       try {
         fs.unlinkSync(path.join(HLS_DIR, file));
-      } catch (e) {}
+      } catch (e) { }
     }
   }
 }
 
 function startStandaloneHls() {
   if (standaloneHlsProcess) return;
-  
+
   // Kill any existing/dangling ffmpeg processes using the same HLS output directory
   try {
     if (process.platform !== 'win32') {
@@ -192,13 +192,13 @@ function startStandaloneHls() {
   } catch (e) {
     // Ignore error if no process was found
   }
-  
+
   sendLog('Starting standalone HLS streaming process...');
   prepareHlsDirectory();
-  
+
   let args: string[] = [];
   const hlsPlaylistPath = path.join(HLS_DIR, 'index.m3u8');
-  
+
   if (currentConfig.cameraType === 'webcam') {
     if (process.platform === 'darwin') {
       args = [
@@ -254,19 +254,21 @@ function startStandaloneHls() {
       hlsPlaylistPath
     ];
   }
-  
+
   console.log(`[Edge Standalone HLS] Spawning: ffmpeg ${args.join(' ')}`);
   standaloneHlsProcess = spawn('ffmpeg', args);
-  
-  standaloneHlsProcess.stderr?.on('data', (data: any) => {
-    console.error(`[Edge Standalone HLS ffmpeg stderr] ${data.toString().trim()}`);
-  });
-  
+
+  if (process.env.DEBUG_LOGS !== 'false') {
+    standaloneHlsProcess.stderr?.on('data', (data: any) => {
+      console.error(`[Edge Standalone HLS ffmpeg stderr] ${data.toString().trim()}`);
+    });
+  }
+
   standaloneHlsProcess.on('error', (err: any) => {
     console.error(`[Edge Standalone HLS] Failed to start process:`, err);
     standaloneHlsProcess = null;
   });
-  
+
   standaloneHlsProcess.on('close', (code: number) => {
     console.log(`[Edge Standalone HLS] Process exited with code ${code}`);
     standaloneHlsProcess = null;
@@ -278,7 +280,7 @@ function stopStandaloneHls() {
     sendLog('Stopping standalone HLS streaming process...');
     try {
       standaloneHlsProcess.kill('SIGKILL');
-    } catch (e) {}
+    } catch (e) { }
     standaloneHlsProcess = null;
   }
   clearHlsDirectory();
@@ -318,7 +320,7 @@ async function startDetector() {
 
   sendLog(`Starting motion detector for camera: ${currentConfig.name}`);
   prepareHlsDirectory();
-  
+
   activeDetector = new MotionDetector({
     streamUrl: currentConfig.streamUrl,
     cameraType: currentConfig.cameraType,
@@ -358,7 +360,7 @@ async function startDetector() {
 
 async function updateCameraState() {
   console.log(`[Edge State Machine] Updating processes. Enabled: ${currentConfig.enabled}, Streaming: ${isStreaming}`);
-  
+
   if (currentConfig.enabled) {
     stopStandaloneHls();
     if (!activeDetector) {
@@ -410,7 +412,7 @@ function concatHlsSegments(outputMp4Path: string): Promise<void> {
       proc.on('close', (code) => {
         try {
           fs.unlinkSync(txtPath);
-        } catch (e) {}
+        } catch (e) { }
 
         if (code === 0) {
           resolve();
@@ -422,7 +424,7 @@ function concatHlsSegments(outputMp4Path: string): Promise<void> {
       proc.on('error', (err) => {
         try {
           fs.unlinkSync(txtPath);
-        } catch (e) {}
+        } catch (e) { }
         reject(err);
       });
     } catch (err) {
@@ -454,7 +456,7 @@ function transcodeForGemini(
     console.log(`[Transcoder] Spawning: ffmpeg ${args.join(' ')}`);
     const proc = spawn('ffmpeg', args);
     let stderr = '';
-    
+
     proc.stderr?.on('data', (d) => {
       stderr += d.toString();
     });
@@ -502,13 +504,13 @@ async function triggerClipRecording() {
         const geminiFps = process.env.GEMINI_OPTIMIZE_FPS || '1';
         const geminiRes = process.env.GEMINI_OPTIMIZE_RESOLUTION || '640:480';
         const geminiCrf = process.env.GEMINI_OPTIMIZE_CRF || '28';
-        
+
         tempGeminiPath = path.join(LOCAL_VIDEO_DIR, `temp_gemini_${timestamp.getTime()}_${deviceId}.mp4`);
-        
+
         sendLog(`Optimizing clip for Gemini (FPS: ${geminiFps}, Res: ${geminiRes}, CRF: ${geminiCrf})...`);
         try {
           await transcodeForGemini(outputPath, tempGeminiPath, geminiFps, geminiRes, geminiCrf);
-          
+
           if (fs.existsSync(tempGeminiPath)) {
             const originalSize = fs.statSync(outputPath).size;
             const optimizedSize = fs.statSync(tempGeminiPath).size;
@@ -523,7 +525,7 @@ async function triggerClipRecording() {
       }
 
       sendLog(`Uploading clip to Cloud: ${filename}...`);
-      
+
       uploadRecordedClip(uploadPath, filename)
         .then(() => {
           sendLog(`Successfully uploaded clip to Cloud: ${filename}`);
@@ -532,7 +534,7 @@ async function triggerClipRecording() {
             try {
               fs.unlinkSync(tempGeminiPath);
               sendLog(`Cleaned up temporary Gemini-optimized video file.`);
-            } catch (e) {}
+            } catch (e) { }
           }
         })
         .catch((err) => {
@@ -540,7 +542,7 @@ async function triggerClipRecording() {
           if (tempGeminiPath && fs.existsSync(tempGeminiPath)) {
             try {
               fs.unlinkSync(tempGeminiPath);
-            } catch (e) {}
+            } catch (e) { }
           }
         });
 
@@ -567,15 +569,15 @@ function sendStatusChange(status: string) {
  */
 function connectWS() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  
+
   console.log(`[Edge WS] Connecting to ${CLOUD_WS_URL}...`);
   const wsUrl = `${CLOUD_WS_URL}?role=device&deviceId=${deviceId}`;
-  
+
   ws = new WebSocket(wsUrl);
 
   ws.on('open', () => {
     console.log('[Edge WS] Connected successfully to Cloud Hub.');
-    
+
     // Start heartbeat
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = setInterval(() => {
@@ -591,13 +593,14 @@ function connectWS() {
   ws.on('message', async (messageData: string) => {
     try {
       const data = JSON.parse(messageData);
-      console.log('[Edge WS] Received event:', data.type);
-
+      if (process.env.DEBUG_LOGS !== 'false') {
+        console.log('[Edge WS] Received event:', data.type);
+      }
       switch (data.type) {
         case 'configure': {
           const newConfig = data.config;
           sendLog(`Applying new configuration: ${newConfig.name}`);
-          
+
           currentConfig = {
             name: newConfig.name,
             cameraType: newConfig.cameraType,
@@ -619,7 +622,7 @@ function connectWS() {
           const { requestId, filename } = data;
           const isClip = filename.startsWith('clip_') && filename.endsWith('.mp4');
           const filePath = isClip ? path.join(LOCAL_VIDEO_DIR, filename) : path.join(HLS_DIR, filename);
-          
+
           if (!fs.existsSync(filePath)) {
             ws?.send(JSON.stringify({
               type: 'response_stream_file',
@@ -633,10 +636,10 @@ function connectWS() {
           try {
             const isPlaylist = filename.endsWith('.m3u8');
             const isMp4 = filename.endsWith('.mp4');
-            const contentType = isPlaylist 
-              ? 'application/x-mpegURL' 
+            const contentType = isPlaylist
+              ? 'application/x-mpegURL'
               : (isMp4 ? 'video/mp4' : 'video/MP2T');
-            
+
             if (isPlaylist) {
               const fileContent = fs.readFileSync(filePath, 'utf8');
               ws?.send(JSON.stringify({
@@ -710,10 +713,10 @@ function cleanupWS() {
  */
 async function shutdown() {
   console.log('[Edge] Shutdown initiated. Cleaning up...');
-  
+
   cleanupWS();
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  
+
   if (activeDetector) {
     activeDetector.stop();
     activeDetector = null;
@@ -742,7 +745,7 @@ async function bootstrap() {
     console.log('[Edge] Registering device with Cloud Hub...');
     const registeredConfig = await registerDevice();
     console.log('[Edge] Registration successful. Applied config:', registeredConfig);
-    
+
     // Apply registered config from DB
     currentConfig = {
       name: registeredConfig.name,

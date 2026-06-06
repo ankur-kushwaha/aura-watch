@@ -154,12 +154,14 @@ export class MotionDetector extends EventEmitter {
       }
     });
 
-    this.ffmpegProcess.stderr?.on('data', (data) => {
-      const msg = data.toString();
-      if (msg.includes('Error') || msg.includes('warn') || msg.includes('Failed')) {
-        this.emit('log', `FFmpeg stderr: ${msg.trim()}`);
-      }
-    });
+    if (process.env.DEBUG_LOGS !== 'false') {
+      this.ffmpegProcess.stderr?.on('data', (data) => {
+        const msg = data.toString();
+        if (msg.includes('Error') || msg.includes('warn') || msg.includes('Failed')) {
+          this.emit('log', `FFmpeg stderr: ${msg.trim()}`);
+        }
+      });
+    }
 
     this.ffmpegProcess.on('close', (code) => {
       console.log(`[Detector] FFmpeg process closed with code ${code}`);
