@@ -35,3 +35,8 @@ jobs:
       - name: Push image
         run: |
           docker push ${{ env.IMAGE_NAME }}:latest
+
+      - name: Trigger deployment
+        run: |
+          curl -sSf "http://156.67.105.33:3000/api/deploy/HWtCAC8F7gNCdOUbygwTE"
+
