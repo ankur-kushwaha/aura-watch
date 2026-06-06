@@ -87,6 +87,24 @@ app.use('/api/clips', clipsRouter);
 app.use('/api/rag', ragRouter);
 app.use('/api/devices', devicesRouter);
 
+// Serve static frontend files
+const FRONTEND_DIR = path.join(__dirname, '../../frontend/dist');
+if (fs.existsSync(FRONTEND_DIR)) {
+  console.log(`[Server] Serving static frontend files from ${FRONTEND_DIR}`);
+  app.use(express.static(FRONTEND_DIR));
+
+  // SPA routing fallback - serve index.html for any non-API routes
+  app.get('*', (req, res, next) => {
+    if (!req.path.startsWith('/api') && req.accepts('html')) {
+      res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+    } else {
+      next();
+    }
+  });
+} else {
+  console.log(`[Server] [Warning] Frontend build directory not found at: ${FRONTEND_DIR}. Running in API-only mode.`);
+}
+
 // WebSocket Maps
 // Maps deviceId -> WebSocket connection
 const activeDevices = new Map<string, WebSocket>();

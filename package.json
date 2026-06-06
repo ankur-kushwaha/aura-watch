@@ -8,7 +8,9 @@
     "backend": "npm run dev --prefix backend",
     "frontend": "npm run dev --prefix frontend",
     "edge": "npm run dev --prefix edge",
-    "install-all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix edge"
+    "install-all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix edge",
+    "build": "npm run build --prefix frontend && npm run build --prefix backend",
+    "start": "npm run start --prefix backend"
   },
   "author": "",
   "license": "ISC",
