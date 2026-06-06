@@ -11,8 +11,8 @@ import { recordClip, stopActiveRecording } from './recorder';
 // Load environment variables
 dotenv.config();
 
-const CLOUD_URL = process.env.CLOUD_URL || 'http://localhost:5000';
-const CLOUD_WS_URL = process.env.CLOUD_WS_URL || 'ws://localhost:5000';
+const CLOUD_URL = process.env.CLOUD_URL || 'https://aura-watch.adboardtools.com';
+const CLOUD_WS_URL = process.env.CLOUD_WS_URL || 'wss://aura-watch.adboardtools.com';
 const DEVICE_NAME = process.env.DEVICE_NAME || 'Office Edge Device';
 const LOCAL_VIDEO_DIR = process.env.LOCAL_VIDEO_DIR || path.join(__dirname, '../storage/temp_clips');
 const HLS_DIR = path.join(__dirname, '../storage/hls');

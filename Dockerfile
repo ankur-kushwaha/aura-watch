@@ -22,7 +22,7 @@ RUN npm prune --omit=dev
 
 # Stage 3: Production runner
 FROM node:20-alpine AS runner
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl ffmpeg
 WORKDIR /app
 
 ENV NODE_ENV=production
