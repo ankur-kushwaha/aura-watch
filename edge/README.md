@@ -14,6 +14,13 @@ Ensure the following are installed on your edge device:
 
 ## Installation
 
+### Method A: Single-Line Interactive Installer (Recommended)
+You can download, configure, and optionally install the agent as a background daemon (systemd service on Linux) in a single command:
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
+```
+
+### Method B: Manual Installation
 1. Copy this `edge/` folder to your edge device.
 2. Install dependencies:
    ```bash

@@ -99,6 +99,21 @@ To install all dependencies across the root, backend, frontend, and edge directo
 npm run install-all
 ```
 
+#### ⚡ Quick Edge Agent Installer (Single-line Command)
+If you are deploying the Edge Agent onto a remote device (e.g. Raspberry Pi, NVIDIA Jetson, or secondary developer computer), you can download, configure, and register it as a background service with a single command:
+
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
+```
+
+This interactive script will:
+1. Verify system prerequisites (`Node.js`, `npm`, `git`, `FFmpeg`).
+2. Clone the repository to your chosen directory.
+3. Prompt you for the Cloud Hub URLs and Device Name.
+4. Automatically write the `.env` configuration file.
+5. Install packages and compile the TypeScript project.
+6. Option to install and start the background daemon systemd service (Linux only).
+
 ---
 
 ### 2. Configuration
