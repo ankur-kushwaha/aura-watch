@@ -38,5 +38,6 @@ jobs:
 
       - name: Trigger deployment
         run: |
-          curl -sSf "http://156.67.105.33:3000/api/deploy/HWtCAC8F7gNCdOUbygwTE"
+          curl -sSf "${{ secrets.DEPLOY_TRIGGER_URL }}"
+
 
