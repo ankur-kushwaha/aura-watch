@@ -187,6 +187,10 @@ class YoloByteTracker:
         self._objects_active = False
         self._last_detections = []
 
+    def reset_detection_edge(self):
+        """Re-arm the new-detection edge after cooldown or clip finalization."""
+        self._objects_active = False
+
     def _parse_detections(self, result) -> list[Detection]:
         if result.boxes is None or len(result.boxes) == 0:
             return []

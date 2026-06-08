@@ -94,6 +94,7 @@ class EdgeAgent:
         self._last_detection_at = 0.0
         self._recording_cooldown_until = 0.0
         self._recording_thread: Optional[threading.Thread] = None
+        self._active_tracker: Optional[YoloByteTracker] = None
         self.stream_frames = False
 
         self.hls_server = HlsStreamServer(HLS_DIR, EDGE_HTTP_PORT)
@@ -232,6 +233,7 @@ class EdgeAgent:
                 class_names=detection_classes,
                 imgsz=YOLO_IMGSZ,
             )
+            self._active_tracker = tracker
             self.send_log(
                 f"Detection targets: {', '.join(detection_classes)} | "
                 f"device={YOLO_DEVICE} imgsz={YOLO_IMGSZ} interval={YOLO_DETECT_INTERVAL}"
@@ -270,7 +272,11 @@ class EdgeAgent:
                         self._last_detection_at = time.monotonic()
                 if new_detection and self.config.tracking_enabled:
                     names = ", ".join(sorted({d.class_name for d in detections}))
-                    self._try_start_clip_recording(names)
+                    if not self._try_start_clip_recording(names):
+                        with self._recording_lock:
+                            in_cooldown = time.monotonic() < self._recording_cooldown_until
+                        if in_cooldown:
+                            tracker.reset_detection_edge()
 
             pipeline = VisionPipeline(
                 camera=camera,
@@ -292,6 +298,8 @@ class EdgeAgent:
                 encoder.stop()
                 camera.release()
                 tracker.reset()
+                if self._active_tracker is tracker:
+                    self._active_tracker = None
 
             if self.pipeline_stop.is_set() or self.shutdown_event.is_set():
                 break
@@ -427,6 +435,12 @@ class EdgeAgent:
             with self._recording_lock:
                 self.is_recording = False
                 self._recording_cooldown_until = time.monotonic() + RECORDING_COOLDOWN_SEC
+            if RECORDING_COOLDOWN_SEC > 0:
+                self.send_log(
+                    f"Clip cooldown started ({int(RECORDING_COOLDOWN_SEC)}s before next clip can begin)."
+                )
+            if self._active_tracker:
+                self._active_tracker.reset_detection_edge()
             if self.is_pipeline_running:
                 self.send_status("Monitoring" if self.config.tracking_enabled else "Idle")
 

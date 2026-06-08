@@ -94,6 +94,7 @@ function App() {
   const [logs, setLogs] = useState<{ message: string; timestamp: string }[]>([]);
   const [clips, setClips] = useState<VideoClip[]>([]);
   const [loadingClips, setLoadingClips] = useState<boolean>(false);
+  const [deletingAllClips, setDeletingAllClips] = useState<boolean>(false);
   const [selectedClip, setSelectedClip] = useState<VideoClip | null>(null);
 
   // RAG Q&A states
@@ -512,6 +513,24 @@ function App() {
     }
   };
 
+  const handleDeleteAllClips = async () => {
+    if (clips.length === 0) return;
+    if (!confirm(`Are you sure you want to delete all ${clips.length} recorded clips? This cannot be undone.`)) return;
+
+    setDeletingAllClips(true);
+    try {
+      const res = await fetch(`${API_BASE}/clips`, { method: 'DELETE' });
+      if (res.ok) {
+        setClips([]);
+        setSelectedClip(null);
+      }
+    } catch (err) {
+      console.error('Failed to delete all clips', err);
+    } finally {
+      setDeletingAllClips(false);
+    }
+  };
+
   const handleAskQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -699,22 +718,22 @@ function App() {
             </div>
 
             {/* Video Feed Wrapper */}
-            <div className="bg-[#090d16] rounded-xl h-[240px] flex justify-center items-center relative overflow-hidden border border-[rgba(255,255,255,0.05)]">
+            <div className="bg-[#090d16] rounded-xl w-full relative overflow-hidden border border-[rgba(255,255,255,0.05)] min-h-[200px]">
 
               {selectedDeviceId && status !== 'Offline' ? (
-                <div className="w-full h-full relative flex justify-center items-center">
+                <div className="w-full relative">
                   {liveFrame && !useHlsFallback ? (
                     <img
                       src={liveFrame}
                       alt="Live camera preview"
-                      className="w-full h-full object-contain"
+                      className="w-full h-auto block"
                     />
                   ) : (
                     <video
                       ref={videoRef}
                       muted
                       controls
-                      className={`w-full h-full object-contain ${streamLoading ? 'hidden' : 'block'}`}
+                      className={`w-full h-auto block ${streamLoading ? 'hidden' : 'block'}`}
                     />
                   )}
 
@@ -738,7 +757,7 @@ function App() {
                   )}
                 </div>
               ) : (
-                <div className="text-center text-text-muted">
+                <div className="text-center text-text-muted min-h-[200px] flex flex-col justify-center items-center py-8">
                   <Camera size={36} className="text-text-muted mb-3 mx-auto" />
                   <p className="text-[0.9rem]">Device Offline</p>
                   <p className="text-[0.75rem] mt-1">
@@ -752,25 +771,6 @@ function App() {
                 <div className="absolute inset-0 border-2 border-danger pointer-events-none shadow-[inset_0_0_30px_rgba(244,63,94,0.25)] rounded-xl z-20" />
               )}
             </div>
-
-            {/* Motion sensitivity bar */}
-            {selectedDeviceId && status !== 'Offline' && config.trackingEnabled && (
-              <div className="mt-3">
-                <div className="flex justify-between text-[0.75rem] text-text-muted mb-1">
-                  <span>Frame Pixel Diff Activity:</span>
-                  <span className={`font-semibold ${motionActive ? 'text-danger' : 'text-success'}`}>{(motionRatio * 100).toFixed(2)}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-[rgba(255,255,255,0.05)] rounded-[3px] overflow-hidden">
-                  <div
-                    className="h-full transition-[width] duration-100 ease-out"
-                    style={{
-                      width: `${Math.min(motionRatio * 100, 100)}%`,
-                      background: motionActive ? 'var(--color-danger)' : 'var(--color-primary)'
-                    }}
-                  />
-                </div>
-              </div>
-            )}
           </div>
 
           {/* STREAM CONFIGURATION */}
@@ -888,13 +888,22 @@ function App() {
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Video size={18} color="var(--color-primary)" /> Event Archive & Playback
               </h2>
-              <button
-                onClick={fetchClips}
-                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
-                disabled={loadingClips}
-              >
-                <RefreshCw size={12} className={loadingClips ? 'animate-spin' : ''} /> Refresh
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDeleteAllClips}
+                  className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md hover:text-danger"
+                  disabled={loadingClips || deletingAllClips || clips.length === 0}
+                >
+                  <Trash2 size={12} /> Delete All
+                </button>
+                <button
+                  onClick={fetchClips}
+                  className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
+                  disabled={loadingClips || deletingAllClips}
+                >
+                  <RefreshCw size={12} className={loadingClips ? 'animate-spin' : ''} /> Refresh
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0 lg:overflow-hidden">

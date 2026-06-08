@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
-import { deleteClipVector } from '../services/qdrant';
+import { deleteClipVector, deleteClipVectors } from '../services/qdrant';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -50,6 +50,40 @@ router.get('/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching clip:', error);
     res.status(500).json({ error: 'Failed to fetch clip' });
+  }
+});
+
+/**
+ * DELETE /api/clips
+ * Delete all video clips, their local files, and Qdrant vectors.
+ */
+router.delete('/', async (_req: Request, res: Response) => {
+  try {
+    const clips = await prisma.videoClip.findMany();
+
+    for (const clip of clips) {
+      if (fs.existsSync(clip.filepath)) {
+        try {
+          fs.unlinkSync(clip.filepath);
+          console.log(`[Clips] Deleted local file: ${clip.filepath}`);
+        } catch (err) {
+          console.error(`[Clips] Failed to delete file at ${clip.filepath}:`, err);
+        }
+      }
+
+      if (clip.deviceId && onClipDeletedCallback) {
+        onClipDeletedCallback(clip.deviceId, clip.filename);
+      }
+    }
+
+    await deleteClipVectors(clips.map((clip) => clip.id));
+
+    const result = await prisma.videoClip.deleteMany();
+
+    res.json({ message: 'All clips successfully deleted', count: result.count });
+  } catch (error) {
+    console.error('Error deleting all clips:', error);
+    res.status(500).json({ error: 'Failed to delete all clips' });
   }
 });
 

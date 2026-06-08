@@ -62,14 +62,19 @@ export async function upsertClipVector(mongoId: string, vector: number[], payloa
 }
 
 export async function deleteClipVector(mongoId: string) {
-  const qdrantId = mongoIdToUuid(mongoId);
+  await deleteClipVectors([mongoId]);
+}
+
+export async function deleteClipVectors(mongoIds: string[]) {
+  if (mongoIds.length === 0) return;
+  const qdrantIds = mongoIds.map(mongoIdToUuid);
   try {
     await qdrant.delete(COLLECTION_NAME, {
-      points: [qdrantId],
+      points: qdrantIds,
     });
-    console.log(`Deleted vector ${qdrantId} from Qdrant`);
+    console.log(`Deleted ${qdrantIds.length} vector(s) from Qdrant`);
   } catch (error) {
-    console.error(`Error deleting vector ${mongoId} from Qdrant:`, error);
+    console.error(`Error deleting vectors from Qdrant:`, error);
   }
 }
 
