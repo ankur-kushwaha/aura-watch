@@ -45,15 +45,28 @@ def local_network_hint(host: str, port: int = 554) -> Optional[str]:
     )
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 class CameraCapture:
     def __init__(
         self,
         camera_type: str = "webcam",
         stream_url: str = "0",
-        width: int = 1280,
-        height: int = 720,
-        fps: int = 30,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: Optional[int] = None,
     ):
+        width = width if width is not None else _env_int("CAMERA_WIDTH", 640)
+        height = height if height is not None else _env_int("CAMERA_HEIGHT", 480)
+        fps = fps if fps is not None else _env_int("CAMERA_FPS", 30)
         self.camera_type = camera_type
         self.stream_url = stream_url
         self.width = width

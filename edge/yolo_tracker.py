@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import platform
 from dataclasses import dataclass
 from typing import Optional
 
+import cv2
 import numpy as np
 from ultralytics import YOLO
 
@@ -57,6 +59,35 @@ def class_names_from_flags(detect_person: bool, detect_vehicle: bool) -> list[st
     return names
 
 
+def resolve_yolo_device(requested: str = "auto") -> str:
+    import torch
+
+    normalized = (requested or "auto").strip().lower()
+    if normalized not in ("", "auto"):
+        return normalized
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def resolve_model_path(model_path: Optional[str] = None) -> str:
+    if model_path and os.path.exists(model_path):
+        return model_path
+
+    custom = os.getenv("YOLO_MODEL_PATH", "").strip()
+    if custom and os.path.exists(custom):
+        return custom
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    coreml = os.path.join(base_dir, "yolov8n.mlpackage")
+    if platform.system() == "Darwin" and os.path.isdir(coreml):
+        return coreml
+
+    return os.path.join(base_dir, "yolov8n.pt")
+
+
 @dataclass
 class Detection:
     track_id: Optional[int]
@@ -66,25 +97,67 @@ class Detection:
     bbox: tuple[int, int, int, int]  # x1, y1, x2, y2
 
 
+def draw_detections(frame: np.ndarray, detections: list[Detection]) -> np.ndarray:
+    annotated = frame.copy()
+    for detection in detections:
+        x1, y1, x2, y2 = detection.bbox
+        color = (255, 128, 0)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        if detection.track_id is not None:
+            label = f"id:{detection.track_id} {detection.class_name} {detection.confidence:.2f}"
+        else:
+            label = f"{detection.class_name} {detection.confidence:.2f}"
+        (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(annotated, (x1, y1 - text_h - 6), (x1 + text_w + 4, y1), color, -1)
+        cv2.putText(
+            annotated,
+            label,
+            (x1 + 2, y1 - 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 0),
+            1,
+            cv2.LINE_AA,
+        )
+    return annotated
+
+
 class YoloByteTracker:
     def __init__(
         self,
         model_path: Optional[str] = None,
         confidence: float = 0.25,
-        device: str = "cpu",
+        device: str = "auto",
         class_names: Optional[list[str]] = None,
+        imgsz: int = 416,
     ):
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.model_path = model_path or os.path.join(base_dir, "yolov8n.pt")
+        self.model_path = resolve_model_path(model_path)
         self.confidence = confidence
-        self.device = device
+        self.device = resolve_yolo_device(device)
+        self.imgsz = imgsz
         self.class_ids = resolve_class_ids(class_names)
         self.class_names = class_names or list(DEFAULT_DETECT_CLASSES)
+        self.use_half = self.device == "cuda" and os.getenv("YOLO_HALF", "false").lower() == "true"
         self.model = YOLO(self.model_path)
         self._objects_active = False
+        self._last_detections: list[Detection] = []
 
-    def process(self, frame: np.ndarray) -> tuple[np.ndarray, list[Detection], bool]:
+    def process(
+        self,
+        frame: np.ndarray,
+        *,
+        run_inference: bool = True,
+        tracking_enabled: bool = True,
+    ) -> tuple[np.ndarray, list[Detection], bool]:
         """Run detection + tracking, return annotated frame, detections, and new-detection flag."""
+        if not tracking_enabled:
+            return frame, [], False
+
+        if not run_inference and self._last_detections:
+            detections = list(self._last_detections)
+            annotated = draw_detections(frame, detections)
+            return annotated, detections, self._update_detection_state(detections)
+
         results = self.model.track(
             frame,
             persist=True,
@@ -92,24 +165,27 @@ class YoloByteTracker:
             conf=self.confidence,
             device=self.device,
             classes=self.class_ids,
+            imgsz=self.imgsz,
+            half=self.use_half,
             verbose=False,
         )
 
         result = results[0]
         detections = self._parse_detections(result)
-        annotated = result.plot()
+        self._last_detections = detections
+        annotated = draw_detections(frame, detections)
+        new_detection = self._update_detection_state(detections)
+        return annotated, detections, new_detection
 
+    def _update_detection_state(self, detections: list[Detection]) -> bool:
         objects_present = len(detections) > 0
         new_detection = objects_present and not self._objects_active
-        if objects_present:
-            self._objects_active = True
-        else:
-            self._objects_active = False
-
-        return annotated, detections, new_detection
+        self._objects_active = objects_present
+        return new_detection
 
     def reset(self):
         self._objects_active = False
+        self._last_detections = []
 
     def _parse_detections(self, result) -> list[Detection]:
         if result.boxes is None or len(result.boxes) == 0:

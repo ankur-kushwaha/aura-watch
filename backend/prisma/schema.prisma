@@ -31,4 +31,5 @@ model EdgeDevice {
   pixelChangeThreshold Float    @default(0.02)
   detectPerson         Boolean  @default(true)
   detectVehicle        Boolean  @default(true)
+  streamHost           String   @default("")
 }

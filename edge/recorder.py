@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import queue
 import re
 import shutil
 import subprocess
+import threading
 import time
 from typing import Optional
 
@@ -16,16 +18,28 @@ import requests
 class HlsEncoder:
     """Pipe annotated BGR frames into FFmpeg for live HLS output."""
 
-    def __init__(self, output_dir: str, width: int, height: int, fps: int = 30):
+    def __init__(
+        self,
+        output_dir: str,
+        width: int,
+        height: int,
+        fps: int = 30,
+        segment_sec: float = 1.0,
+    ):
         self.output_dir = output_dir
         self.width = width
         self.height = height
         self.fps = fps
+        self.segment_sec = segment_sec
         self.process: Optional[subprocess.Popen] = None
+        self._write_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
+        self._writer_thread: Optional[threading.Thread] = None
+        self._stop_writer = threading.Event()
         os.makedirs(output_dir, exist_ok=True)
 
     def start(self):
         playlist = os.path.join(self.output_dir, "index.m3u8")
+        segment_time = max(self.segment_sec, 0.5)
         args = [
             "ffmpeg",
             "-y",
@@ -53,11 +67,11 @@ class HlsEncoder:
             "yuv420p",
             "-an",
             "-hls_time",
-            "2",
+            str(segment_time),
             "-hls_list_size",
-            "5",
+            "4",
             "-hls_flags",
-            "delete_segments",
+            "delete_segments+append_list+omit_endlist",
             playlist,
         ]
         self.process = subprocess.Popen(
@@ -65,22 +79,52 @@ class HlsEncoder:
             stdin=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        self._stop_writer.clear()
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop,
+            name="hls-writer",
+            daemon=True,
+        )
+        self._writer_thread.start()
 
     def write_frame(self, frame: np.ndarray):
-        if not self.process or not self.process.stdin:
-            return
-
-        if frame.shape[1] != self.width or frame.shape[0] != self.height:
-            import cv2
-
-            frame = cv2.resize(frame, (self.width, self.height))
-
         try:
-            self.process.stdin.write(frame.tobytes())
-        except (BrokenPipeError, OSError):
-            pass
+            self._write_queue.put_nowait(frame)
+        except queue.Full:
+            try:
+                self._write_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._write_queue.put_nowait(frame)
+            except queue.Full:
+                pass
+
+    def _writer_loop(self):
+        while not self._stop_writer.is_set():
+            try:
+                frame = self._write_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+
+            if not self.process or not self.process.stdin:
+                continue
+
+            if frame.shape[1] != self.width or frame.shape[0] != self.height:
+                import cv2
+
+                frame = cv2.resize(frame, (self.width, self.height))
+
+            try:
+                self.process.stdin.write(frame.tobytes())
+            except (BrokenPipeError, OSError):
+                break
 
     def stop(self):
+        self._stop_writer.set()
+        if self._writer_thread and self._writer_thread.is_alive():
+            self._writer_thread.join(timeout=3)
+
         if not self.process:
             return
 
@@ -97,6 +141,7 @@ class HlsEncoder:
             self.process.wait(timeout=2)
 
         self.process = None
+        self._writer_thread = None
 
 
 def clear_directory(directory: str):
@@ -173,23 +218,27 @@ def get_video_duration_seconds(path: str) -> float:
 
 
 def concat_hls_segments(hls_dir: str, output_mp4: str):
-    segments = []
-    for name in os.listdir(hls_dir):
+    abs_hls_dir = os.path.abspath(hls_dir)
+    abs_output = os.path.abspath(output_mp4)
+    segments: list[tuple[int, str]] = []
+
+    for name in os.listdir(abs_hls_dir):
         if not name.endswith(".ts"):
             continue
         match = re.search(r"(\d+)\.ts$", name)
         num = int(match.group(1)) if match else 0
-        segments.append((num, os.path.join(hls_dir, name)))
+        segments.append((num, os.path.join(abs_hls_dir, name)))
 
     segments.sort(key=lambda item: item[0])
-    files = [path for _, path in segments]
-    if not files:
+    if not segments:
         raise RuntimeError("No HLS segments found to concatenate")
 
-    txt_path = os.path.join(hls_dir, f"concat_{int(time.time() * 1000)}.txt")
+    txt_path = os.path.join(abs_hls_dir, f"concat_{int(time.time() * 1000)}.txt")
     with open(txt_path, "w", encoding="utf-8") as handle:
-        for path in files:
-            escaped = path.replace("'", "'\\''")
+        for _, abs_path in segments:
+            if not os.path.isfile(abs_path):
+                raise RuntimeError(f"HLS segment missing before concat: {abs_path}")
+            escaped = abs_path.replace("'", "'\\''")
             handle.write(f"file '{escaped}'\n")
 
     try:
@@ -205,11 +254,12 @@ def concat_hls_segments(hls_dir: str, output_mp4: str):
                 txt_path,
                 "-c",
                 "copy",
-                output_mp4,
+                abs_output,
             ],
             capture_output=True,
             text=True,
             check=False,
+            cwd=abs_hls_dir,
         )
         if result.returncode != 0:
             raise RuntimeError(f"FFmpeg concat failed: {result.stderr}")

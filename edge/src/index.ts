@@ -280,9 +280,9 @@ function concatHlsSegments(outputMp4Path: string): Promise<void> {
         return reject(new Error('No segments found to concatenate'));
       }
 
-      // Write a temp text file for the concat demuxer
+      // FFmpeg resolves paths relative to the concat file's directory — use bare filenames only.
       const txtPath = path.join(HLS_DIR, `concat_${Date.now()}.txt`);
-      const content = files.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n');
+      const content = files.map(f => `file '${path.basename(f).replace(/'/g, "'\\''")}'`).join('\n');
       fs.writeFileSync(txtPath, content, 'utf8');
 
       const args = [

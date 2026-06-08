@@ -82,7 +82,7 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
  * Edge device registers/announces itself on boot
  */
 router.post('/register', async (req: Request, res: Response) => {
-  const { deviceId, name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status } = req.body;
+  const { deviceId, name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status, streamHost } = req.body;
 
   if (!deviceId || !name) {
     return res.status(400).json({ error: 'deviceId and name are required' });
@@ -97,6 +97,7 @@ router.post('/register', async (req: Request, res: Response) => {
         name,
         status: status || 'Idle',
         lastHeartbeat: new Date(),
+        ...(streamHost !== undefined ? { streamHost: String(streamHost) } : {}),
       },
       create: {
         deviceId,
@@ -109,6 +110,7 @@ router.post('/register', async (req: Request, res: Response) => {
         pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
         detectPerson: true,
         detectVehicle: true,
+        streamHost: streamHost ? String(streamHost) : '',
         lastHeartbeat: new Date(),
       },
     });

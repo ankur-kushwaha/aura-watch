@@ -13,12 +13,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import cv2
 import requests
 import websocket
 from dotenv import load_dotenv
 
 from camera import CameraCapture
+from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
     HlsEncoder,
     clear_directory,
@@ -30,7 +30,8 @@ from recorder import (
     transcode_for_gemini,
     upload_clip,
 )
-from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names
+from stream_server import HlsStreamServer
+from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names, resolve_yolo_device
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -43,8 +44,13 @@ HLS_DIR = os.path.join(BASE_DIR, "storage", "hls")
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
 DEBUG_LOGS = os.getenv("DEBUG_LOGS", "true").lower() != "false"
 YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
-YOLO_DEVICE = os.getenv("YOLO_DEVICE", "cpu")
-FRAME_STREAM_FPS = float(os.getenv("FRAME_STREAM_FPS", "2"))
+YOLO_DEVICE = resolve_yolo_device(os.getenv("YOLO_DEVICE", "auto"))
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "416"))
+YOLO_DETECT_INTERVAL = max(int(os.getenv("YOLO_DETECT_INTERVAL", "2")), 1)
+FRAME_STREAM_FPS = float(os.getenv("FRAME_STREAM_FPS", "12"))
+HLS_SEGMENT_SEC = float(os.getenv("HLS_SEGMENT_SEC", "1"))
+EDGE_HTTP_PORT = int(os.getenv("EDGE_HTTP_PORT", "8090"))
+PREVIEW_JPEG_QUALITY = int(os.getenv("PREVIEW_JPEG_QUALITY", "70"))
 RECORDING_COOLDOWN_SEC = float(os.getenv("RECORDING_COOLDOWN_SEC", "45"))
 RECORDING_MAX_SEC = float(os.getenv("RECORDING_MAX_SEC", "60"))
 RECORDING_END_GRACE_SEC = float(os.getenv("RECORDING_END_GRACE_SEC", "2"))
@@ -90,6 +96,9 @@ class EdgeAgent:
         self._recording_thread: Optional[threading.Thread] = None
         self.stream_frames = False
 
+        self.hls_server = HlsStreamServer(HLS_DIR, EDGE_HTTP_PORT)
+        self.stream_host = self.hls_server.stream_host
+
         os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
         os.makedirs(HLS_DIR, exist_ok=True)
 
@@ -115,6 +124,14 @@ class EdgeAgent:
     def send_status(self, status: str):
         self._ws_send({"type": "status_change", "status": status})
 
+    def _announce_stream_host(self):
+        self._ws_send(
+            {
+                "type": "stream_announce",
+                "streamHost": self.stream_host,
+            }
+        )
+
     def _ws_send(self, payload: dict[str, Any]):
         if not self.ws:
             return
@@ -134,6 +151,7 @@ class EdgeAgent:
             "trackingEnabled": self.config.tracking_enabled,
             "motionThreshold": self.config.motion_threshold,
             "pixelChangeThreshold": self.config.pixel_change_threshold,
+            "streamHost": self.stream_host,
             "status": "Idle",
         }
         response = requests.post(url, json=payload, timeout=30)
@@ -158,6 +176,11 @@ class EdgeAgent:
         kill_ffmpeg_for_dir(HLS_DIR)
         self.prepare_hls_directory()
         self.pipeline_stop.clear()
+
+        if not self.hls_server._httpd:
+            self.hls_server.start()
+            self.stream_host = self.hls_server.stream_host
+            print(f"[Edge] HLS HTTP server listening at {self.stream_host}")
 
         self.pipeline_thread = threading.Thread(
             target=self._pipeline_loop,
@@ -207,9 +230,19 @@ class EdgeAgent:
                 confidence=YOLO_CONFIDENCE,
                 device=YOLO_DEVICE,
                 class_names=detection_classes,
+                imgsz=YOLO_IMGSZ,
             )
-            self.send_log(f"Detection targets: {', '.join(detection_classes)}")
-            encoder = HlsEncoder(HLS_DIR, camera.width, camera.height, fps=30)
+            self.send_log(
+                f"Detection targets: {', '.join(detection_classes)} | "
+                f"device={YOLO_DEVICE} imgsz={YOLO_IMGSZ} interval={YOLO_DETECT_INTERVAL}"
+            )
+            encoder = HlsEncoder(
+                HLS_DIR,
+                camera.width,
+                camera.height,
+                fps=30,
+                segment_sec=HLS_SEGMENT_SEC,
+            )
             encoder.start()
 
             self.send_log(
@@ -218,48 +251,44 @@ class EdgeAgent:
             )
             self.send_status("Monitoring" if self.config.tracking_enabled else "Idle")
 
-            frame_interval = 1.0 / 30.0
-            stream_interval = 1.0 / max(FRAME_STREAM_FPS, 0.5)
-            last_stream_time = 0.0
-            last_frame_time = time.monotonic()
-            stale_frames = 0
+            settings = PipelineSettings(
+                detect_interval=YOLO_DETECT_INTERVAL,
+                encode_fps=30,
+                stream_fps=FRAME_STREAM_FPS,
+                jpeg_quality=PREVIEW_JPEG_QUALITY,
+                hls_segment_sec=HLS_SEGMENT_SEC,
+                tracking_enabled=self.config.tracking_enabled,
+            )
+
+            def on_preview(frame):
+                if self.stream_frames:
+                    self._send_annotated_frame(frame, settings.jpeg_quality)
+
+            def on_detections(detections, new_detection):
+                with self._detection_lock:
+                    if detections:
+                        self._last_detection_at = time.monotonic()
+                if new_detection and self.config.tracking_enabled:
+                    names = ", ".join(sorted({d.class_name for d in detections}))
+                    self._try_start_clip_recording(names)
+
+            pipeline = VisionPipeline(
+                camera=camera,
+                tracker=tracker,
+                encoder=encoder,
+                settings=settings,
+                on_preview_frame=on_preview,
+                on_detections=on_detections,
+                should_stop=lambda: self.pipeline_stop.is_set() or self.shutdown_event.is_set(),
+            )
 
             try:
-                while not self.pipeline_stop.is_set() and not self.shutdown_event.is_set():
-                    frame = camera.read()
-                    if frame is None:
-                        stale_frames += 1
-                        if stale_frames >= 150:
-                            detail = camera.last_error or "stream stalled"
-                            raise RuntimeError(f"Camera stream lost ({detail})")
-                        time.sleep(0.05)
-                        continue
-
-                    stale_frames = 0
-                    annotated, detections, new_detection = tracker.process(frame)
-                    with self._detection_lock:
-                        if detections:
-                            self._last_detection_at = time.monotonic()
-                    encoder.write_frame(annotated)
-
-                    now = time.monotonic()
-                    if now - last_stream_time >= stream_interval:
-                        if self.stream_frames or self.config.tracking_enabled:
-                            self._send_annotated_frame(annotated)
-                        last_stream_time = now
-
-                    if new_detection and self.config.tracking_enabled:
-                        names = ", ".join(sorted({d.class_name for d in detections}))
-                        self._try_start_clip_recording(names)
-
-                    elapsed = time.monotonic() - last_frame_time
-                    sleep_for = frame_interval - elapsed
-                    if sleep_for > 0:
-                        time.sleep(sleep_for)
-                    last_frame_time = time.monotonic()
+                pipeline.start_capture()
+                pipeline.run()
             except Exception as exc:
                 self.send_log(f"[Detector Error] {exc}. Reconnecting...")
             finally:
+                pipeline.join_capture()
                 encoder.stop()
                 camera.release()
                 tracker.reset()
@@ -282,11 +311,11 @@ class EdgeAgent:
             time.sleep(0.25)
         return False
 
-    def _send_annotated_frame(self, frame):
-        ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
-        if not ok:
+    def _send_annotated_frame(self, frame, quality: int = PREVIEW_JPEG_QUALITY):
+        jpeg = encode_preview_jpeg(frame, quality)
+        if not jpeg:
             return
-        encoded = base64.b64encode(buffer.tobytes()).decode("ascii")
+        encoded = base64.b64encode(jpeg).decode("ascii")
         self._ws_send({"type": "frame", "image": encoded})
 
     def _try_start_clip_recording(self, detection_names: str) -> bool:
@@ -310,7 +339,6 @@ class EdgeAgent:
         return True
 
     def _run_clip_recording(self, _detection_names: str):
-        # Notify UI without stopping the live pipeline or HLS encoder
         self.send_status("Recording")
 
         timestamp_ms = int(time.time() * 1000)
@@ -350,7 +378,7 @@ class EdgeAgent:
             if not copied_segments:
                 raise RuntimeError("No HLS segments captured during recording")
 
-            duration = len(copied_segments) * 2  # each HLS segment is ~2s
+            duration = len(copied_segments) * HLS_SEGMENT_SEC
             self.send_log(
                 f"Compiling ~{duration}s of footage ({len(copied_segments)} segments) into {filename}..."
             )
@@ -399,7 +427,6 @@ class EdgeAgent:
             with self._recording_lock:
                 self.is_recording = False
                 self._recording_cooldown_until = time.monotonic() + RECORDING_COOLDOWN_SEC
-            # Restore status without restarting the camera/HLS pipeline
             if self.is_pipeline_running:
                 self.send_status("Monitoring" if self.config.tracking_enabled else "Idle")
 
@@ -458,8 +485,6 @@ class EdgeAgent:
         try:
             data = json.loads(message)
             msg_type = data.get("type")
-            # if DEBUG_LOGS:
-                # print(f"[Edge WS] Received event: {msg_type}")
 
             if msg_type == "configure":
                 cfg = data.get("config", {})
@@ -481,7 +506,7 @@ class EdgeAgent:
             elif msg_type == "toggle_stream":
                 self.stream_frames = bool(data.get("stream", False))
                 state = "enabled" if self.stream_frames else "disabled"
-                self.send_log(f"Annotated frame streaming {state}.")
+                self.send_log(f"Low-latency preview streaming {state}.")
 
             elif msg_type == "request_stream_file":
                 self._handle_stream_file_request(data["requestId"], data["filename"])
@@ -499,7 +524,7 @@ class EdgeAgent:
     def _schedule_heartbeat(self):
         if self.shutdown_event.is_set():
             return
-        self._ws_send({"type": "heartbeat"})
+        self._ws_send({"type": "heartbeat", "streamHost": self.stream_host})
         self.heartbeat_timer = threading.Timer(10.0, self._schedule_heartbeat)
         self.heartbeat_timer.daemon = True
         self.heartbeat_timer.start()
@@ -509,6 +534,7 @@ class EdgeAgent:
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
         self._schedule_heartbeat()
+        self._announce_stream_host()
 
         if self.is_recording:
             status = "Recording"
@@ -563,6 +589,7 @@ class EdgeAgent:
             self.reconnect_timer.cancel()
 
         self.stop_pipeline()
+        self.hls_server.stop()
         kill_ffmpeg_for_dir(HLS_DIR)
         clear_directory(HLS_DIR)
 
@@ -576,6 +603,10 @@ class EdgeAgent:
 
     def bootstrap(self):
         try:
+            self.hls_server.start()
+            self.stream_host = self.hls_server.stream_host
+            print(f"[Edge] HLS HTTP server listening at {self.stream_host}")
+
             print("[Edge] Registering device with Cloud Hub...")
             registered = self.register_device()
             print("[Edge] Registration successful. Applied config:", registered)

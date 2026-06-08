@@ -107,12 +107,17 @@ function App() {
 
   // Live Camera Feed Video States
   const [streamLoading, setStreamLoading] = useState<boolean>(true);
+  const [liveFrame, setLiveFrame] = useState<string | null>(null);
+  const [useHlsFallback, setUseHlsFallback] = useState<boolean>(false);
+  const lastFrameAtRef = useRef<number>(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
   // WebSocket Ref
   const wsRef = useRef<WebSocket | null>(null);
+  const wsIntentionalCloseRef = useRef(false);
+  const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchDevices = useCallback(async (selectFirst = false) => {
     try {
@@ -152,6 +157,15 @@ function App() {
   }, []);
 
   const connectWS = useCallback(function connect() {
+    if (
+      wsRef.current &&
+      (wsRef.current.readyState === WebSocket.OPEN ||
+        wsRef.current.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+
+    wsIntentionalCloseRef.current = false;
     console.log('Connecting to websocket...');
     const ws = new WebSocket(WS_BASE);
     wsRef.current = ws;
@@ -197,14 +211,25 @@ function App() {
           setMotionRatio(data.ratio);
           break;
         case 'log':
-          setLogs((prev) => [...prev, { message: data.message, timestamp: data.timestamp }]);
+          setLogs((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.message === data.message && last.timestamp === data.timestamp) {
+              return prev;
+            }
+            return [...prev, { message: data.message, timestamp: data.timestamp }];
+          });
           break;
         case 'new_clip':
           setClips((prev) => [data.clip, ...prev]);
           setSelectedClip(data.clip);
           break;
         case 'frame':
-          // Obsolete grayscale frames
+          if (data.image) {
+            setLiveFrame(`data:image/jpeg;base64,${data.image}`);
+            lastFrameAtRef.current = Date.now();
+            setUseHlsFallback(false);
+            setStreamLoading(false);
+          }
           break;
         default:
           break;
@@ -212,8 +237,14 @@ function App() {
     };
 
     ws.onclose = () => {
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
+      if (wsIntentionalCloseRef.current) {
+        return;
+      }
       console.log('WebSocket closed. Reconnecting in 5s...');
-      setTimeout(connect, 5000);
+      wsReconnectTimerRef.current = setTimeout(connect, 5000);
     };
 
     ws.onerror = (error) => {
@@ -268,7 +299,19 @@ function App() {
   useEffect(() => {
     connectWS();
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      wsIntentionalCloseRef.current = true;
+      if (wsReconnectTimerRef.current) {
+        clearTimeout(wsReconnectTimerRef.current);
+        wsReconnectTimerRef.current = null;
+      }
+      const ws = wsRef.current;
+      if (ws) {
+        ws.onmessage = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.close();
+        wsRef.current = null;
+      }
     };
   }, [connectWS]);
 
@@ -282,14 +325,42 @@ function App() {
   useEffect(() => {
     Promise.resolve().then(() => {
       setStreamLoading(true);
+      setLiveFrame(null);
+      setUseHlsFallback(false);
+      lastFrameAtRef.current = 0;
     });
   }, [selectedDeviceId]);
 
+  // Fall back to HLS if WebSocket preview frames never arrive or stop
+  useEffect(() => {
+    if (!selectedDeviceId || status === 'Offline') return;
+
+    const startupTimeout = setTimeout(() => {
+      if (!lastFrameAtRef.current) {
+        setUseHlsFallback(true);
+      }
+    }, 5000);
+
+    const interval = setInterval(() => {
+      const lastFrameAt = lastFrameAtRef.current;
+      if (!lastFrameAt) return;
+      if (Date.now() - lastFrameAt > 4000) {
+        setUseHlsFallback(true);
+        setStreamLoading(true);
+      }
+    }, 1000);
+
+    return () => {
+      clearTimeout(startupTimeout);
+      clearInterval(interval);
+    };
+  }, [selectedDeviceId, status]);
+
   const isDeviceOffline = status === 'Offline';
 
-  // Initialize HLS player — keep alive across Recording/Processing/Monitoring status changes
+  // Initialize HLS player as fallback when WebSocket preview is unavailable
   useEffect(() => {
-    if (!selectedDeviceId || isDeviceOffline) {
+    if (!selectedDeviceId || isDeviceOffline || !useHlsFallback) {
       return;
     }
 
@@ -311,8 +382,10 @@ function App() {
 
     if (Hls.isSupported()) {
       const activeHls = new Hls({
-        maxBufferLength: 4,
-        maxMaxBufferLength: 8,
+        maxBufferLength: 2,
+        maxMaxBufferLength: 4,
+        liveSyncDuration: 1,
+        liveMaxLatencyDuration: 3,
         enableWorker: true,
         lowLatencyMode: true,
       });
@@ -342,7 +415,6 @@ function App() {
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native support (Safari/iOS)
       video.src = streamUrl;
       video.addEventListener('canplay', startPlaying);
     }
@@ -354,7 +426,7 @@ function App() {
       video.src = '';
       video.onplaying = null;
     };
-  }, [selectedDeviceId, isDeviceOffline]);
+  }, [selectedDeviceId, isDeviceOffline, useHlsFallback]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -631,20 +703,37 @@ function App() {
 
               {selectedDeviceId && status !== 'Offline' ? (
                 <div className="w-full h-full relative flex justify-center items-center">
-                  <video
-                    ref={videoRef}
-                    muted
-                    controls
-                    className={`w-full h-full object-contain ${streamLoading ? 'hidden' : 'block'}`}
-                  />
+                  {liveFrame && !useHlsFallback ? (
+                    <img
+                      src={liveFrame}
+                      alt="Live camera preview"
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <video
+                      ref={videoRef}
+                      muted
+                      controls
+                      className={`w-full h-full object-contain ${streamLoading ? 'hidden' : 'block'}`}
+                    />
+                  )}
+
+                  {liveFrame && !useHlsFallback && (
+                    <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(16,185,129,0.2)] text-emerald-400 border border-[rgba(16,185,129,0.35)]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
+                      LIVE
+                    </div>
+                  )}
 
                   {streamLoading && (
-                    <div className="text-center text-text-muted">
+                    <div className="text-center text-text-muted absolute inset-0 flex flex-col justify-center items-center bg-[#090d16]/80">
                       <div className="animate-[spin_4s_linear_infinite] mb-3 inline-block">
                         <RefreshCw size={36} color="var(--color-primary)" />
                       </div>
                       <p className="text-[0.9rem]">Initializing Live Stream...</p>
-                      <p className="text-[0.75rem] mt-1">Connecting to edge camera device (HLS)</p>
+                      <p className="text-[0.75rem] mt-1">
+                        {useHlsFallback ? 'Connecting via HLS fallback' : 'Connecting to edge camera (WebSocket)'}
+                      </p>
                     </div>
                   )}
                 </div>
