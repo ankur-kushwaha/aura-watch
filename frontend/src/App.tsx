@@ -15,7 +15,8 @@ import {
   Sparkles,
   Link2,
   Terminal,
-  SlidersHorizontal
+  SlidersHorizontal,
+  LogOut
 } from 'lucide-react';
 
 interface VideoClip {
@@ -68,7 +69,11 @@ interface RagResponseClip {
 const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 
-function App() {
+interface AppProps {
+  onLogout: () => void;
+}
+
+function App({ onLogout }: AppProps) {
   // App States
   const [devices, setDevices] = useState<EdgeDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -604,6 +609,13 @@ function App() {
               {status}
             </div>
           )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="btn btn-secondary py-1.5 px-3 text-[0.8rem] rounded-md flex items-center gap-1.5"
+          >
+            <LogOut size={14} /> Logout
+          </button>
         </div>
       </header>
 
