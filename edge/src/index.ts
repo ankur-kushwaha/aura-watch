@@ -27,7 +27,6 @@ let heartbeatTimer: NodeJS.Timeout | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let streamFrames = false;
 let isStreaming = true; // HLS stream is on by default and always available
-let standaloneHlsProcess: any = null;
 
 // Ensure local storage directory exists
 if (!fs.existsSync(LOCAL_VIDEO_DIR)) {
@@ -51,7 +50,7 @@ let currentConfig = {
   name: DEVICE_NAME,
   cameraType: 'webcam' as 'webcam' | 'rtsp',
   streamUrl: '0',
-  enabled: false,
+  trackingEnabled: false,
   motionThreshold: 25,
   pixelChangeThreshold: 0.02,
 };
@@ -121,7 +120,7 @@ async function registerDevice(): Promise<any> {
       name: DEVICE_NAME,
       cameraType: currentConfig.cameraType,
       streamUrl: currentConfig.streamUrl,
-      enabled: currentConfig.enabled,
+      trackingEnabled: currentConfig.trackingEnabled,
       motionThreshold: currentConfig.motionThreshold,
       pixelChangeThreshold: currentConfig.pixelChangeThreshold,
       status: 'Idle'
@@ -180,111 +179,6 @@ function clearHlsDirectory() {
   }
 }
 
-function startStandaloneHls() {
-  if (standaloneHlsProcess) return;
-
-  // Kill any existing/dangling ffmpeg processes using the same HLS output directory
-  try {
-    if (process.platform !== 'win32') {
-      console.log(`[Edge Standalone HLS] Killing any running ffmpeg processes writing to ${HLS_DIR}...`);
-      execSync(`pkill -9 -f "ffmpeg.*${HLS_DIR}"`, { stdio: 'ignore' });
-    }
-  } catch (e) {
-    // Ignore error if no process was found
-  }
-
-  sendLog('Starting standalone HLS streaming process...');
-  prepareHlsDirectory();
-
-  let args: string[] = [];
-  const hlsPlaylistPath = path.join(HLS_DIR, 'index.m3u8');
-
-  if (currentConfig.cameraType === 'webcam') {
-    if (process.platform === 'darwin') {
-      args = [
-        '-y',
-        '-f', 'avfoundation',
-        '-framerate', '30',
-        '-i', '0',
-        '-r', '30',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-tune', 'zerolatency',
-        '-g', '30',
-        '-pix_fmt', 'yuv420p',
-        '-an',
-        '-hls_time', '2',
-        '-hls_list_size', '5',
-        '-hls_flags', 'delete_segments',
-        hlsPlaylistPath
-      ];
-    } else {
-      args = [
-        '-y',
-        '-f', 'v4l2',
-        '-i', '/dev/video0',
-        '-r', '30',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-tune', 'zerolatency',
-        '-g', '30',
-        '-pix_fmt', 'yuv420p',
-        '-an',
-        '-hls_time', '2',
-        '-hls_list_size', '5',
-        '-hls_flags', 'delete_segments',
-        hlsPlaylistPath
-      ];
-    }
-  } else {
-    args = [
-      '-y',
-      '-rtsp_transport', 'tcp',
-      '-i', currentConfig.streamUrl,
-      '-r', '30',
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-      '-g', '30',
-      '-pix_fmt', 'yuv420p',
-      '-an',
-      '-hls_time', '2',
-      '-hls_list_size', '5',
-      '-hls_flags', 'delete_segments',
-      hlsPlaylistPath
-    ];
-  }
-
-  console.log(`[Edge Standalone HLS] Spawning: ffmpeg ${args.join(' ')}`);
-  standaloneHlsProcess = spawn('ffmpeg', args);
-
-  if (process.env.DEBUG_LOGS !== 'false') {
-    standaloneHlsProcess.stderr?.on('data', (data: any) => {
-      console.error(`[Edge Standalone HLS ffmpeg stderr] ${data.toString().trim()}`);
-    });
-  }
-
-  standaloneHlsProcess.on('error', (err: any) => {
-    console.error(`[Edge Standalone HLS] Failed to start process:`, err);
-    standaloneHlsProcess = null;
-  });
-
-  standaloneHlsProcess.on('close', (code: number) => {
-    console.log(`[Edge Standalone HLS] Process exited with code ${code}`);
-    standaloneHlsProcess = null;
-  });
-}
-
-function stopStandaloneHls() {
-  if (standaloneHlsProcess) {
-    sendLog('Stopping standalone HLS streaming process...');
-    try {
-      standaloneHlsProcess.kill('SIGKILL');
-    } catch (e) { }
-    standaloneHlsProcess = null;
-  }
-  clearHlsDirectory();
-}
 
 /**
  * Stop motion detector process
@@ -303,11 +197,6 @@ async function stopDetector() {
  * Start motion detector process
  */
 async function startDetector() {
-  if (!currentConfig.enabled) {
-    sendLog('Monitoring is disabled.');
-    return;
-  }
-
   // Kill any existing/dangling ffmpeg processes using the same HLS output directory
   try {
     if (process.platform !== 'win32') {
@@ -318,7 +207,7 @@ async function startDetector() {
     // Ignore error if no process was found
   }
 
-  sendLog(`Starting motion detector for camera: ${currentConfig.name}`);
+  sendLog(`Starting camera detector for: ${currentConfig.name}`);
   prepareHlsDirectory();
 
   activeDetector = new MotionDetector({
@@ -334,6 +223,7 @@ async function startDetector() {
   });
 
   activeDetector.on('motion-start', async (ratio) => {
+    if (!currentConfig.trackingEnabled) return;
     sendLog(`Motion detected! Pixel change ratio: ${(ratio * 100).toFixed(2)}%`);
     await triggerClipRecording();
   });
@@ -355,20 +245,21 @@ async function startDetector() {
 
   activeDetector.start();
   isDetectorRunning = true;
-  sendStatusChange('Monitoring');
+  sendStatusChange(currentConfig.trackingEnabled ? 'Monitoring' : 'Idle');
 }
 
-async function updateCameraState() {
-  console.log(`[Edge State Machine] Updating processes. Enabled: ${currentConfig.enabled}, Streaming: ${isStreaming}`);
+async function updateCameraState(forceRestart = false) {
+  console.log(`[Edge State Machine] Updating processes. Enabled: ${currentConfig.trackingEnabled}, Streaming: ${isStreaming}, ForceRestart: ${forceRestart}`);
 
-  if (currentConfig.enabled) {
-    stopStandaloneHls();
-    if (!activeDetector) {
-      await startDetector();
-    }
-  } else {
+  if (forceRestart) {
+    console.log(`[Edge State Machine] Force restarting active camera/detector processes to apply new configuration.`);
     await stopDetector();
-    startStandaloneHls();
+  }
+
+  if (!activeDetector) {
+    await startDetector();
+  } else {
+    sendStatusChange(currentConfig.trackingEnabled ? 'Monitoring' : 'Idle');
   }
 }
 
@@ -587,7 +478,7 @@ function connectWS() {
     }, 10000);
 
     // Sync current status
-    sendStatusChange(isRecording ? 'Recording' : (isDetectorRunning ? 'Monitoring' : 'Idle'));
+    sendStatusChange(isRecording ? 'Recording' : (isDetectorRunning ? (currentConfig.trackingEnabled ? 'Monitoring' : 'Idle') : 'Idle'));
   });
 
   ws.on('message', async (messageData: string) => {
@@ -605,12 +496,12 @@ function connectWS() {
             name: newConfig.name,
             cameraType: newConfig.cameraType,
             streamUrl: newConfig.streamUrl,
-            enabled: newConfig.enabled,
+            trackingEnabled: newConfig.trackingEnabled,
             motionThreshold: newConfig.motionThreshold,
             pixelChangeThreshold: newConfig.pixelChangeThreshold,
           };
 
-          await updateCameraState();
+          await updateCameraState(true);
           break;
         }
         case 'toggle_stream': {
@@ -721,8 +612,8 @@ async function shutdown() {
     activeDetector.stop();
     activeDetector = null;
   }
-  stopStandaloneHls();
   stopActiveRecording();
+  clearHlsDirectory();
 
   if (ws) {
     ws.close();
@@ -751,7 +642,7 @@ async function bootstrap() {
       name: registeredConfig.name,
       cameraType: registeredConfig.cameraType,
       streamUrl: registeredConfig.streamUrl,
-      enabled: registeredConfig.enabled,
+      trackingEnabled: registeredConfig.trackingEnabled,
       motionThreshold: registeredConfig.motionThreshold,
       pixelChangeThreshold: registeredConfig.pixelChangeThreshold,
     };

@@ -82,14 +82,14 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
  * Edge device registers/announces itself on boot
  */
 router.post('/register', async (req: Request, res: Response) => {
-  const { deviceId, name, cameraType, streamUrl, enabled, motionThreshold, pixelChangeThreshold, status } = req.body;
+  const { deviceId, name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status } = req.body;
 
   if (!deviceId || !name) {
     return res.status(400).json({ error: 'deviceId and name are required' });
   }
 
   try {
-    // Check if device already exists. If it does, we preserve its enabled configuration and return it.
+    // Check if device already exists. If it does, we preserve its trackingEnabled configuration and return it.
     // Otherwise we create a new edge device.
     const device = await prisma.edgeDevice.upsert({
       where: { deviceId },
@@ -103,7 +103,7 @@ router.post('/register', async (req: Request, res: Response) => {
         name,
         cameraType: cameraType || 'webcam',
         streamUrl: streamUrl || '0',
-        enabled: enabled || false,
+        trackingEnabled: trackingEnabled || false,
         status: status || 'Idle',
         motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : 25,
         pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
@@ -125,7 +125,7 @@ router.post('/register', async (req: Request, res: Response) => {
  */
 router.post('/:deviceId/config', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
-  const { name, cameraType, streamUrl, enabled, motionThreshold, pixelChangeThreshold } = req.body;
+  const { name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold } = req.body;
 
   try {
     const existing = await prisma.edgeDevice.findUnique({ where: { deviceId } });
@@ -139,7 +139,7 @@ router.post('/:deviceId/config', async (req: Request, res: Response) => {
         name: name !== undefined ? name : existing.name,
         cameraType: cameraType !== undefined ? cameraType : existing.cameraType,
         streamUrl: streamUrl !== undefined ? streamUrl : existing.streamUrl,
-        enabled: enabled !== undefined ? enabled : existing.enabled,
+        trackingEnabled: trackingEnabled !== undefined ? trackingEnabled : existing.trackingEnabled,
         motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : existing.motionThreshold,
         pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : existing.pixelChangeThreshold,
       },

@@ -24,7 +24,7 @@ model EdgeDevice {
   name                 String
   cameraType           String   @default("webcam") // "webcam" or "rtsp"
   streamUrl            String   @default("0")
-  enabled              Boolean  @default(false)
+  trackingEnabled      Boolean  @default(false)
   status               String   @default("Offline") // "Offline", "Idle", "Monitoring", "Recording", "Processing"
   lastHeartbeat        DateTime @default(now())
   motionThreshold      Int      @default(25)

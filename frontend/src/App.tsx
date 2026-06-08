@@ -35,7 +35,7 @@ interface EdgeDevice {
   name: string;
   cameraType: 'webcam' | 'rtsp';
   streamUrl: string;
-  enabled: boolean;
+  trackingEnabled: boolean;
   status: string;
   lastHeartbeat: string;
   motionThreshold: number;
@@ -46,7 +46,7 @@ interface CameraConfig {
   name: string;
   type: 'webcam' | 'rtsp';
   streamUrl: string;
-  enabled: boolean;
+  trackingEnabled: boolean;
   motionThreshold?: number;
   pixelChangeThreshold?: number;
 }
@@ -78,7 +78,7 @@ function App() {
     name: 'Macbook Air Camera',
     type: 'webcam',
     streamUrl: '0',
-    enabled: false,
+    trackingEnabled: false,
     motionThreshold: 25,
     pixelChangeThreshold: 0.02,
   });
@@ -170,7 +170,7 @@ function App() {
               name: cfg.name,
               type: cfg.cameraType,
               streamUrl: cfg.streamUrl,
-              enabled: cfg.enabled,
+              trackingEnabled: cfg.trackingEnabled,
               motionThreshold: cfg.motionThreshold,
               pixelChangeThreshold: cfg.pixelChangeThreshold,
             });
@@ -178,7 +178,7 @@ function App() {
             setDevices((prev) =>
               prev.map((d) =>
                 d.deviceId === cfg.deviceId
-                  ? { ...d, status: data.status, name: cfg.name, cameraType: cfg.cameraType, streamUrl: cfg.streamUrl, enabled: cfg.enabled, motionThreshold: cfg.motionThreshold, pixelChangeThreshold: cfg.pixelChangeThreshold }
+                  ? { ...d, status: data.status, name: cfg.name, cameraType: cfg.cameraType, streamUrl: cfg.streamUrl, trackingEnabled: cfg.trackingEnabled, motionThreshold: cfg.motionThreshold, pixelChangeThreshold: cfg.pixelChangeThreshold }
                   : d
               )
             );
@@ -231,7 +231,7 @@ function App() {
           name: dev.name,
           type: dev.cameraType,
           streamUrl: dev.streamUrl,
-          enabled: dev.enabled,
+          trackingEnabled: dev.trackingEnabled,
           motionThreshold: dev.motionThreshold,
           pixelChangeThreshold: dev.pixelChangeThreshold,
         });
@@ -273,7 +273,7 @@ function App() {
     Promise.resolve().then(() => {
       setStreamLoading(true);
     });
-  }, [selectedDeviceId, status, config.enabled]);
+  }, [selectedDeviceId, status, config.trackingEnabled]);
 
   // Initialize HLS player
   useEffect(() => {
@@ -342,7 +342,7 @@ function App() {
       video.src = '';
       video.onplaying = null;
     };
-  }, [selectedDeviceId, status, config.enabled]);
+  }, [selectedDeviceId, status, config.trackingEnabled]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -356,7 +356,7 @@ function App() {
           name: config.name,
           cameraType: config.type,
           streamUrl: config.streamUrl,
-          enabled: config.enabled,
+          trackingEnabled: config.trackingEnabled,
           motionThreshold: config.motionThreshold !== undefined ? Number(config.motionThreshold) : 25,
           pixelChangeThreshold: config.pixelChangeThreshold !== undefined ? Number(config.pixelChangeThreshold) : 0.02,
         }),
@@ -366,7 +366,7 @@ function App() {
         name: data.config.name,
         type: data.config.cameraType,
         streamUrl: data.config.streamUrl,
-        enabled: data.config.enabled,
+        trackingEnabled: data.config.trackingEnabled,
         motionThreshold: data.config.motionThreshold,
         pixelChangeThreshold: data.config.pixelChangeThreshold,
       });
@@ -376,7 +376,7 @@ function App() {
     }
   };
 
-  const handleToggleDeviceMonitoring = async (deviceId: string, currentEnabled: boolean) => {
+  const handleToggleDeviceMonitoring = async (deviceId: string, currentTrackingEnabled: boolean) => {
     const dev = devices.find(d => d.deviceId === deviceId);
     if (!dev || dev.status === 'Offline') return;
 
@@ -385,7 +385,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          enabled: !currentEnabled,
+          trackingEnabled: !currentTrackingEnabled,
         }),
       });
       const data = await res.json();
@@ -393,7 +393,7 @@ function App() {
       if (deviceId === selectedDeviceId) {
         setConfig((prev) => ({
           ...prev,
-          enabled: data.config.enabled,
+          trackingEnabled: data.config.trackingEnabled,
         }));
       }
 
@@ -555,12 +555,12 @@ function App() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleToggleDeviceMonitoring(dev.deviceId, dev.enabled);
+                            handleToggleDeviceMonitoring(dev.deviceId, dev.trackingEnabled);
                           }}
-                          className={`btn ${dev.enabled && isOnline ? 'btn-primary' : 'btn-secondary'} py-1 px-2 text-[0.7rem] rounded-md h-[28px] shrink-0 flex items-center gap-1 font-semibold`}
+                          className={`btn ${dev.trackingEnabled && isOnline ? 'btn-primary' : 'btn-secondary'} py-1 px-2 text-[0.7rem] rounded-md h-[28px] shrink-0 flex items-center gap-1 font-semibold`}
                           disabled={!isOnline}
                         >
-                          {dev.enabled && isOnline ? (
+                          {dev.trackingEnabled && isOnline ? (
                             <>
                               <Activity size={12} /> Disable
                             </>
@@ -643,7 +643,7 @@ function App() {
             </div>
 
             {/* Motion sensitivity bar */}
-            {selectedDeviceId && status !== 'Offline' && config.enabled && (
+            {selectedDeviceId && status !== 'Offline' && config.trackingEnabled && (
               <div className="mt-3">
                 <div className="flex justify-between text-[0.75rem] text-text-muted mb-1">
                   <span>Frame Pixel Diff Activity:</span>

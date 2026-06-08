@@ -263,7 +263,7 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
     // Restore device status
     const refreshedDevice = await prisma.edgeDevice.findUnique({ where: { deviceId } });
     const isOnline = activeDevices.has(deviceId);
-    const finalStatus = isOnline ? (refreshedDevice?.enabled ? 'Monitoring' : 'Idle') : 'Offline';
+    const finalStatus = isOnline ? (refreshedDevice?.trackingEnabled ? 'Monitoring' : 'Idle') : 'Offline';
     
     await prisma.edgeDevice.update({
       where: { deviceId },
@@ -296,7 +296,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
 
     // Fetch device and set its status
     const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    const currentStatus = device?.enabled ? 'Monitoring' : 'Idle';
+    const currentStatus = device?.trackingEnabled ? 'Monitoring' : 'Idle';
 
     await prisma.edgeDevice.update({
       where: { deviceId },
