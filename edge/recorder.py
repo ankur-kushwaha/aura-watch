@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import time
 from typing import Optional
+
 import numpy as np
 import requests
 
@@ -121,6 +123,55 @@ def kill_ffmpeg_for_dir(directory: str):
         pass
 
 
+def copy_new_hls_segments(hls_dir: str, staging_dir: str, copied: set[str]) -> int:
+    """Copy newly written HLS .ts segments before the rolling window deletes them."""
+    os.makedirs(staging_dir, exist_ok=True)
+    added = 0
+    for name in os.listdir(hls_dir):
+        if not name.endswith(".ts") or name in copied:
+            continue
+        src = os.path.join(hls_dir, name)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(staging_dir, name)
+        try:
+            shutil.copy2(src, dst)
+            copied.add(name)
+            added += 1
+        except OSError:
+            pass
+    return added
+
+
+def remove_directory(directory: str):
+    if os.path.isdir(directory):
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def get_video_duration_seconds(path: str) -> float:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return 0.0
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
 def concat_hls_segments(hls_dir: str, output_mp4: str):
     segments = []
     for name in os.listdir(hls_dir):
@@ -201,7 +252,13 @@ def transcode_for_gemini(
         raise RuntimeError(f"FFmpeg transcode failed: {result.stderr}")
 
 
-def upload_clip(cloud_url: str, device_id: str, filepath: str, filename: str):
+def upload_clip(
+    cloud_url: str,
+    device_id: str,
+    filepath: str,
+    filename: str,
+    duration: Optional[float] = None,
+):
     url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/upload"
     size = os.path.getsize(filepath)
     headers = {
@@ -209,6 +266,8 @@ def upload_clip(cloud_url: str, device_id: str, filepath: str, filename: str):
         "x-filename": filename,
         "Content-Length": str(size),
     }
+    if duration is not None and duration > 0:
+        headers["x-duration"] = f"{duration:.2f}"
 
     with open(filepath, "rb") as handle:
         response = requests.post(url, data=handle, headers=headers, timeout=120)

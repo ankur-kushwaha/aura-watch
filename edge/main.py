@@ -23,7 +23,10 @@ from recorder import (
     HlsEncoder,
     clear_directory,
     concat_hls_segments,
+    copy_new_hls_segments,
+    get_video_duration_seconds,
     kill_ffmpeg_for_dir,
+    remove_directory,
     transcode_for_gemini,
     upload_clip,
 )
@@ -43,6 +46,8 @@ YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
 YOLO_DEVICE = os.getenv("YOLO_DEVICE", "cpu")
 FRAME_STREAM_FPS = float(os.getenv("FRAME_STREAM_FPS", "2"))
 RECORDING_COOLDOWN_SEC = float(os.getenv("RECORDING_COOLDOWN_SEC", "45"))
+RECORDING_MAX_SEC = float(os.getenv("RECORDING_MAX_SEC", "60"))
+RECORDING_END_GRACE_SEC = float(os.getenv("RECORDING_END_GRACE_SEC", "2"))
 
 
 @dataclass
@@ -79,6 +84,8 @@ class EdgeAgent:
         self.is_pipeline_running = False
         self.is_recording = False
         self._recording_lock = threading.Lock()
+        self._detection_lock = threading.Lock()
+        self._last_detection_at = 0.0
         self._recording_cooldown_until = 0.0
         self._recording_thread: Optional[threading.Thread] = None
         self.stream_frames = False
@@ -230,6 +237,9 @@ class EdgeAgent:
 
                     stale_frames = 0
                     annotated, detections, new_detection = tracker.process(frame)
+                    with self._detection_lock:
+                        if detections:
+                            self._last_detection_at = time.monotonic()
                     encoder.write_frame(annotated)
 
                     now = time.monotonic()
@@ -288,6 +298,7 @@ class EdgeAgent:
             if time.monotonic() < self._recording_cooldown_until:
                 return False
             self.is_recording = True
+            self._last_detection_at = time.monotonic()
 
         self.send_log(f"Objects detected: {detection_names}. Starting clip capture...")
         self._recording_thread = threading.Thread(
@@ -301,18 +312,51 @@ class EdgeAgent:
     def _run_clip_recording(self, _detection_names: str):
         # Notify UI without stopping the live pipeline or HLS encoder
         self.send_status("Recording")
-        self.send_log("Collecting 10 seconds of annotated HLS footage (stream continues)...")
 
         timestamp_ms = int(time.time() * 1000)
         filename = f"clip_{timestamp_ms}_{self.device_id}.mp4"
         output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+        staging_dir = os.path.join(LOCAL_VIDEO_DIR, f"staging_{timestamp_ms}_{self.device_id}")
+        copied_segments: set[str] = set()
+        recording_start = time.monotonic()
 
-        time.sleep(10)
+        self.send_log(
+            f"Recording while objects are detected (max {int(RECORDING_MAX_SEC)}s, stream continues)..."
+        )
 
         try:
-            self.send_log(f"Compiling HLS segments into clip: {filename}...")
-            concat_hls_segments(HLS_DIR, output_path)
-            self.send_log(f"Clip compiled successfully: {filename}")
+            while not self.pipeline_stop.is_set() and not self.shutdown_event.is_set():
+                copy_new_hls_segments(HLS_DIR, staging_dir, copied_segments)
+                elapsed = time.monotonic() - recording_start
+
+                with self._detection_lock:
+                    last_detection_at = self._last_detection_at
+
+                if elapsed >= RECORDING_MAX_SEC:
+                    self.send_log(f"Max clip length ({int(RECORDING_MAX_SEC)}s) reached.")
+                    break
+
+                if (
+                    elapsed >= RECORDING_END_GRACE_SEC
+                    and time.monotonic() - last_detection_at >= RECORDING_END_GRACE_SEC
+                ):
+                    self.send_log("Objects left frame — finalizing clip.")
+                    break
+
+                time.sleep(0.4)
+
+            copy_new_hls_segments(HLS_DIR, staging_dir, copied_segments)
+
+            if not copied_segments:
+                raise RuntimeError("No HLS segments captured during recording")
+
+            duration = len(copied_segments) * 2  # each HLS segment is ~2s
+            self.send_log(
+                f"Compiling ~{duration}s of footage ({len(copied_segments)} segments) into {filename}..."
+            )
+            concat_hls_segments(staging_dir, output_path)
+            actual_duration = get_video_duration_seconds(output_path) or duration
+            self.send_log(f"Clip compiled successfully: {filename} ({actual_duration:.1f}s)")
 
             upload_path = output_path
             temp_gemini_path = ""
@@ -337,7 +381,13 @@ class EdgeAgent:
                     self.send_log(f"[Transcode Warning] {exc}. Using original clip.")
 
             self.send_log(f"Uploading clip to Cloud: {filename}...")
-            upload_clip(CLOUD_URL, self.device_id, upload_path, filename)
+            upload_clip(
+                CLOUD_URL,
+                self.device_id,
+                upload_path,
+                filename,
+                duration=actual_duration,
+            )
             self.send_log(f"Successfully uploaded clip to Cloud: {filename}")
 
             if temp_gemini_path and os.path.exists(temp_gemini_path):
@@ -345,6 +395,7 @@ class EdgeAgent:
         except Exception as exc:
             self.send_log(f"Clip generation failed: {exc}")
         finally:
+            remove_directory(staging_dir)
             with self._recording_lock:
                 self.is_recording = False
                 self._recording_cooldown_until = time.monotonic() + RECORDING_COOLDOWN_SEC

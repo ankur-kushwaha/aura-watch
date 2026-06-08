@@ -7,7 +7,7 @@ const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
 
 export type DeviceConfigCallback = (deviceId: string, config: any) => void;
-export type ClipUploadCallback = (filepath: string, filename: string, timestamp: Date, deviceId: string) => Promise<void>;
+export type ClipUploadCallback = (filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number) => Promise<void>;
 
 let onConfigUpdatedCallback: DeviceConfigCallback | null = null;
 let onClipUploadedCallback: ClipUploadCallback | null = null;
@@ -217,9 +217,12 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
       console.log(`[Cloud Hub] Upload finished and saved to ${filepath}`);
       res.status(200).json({ message: 'Upload successful', filename });
 
+      const durationHeader = req.headers['x-duration'];
+      const duration = durationHeader ? parseFloat(String(durationHeader)) : 10.0;
+
       // Run background processing (Gemini pipelines, MongoDB, Qdrant) asynchronously
       if (onClipUploadedCallback) {
-        onClipUploadedCallback(filepath, filename, new Date(), deviceId)
+        onClipUploadedCallback(filepath, filename, new Date(), deviceId, duration)
           .catch((err) => console.error(`[Cloud Hub] Error processing uploaded clip ${filename}:`, err));
       }
     });

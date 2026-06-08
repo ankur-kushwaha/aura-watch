@@ -140,8 +140,8 @@ registerOnConfigUpdated((deviceId, config) => {
   }
 });
 
-registerOnClipUploaded(async (filepath, filename, timestamp, deviceId) => {
-  await processVideoClipInBackground(filepath, filename, timestamp, deviceId);
+registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration) => {
+  await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration);
 });
 
 registerOnClipDeleted((deviceId, filename) => {
@@ -192,7 +192,7 @@ registerOnStreamFileRequest((deviceId, filename) => {
 /**
  * Upload to Gemini, fetch summary, generate vector embeddings, and save to MongoDB + Qdrant
  */
-async function processVideoClipInBackground(filepath: string, filename: string, timestamp: Date, deviceId: string) {
+async function processVideoClipInBackground(filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number = 10.0) {
   const device = await prisma.edgeDevice.findUnique({
     where: { deviceId }
   });
@@ -218,7 +218,7 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
         filename,
         timestamp,
         summary,
-        duration: 10.0,
+        duration: Number.isFinite(duration) && duration > 0 ? duration : 10.0,
         camera: cameraName,
         deviceId: deviceId,
       }
