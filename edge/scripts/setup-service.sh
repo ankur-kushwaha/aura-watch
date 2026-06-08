@@ -7,18 +7,13 @@ echo "=== Aura Watch AI Edge Agent Setup ==="
 
 # 1. Check if running on Linux
 if [[ "$OSTYPE" != "linux-gnu"* ]]; then
-    echo "Warning: This setup script is intended for Linux (Raspberry Pi/Jetson). On macOS, please run 'npm run dev' or 'npm start' directly."
+    echo "Warning: This setup script is intended for Linux (Raspberry Pi/Jetson). On macOS, please run 'python3 main.py' directly."
     exit 1
 fi
 
-# 2. Check for node and npm
-if ! command -v node &> /dev/null; then
-    echo "Error: Node.js is not installed. Please install Node.js (version >= 18) first."
-    exit 1
-fi
-
-if ! command -v npm &> /dev/null; then
-    echo "Error: npm is not installed."
+# 2. Check for Python 3
+if ! command -v python3 &> /dev/null; then
+    echo "Error: Python 3 is not installed. Please install Python 3.10+ first."
     exit 1
 fi
 
@@ -30,14 +25,11 @@ fi
 # Get directories and user details
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 USER_NAME=$(logname || echo $USER)
-NODE_PATH=$(which node)
+PYTHON_PATH=$(which python3)
 
-echo "Installing npm dependencies..."
+echo "Installing Python dependencies..."
 cd "$DIR"
-npm install
-
-echo "Compiling TypeScript codebase..."
-npm run build
+python3 -m pip install -r requirements.txt
 
 echo "Generating systemd service file..."
 SERVICE_TEMPLATE="$DIR/scripts/aura-watch-edge.service.template"
@@ -51,7 +43,7 @@ fi
 # Replace placeholders dynamically
 sudo sed -e "s|__USER__|${USER_NAME}|g" \
          -e "s|__DIR__|${DIR}|g" \
-         -e "s|__NODE__|${NODE_PATH}|g" \
+         -e "s|__PYTHON__|${PYTHON_PATH}|g" \
          "$SERVICE_TEMPLATE" | sudo tee "$SERVICE_OUT" > /dev/null
 
 echo "Registering systemd daemon..."

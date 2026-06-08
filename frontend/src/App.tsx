@@ -40,6 +40,8 @@ interface EdgeDevice {
   lastHeartbeat: string;
   motionThreshold: number;
   pixelChangeThreshold: number;
+  detectPerson: boolean;
+  detectVehicle: boolean;
 }
 
 interface CameraConfig {
@@ -49,6 +51,8 @@ interface CameraConfig {
   trackingEnabled: boolean;
   motionThreshold?: number;
   pixelChangeThreshold?: number;
+  detectPerson: boolean;
+  detectVehicle: boolean;
 }
 
 interface RagResponseClip {
@@ -81,6 +85,8 @@ function App() {
     trackingEnabled: false,
     motionThreshold: 25,
     pixelChangeThreshold: 0.02,
+    detectPerson: true,
+    detectVehicle: true,
   });
   const [status, setStatus] = useState<string>('Offline');
   const [motionActive, setMotionActive] = useState<boolean>(false);
@@ -173,12 +179,14 @@ function App() {
               trackingEnabled: cfg.trackingEnabled,
               motionThreshold: cfg.motionThreshold,
               pixelChangeThreshold: cfg.pixelChangeThreshold,
+              detectPerson: cfg.detectPerson ?? true,
+              detectVehicle: cfg.detectVehicle ?? true,
             });
             // Update device list status locally
             setDevices((prev) =>
               prev.map((d) =>
                 d.deviceId === cfg.deviceId
-                  ? { ...d, status: data.status, name: cfg.name, cameraType: cfg.cameraType, streamUrl: cfg.streamUrl, trackingEnabled: cfg.trackingEnabled, motionThreshold: cfg.motionThreshold, pixelChangeThreshold: cfg.pixelChangeThreshold }
+                  ? { ...d, status: data.status, name: cfg.name, cameraType: cfg.cameraType, streamUrl: cfg.streamUrl, trackingEnabled: cfg.trackingEnabled, motionThreshold: cfg.motionThreshold, pixelChangeThreshold: cfg.pixelChangeThreshold, detectPerson: cfg.detectPerson ?? true, detectVehicle: cfg.detectVehicle ?? true }
                   : d
               )
             );
@@ -234,6 +242,8 @@ function App() {
           trackingEnabled: dev.trackingEnabled,
           motionThreshold: dev.motionThreshold,
           pixelChangeThreshold: dev.pixelChangeThreshold,
+          detectPerson: dev.detectPerson ?? true,
+          detectVehicle: dev.detectVehicle ?? true,
         });
         setStatus(dev.status);
       });
@@ -268,16 +278,18 @@ function App() {
   //   }
   // }, [chatHistory]);
 
-  // Reset stream loading status on changes
+  // Reset stream loading only when switching devices (not on Recording/Processing status)
   useEffect(() => {
     Promise.resolve().then(() => {
       setStreamLoading(true);
     });
-  }, [selectedDeviceId, status, config.trackingEnabled]);
+  }, [selectedDeviceId]);
 
-  // Initialize HLS player
+  const isDeviceOffline = status === 'Offline';
+
+  // Initialize HLS player — keep alive across Recording/Processing/Monitoring status changes
   useEffect(() => {
-    if (status === 'Offline' || !selectedDeviceId) {
+    if (!selectedDeviceId || isDeviceOffline) {
       return;
     }
 
@@ -342,11 +354,15 @@ function App() {
       video.src = '';
       video.onplaying = null;
     };
-  }, [selectedDeviceId, status, config.trackingEnabled]);
+  }, [selectedDeviceId, isDeviceOffline]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDeviceId) return;
+    if (!config.detectPerson && !config.detectVehicle) {
+      alert('Select at least one detection target: Person or Vehicle.');
+      return;
+    }
 
     try {
       const res = await fetch(`${API_BASE}/devices/${selectedDeviceId}/config`, {
@@ -359,6 +375,8 @@ function App() {
           trackingEnabled: config.trackingEnabled,
           motionThreshold: config.motionThreshold !== undefined ? Number(config.motionThreshold) : 25,
           pixelChangeThreshold: config.pixelChangeThreshold !== undefined ? Number(config.pixelChangeThreshold) : 0.02,
+          detectPerson: config.detectPerson,
+          detectVehicle: config.detectVehicle,
         }),
       });
       const data = await res.json();
@@ -369,6 +387,8 @@ function App() {
         trackingEnabled: data.config.trackingEnabled,
         motionThreshold: data.config.motionThreshold,
         pixelChangeThreshold: data.config.pixelChangeThreshold,
+        detectPerson: data.config.detectPerson ?? true,
+        detectVehicle: data.config.detectVehicle ?? true,
       });
       fetchDevices();
     } catch (err) {
@@ -580,16 +600,30 @@ function App() {
 
           {/* CAMERA FEED */}
           <div className="glass-panel p-5 relative">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex justify-between items-center mb-4 gap-2 flex-wrap">
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Video size={18} color="var(--color-secondary)" /> Live Camera Feed
               </h2>
-              {motionActive && (
-                <div className="text-danger text-[0.8rem] font-semibold flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-current inline-block animate-[pulse-danger_0.5s_infinite]"></span>
-                  MOTION DETECTED: {(motionRatio * 100).toFixed(1)}%
-                </div>
-              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                {status === 'Recording' && (
+                  <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-danger inline-block animate-[pulse-danger_0.8s_infinite]"></span>
+                    Recording clip
+                  </div>
+                )}
+                {(status === 'Processing Video' || status === 'Processing') && (
+                  <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(124,58,237,0.15)] text-[#a78bfa] border border-[rgba(124,58,237,0.35)]">
+                    <RefreshCw size={11} className="animate-spin" />
+                    Summarizing clip
+                  </div>
+                )}
+                {motionActive && (
+                  <div className="text-danger text-[0.8rem] font-semibold flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-current inline-block animate-[pulse-danger_0.5s_infinite]"></span>
+                    MOTION DETECTED: {(motionRatio * 100).toFixed(1)}%
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Video Feed Wrapper */}
@@ -597,18 +631,6 @@ function App() {
 
               {selectedDeviceId && status !== 'Offline' ? (
                 <div className="w-full h-full relative flex justify-center items-center">
-                  {status === 'Recording' ? (
-                    <div className="absolute z-10 bg-[rgba(0,0,0,0.7)] py-2 px-4 rounded-[20px] flex items-center gap-2 border border-[rgba(244,63,94,0.4)] shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
-                      <span className="w-2 h-2 rounded-full bg-danger inline-block animate-[pulse-danger_0.8s_infinite]"></span>
-                      <span className="text-[0.8rem] font-bold text-white tracking-wider">RECORDING FOOTAGE...</span>
-                    </div>
-                  ) : status === 'Processing Video' || status === 'Processing' ? (
-                    <div className="absolute z-10 bg-[rgba(0,0,0,0.7)] py-2 px-4 rounded-[20px] flex items-center gap-2 border border-[rgba(124,58,237,0.4)] shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
-                      <RefreshCw size={12} className="animate-spin" color="var(--color-primary)" />
-                      <span className="text-[0.8rem] font-bold text-white tracking-wider">SUMMARIZING RECORDING...</span>
-                    </div>
-                  ) : null}
-
                   <video
                     ref={videoRef}
                     muted
@@ -707,32 +729,33 @@ function App() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[0.8rem] text-text-secondary">Motion Detector Threshold (0-255)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="255"
-                    value={config.motionThreshold || 25}
-                    onChange={(e) => setConfig({ ...config, motionThreshold: parseInt(e.target.value) || 25 })}
-                    required
-                    disabled={!selectedDeviceId}
-                  />
+              <div className="flex flex-col gap-2">
+                <label className="text-[0.8rem] text-text-secondary">Detect Objects</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.detectPerson}
+                      onChange={(e) => setConfig({ ...config, detectPerson: e.target.checked })}
+                      disabled={!selectedDeviceId}
+                      className="w-4 h-4 accent-[#a78bfa]"
+                    />
+                    Person
+                  </label>
+                  <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.detectVehicle}
+                      onChange={(e) => setConfig({ ...config, detectVehicle: e.target.checked })}
+                      disabled={!selectedDeviceId}
+                      className="w-4 h-4 accent-[#a78bfa]"
+                    />
+                    Vehicle
+                  </label>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[0.8rem] text-text-secondary">Pixel Change Ratio (0.01 - 1.00)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    max="1.00"
-                    value={config.pixelChangeThreshold || 0.02}
-                    onChange={(e) => setConfig({ ...config, pixelChangeThreshold: parseFloat(e.target.value) || 0.02 })}
-                    required
-                    disabled={!selectedDeviceId}
-                  />
-                </div>
+                <p className="text-[0.75rem] text-text-muted">
+                  Vehicle includes cars, trucks, buses, motorcycles, and bicycles.
+                </p>
               </div>
 
               <button

@@ -29,4 +29,6 @@ model EdgeDevice {
   lastHeartbeat        DateTime @default(now())
   motionThreshold      Int      @default(25)
   pixelChangeThreshold Float    @default(0.02)
+  detectPerson         Boolean  @default(true)
+  detectVehicle        Boolean  @default(true)
 }

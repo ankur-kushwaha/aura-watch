@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=__USER__
 WorkingDirectory=__DIR__
-ExecStart=__NODE__ __DIR__/dist/index.js
+ExecStart=__PYTHON__ __DIR__/main.py
 Restart=on-failure
 RestartSec=10
 Environment=NODE_ENV=production

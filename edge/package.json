@@ -2,11 +2,13 @@
   "name": "surveillance-edge",
   "version": "1.0.0",
   "description": "AI Video Surveillance Edge Agent",
-  "main": "dist/index.js",
+  "main": "main.py",
   "scripts": {
-    "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "dev": "python3 main.py",
+    "start": "python3 main.py",
+    "legacy:dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
+    "legacy:build": "tsc",
+    "legacy:start": "node dist/index.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

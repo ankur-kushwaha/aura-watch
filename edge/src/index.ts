@@ -484,9 +484,9 @@ function connectWS() {
   ws.on('message', async (messageData: string) => {
     try {
       const data = JSON.parse(messageData);
-      if (process.env.DEBUG_LOGS !== 'false') {
-        console.log('[Edge WS] Received event:', data.type);
-      }
+      // if (process.env.DEBUG_LOGS !== 'false') {
+        // console.log('[Edge WS] Received event:', data.type);
+      // }
       switch (data.type) {
         case 'configure': {
           const newConfig = data.config;

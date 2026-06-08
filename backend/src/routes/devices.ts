@@ -107,6 +107,8 @@ router.post('/register', async (req: Request, res: Response) => {
         status: status || 'Idle',
         motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : 25,
         pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
+        detectPerson: true,
+        detectVehicle: true,
         lastHeartbeat: new Date(),
       },
     });
@@ -125,7 +127,7 @@ router.post('/register', async (req: Request, res: Response) => {
  */
 router.post('/:deviceId/config', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
-  const { name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold } = req.body;
+  const { name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, detectPerson, detectVehicle } = req.body;
 
   try {
     const existing = await prisma.edgeDevice.findUnique({ where: { deviceId } });
@@ -142,6 +144,8 @@ router.post('/:deviceId/config', async (req: Request, res: Response) => {
         trackingEnabled: trackingEnabled !== undefined ? trackingEnabled : existing.trackingEnabled,
         motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : existing.motionThreshold,
         pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : existing.pixelChangeThreshold,
+        detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : existing.detectPerson,
+        detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : existing.detectVehicle,
       },
     });
 

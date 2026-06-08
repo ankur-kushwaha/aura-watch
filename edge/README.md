@@ -2,13 +2,13 @@
 
 This folder contains the lightweight edge surveillance agent script designed to run locally on your edge devices (such as a Raspberry Pi, Nvidia Jetson, or developer computers). 
 
-The edge agent runs localized grayscale motion detection and video recording, streams live video frames to the cloud on-demand, uploads motion-triggered video clips to the Cloud Hub, and connects via WebSockets to receive configurations in real-time.
+The edge agent runs YOLOv8 nano object detection with ByteTrack, streams annotated live video via HLS, pushes annotated preview frames to the cloud, uploads detection-triggered video clips to the Cloud Hub, and connects via WebSockets to receive configurations in real-time.
 
 ## Prerequisites
 
 Ensure the following are installed on your edge device:
-1. **Node.js** (version 18 or higher)
-2. **FFmpeg** (used for frame piping and video clip recording)
+1. **Python 3.10+**
+2. **FFmpeg** (used for HLS encoding and video clip recording)
    - On Debian/Ubuntu/Raspberry Pi OS: `sudo apt install ffmpeg`
    - On macOS: `brew install ffmpeg`
 
@@ -24,7 +24,7 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/
 1. Copy this `edge/` folder to your edge device.
 2. Install dependencies:
    ```bash
-   npm install
+   python3 -m pip install -r requirements.txt
    ```
 
 ## Configuration
@@ -41,17 +41,27 @@ Set the following options in your `.env`:
 
 ## Running the Agent
 
+### macOS + RTSP cameras (important)
+
+If VLC and `ping` work in **Terminal.app** but the edge agent fails with `No route to host` inside **Cursor's integrated terminal**, macOS is blocking Cursor from **Local Network** access.
+
+**Fix:** System Settings → Privacy & Security → **Local Network** → enable **Cursor**, then restart Cursor.
+
+**Workaround:** Run the edge agent from an external Terminal window instead:
+
+```bash
+cd edge && python3 main.py
+```
+
 ### Development / Local Run
 To run the agent in the foreground:
 ```bash
-npm run dev
+python3 main.py
 ```
 
-### Production Build & Run
-To compile the TypeScript code and run the production build:
+Or via npm script:
 ```bash
-npm run build
-npm start
+npm run dev
 ```
 
 ## Running on Boot (Linux Systemd)
