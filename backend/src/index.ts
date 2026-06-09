@@ -123,6 +123,8 @@ const uiClients = new Set<WebSocket>();
 const uiSubscriptions = new Map<WebSocket, string>();
 // Maps UI WebSocket -> streamId they are subscribed to
 const uiStreamSubscriptions = new Map<WebSocket, string>();
+// Maps streamId -> deviceId for routing device-level logs to stream subscribers
+const streamDeviceCache = new Map<string, string>();
 
 function broadcastDevicesChanged() {
   const message = JSON.stringify({ type: 'devices_changed' });
@@ -155,18 +157,42 @@ function broadcastToSubscribedUIs(deviceId: string, data: any) {
 
 function broadcastLogToSubscribedUIs(deviceId: string, message: string) {
   console.log(`[Log - ${deviceId}] ${message}`);
-  broadcastToSubscribedUIs(deviceId, {
+  const payload = {
     type: 'log',
     message,
     timestamp: new Date().toISOString()
-  });
+  };
+  const payloadMessage = JSON.stringify(payload);
+  const sent = new Set<WebSocket>();
+
+  for (const [ws, subDeviceId] of uiSubscriptions.entries()) {
+    if (subDeviceId === deviceId && ws.readyState === WebSocket.OPEN) {
+      ws.send(payloadMessage);
+      sent.add(ws);
+    }
+  }
+
+  // Logs have no streamId; also deliver to stream subscribers on this device.
+  for (const [ws, subStreamId] of uiStreamSubscriptions.entries()) {
+    if (
+      streamDeviceCache.get(subStreamId) === deviceId &&
+      ws.readyState === WebSocket.OPEN &&
+      !sent.has(ws)
+    ) {
+      ws.send(payloadMessage);
+    }
+  }
 }
 
 // Register callbacks for stream configuration changes
 registerOnStreamsUpdated(async (deviceId) => {
+  const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
+  for (const stream of streams) {
+    streamDeviceCache.set(stream.streamId, deviceId);
+  }
+
   const deviceSocket = activeDevices.get(deviceId);
   if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-    const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
     console.log(`[WS Hub] Pushing configure command to edge device: ${deviceId} with ${streams.length} stream(s)`);
     deviceSocket.send(JSON.stringify({ type: 'configure', streams }));
   } else {
@@ -322,6 +348,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
 
     const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
     for (const stream of streams) {
+      streamDeviceCache.set(stream.streamId, deviceId);
       const streamStatus = stream.trackingEnabled ? 'Monitoring' : 'Idle';
       await prisma.cameraStream.update({
         where: { streamId: stream.streamId },
@@ -456,6 +483,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
 
           const stream = await prisma.cameraStream.findUnique({ where: { streamId: targetStreamId } });
           if (stream) {
+            streamDeviceCache.set(targetStreamId, stream.deviceId);
             const isOnline = activeDevices.has(stream.deviceId);
             const currentStatus = isOnline ? (stream.status || 'Idle') : 'Offline';
 
