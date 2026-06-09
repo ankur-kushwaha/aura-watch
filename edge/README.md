@@ -202,6 +202,72 @@ sudo journalctl -u aura-watch-edge.service -f
 
 ## Troubleshooting
 
+### See FFmpeg logs (camera / HLS debugging)
+
+FFmpeg is used for RTSP capture and HLS encoding. By default the installer sets `DEBUG_LOGS=false` (errors only). Enable verbose logs in `.env`:
+
+```bash
+DEBUG_LOGS=true
+# optional — even more detail:
+FFMPEG_LOGLEVEL=verbose
+```
+
+Restart the agent, then watch logs:
+
+```bash
+# foreground (best for debugging)
+cd ~/aura-watch-edge/edge
+.venv/bin/python main.py
+
+# or systemd
+sudo journalctl -u aura-watch-edge.service -f
+```
+
+You should see lines prefixed with `[FFmpeg HLS]` or `[FFmpeg RTSP]`.
+
+**Test camera directly on the Pi:**
+
+```bash
+# USB / CSI webcam
+ffplay -f v4l2 -i /dev/video0
+
+# list who is using the camera
+sudo fuser -v /dev/video0
+
+# kill stale ffmpeg from a crashed agent
+pkill -f "ffmpeg.*hls_"
+```
+
+**Test HLS playlist locally on the Pi** (replace stream id):
+
+```bash
+curl -s http://127.0.0.1:8090/hls_<STREAM_ID>/index.m3u8
+ls -la ~/aura-watch-edge/edge/storage/hls_<STREAM_ID>/
+```
+
+If `index.m3u8` is missing, the camera pipeline is not producing frames (check V4L2 / device busy errors first).
+
+### `Device or resource busy` on `/dev/video0` (Pi)
+
+Another process holds the camera. Common causes: a previous agent instance, `libcamera-hello`, or a stuck FFmpeg.
+
+```bash
+sudo systemctl stop aura-watch-edge.service
+pkill -f "ffmpeg.*hls_"
+sudo fuser -v /dev/video0   # see PID, then: sudo kill <pid>
+sudo systemctl start aura-watch-edge.service
+```
+
+On Raspberry Pi OS Bookworm, if OpenCV cannot open the camera, try the `libcamera` stack or set the stream URL in the dashboard to the correct device (e.g. `/dev/video0`).
+
+### HLS `index.m3u8` 404 in the dashboard
+
+The UI falls back to HLS when WebSocket preview frames are slow. A 404 usually means:
+
+1. **No playlist yet** — Pi is still starting or camera failed (see FFmpeg logs above).
+2. **Cloud cannot reach the Pi** — `streamHost` must be a LAN IP the Cloud Hub can reach (e.g. `http://192.168.x.x:8090`). It will not work if the hub is on the public internet and the Pi is behind NAT without port forwarding.
+3. **Wrong stream** — confirm the online device in the dashboard matches the Pi you are debugging.
+
 ### `externally-managed-environment` (Raspberry Pi OS)
 
 Do not use system `pip`. Use the installer or `scripts/setup-venv.sh` — dependencies go into `edge/.venv`.

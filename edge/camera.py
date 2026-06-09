@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 import cv2
 import numpy as np
 
+from recorder import ffmpeg_loglevel, _log_ffmpeg_stderr
+
 RTSP_TRANSPORTS = ("tcp", "udp", "auto")
 
 
@@ -85,6 +87,14 @@ class CameraCapture:
         if self.camera_type == "rtsp":
             return self._open_rtsp()
         return self._open_webcam()
+
+    def is_opened(self) -> bool:
+        if self._ffmpeg:
+            proc = self._ffmpeg.process
+            return proc is not None and proc.poll() is None
+        if self._cap:
+            return self._cap.isOpened()
+        return False
 
     def read(self) -> Optional[np.ndarray]:
         if self._ffmpeg:
@@ -193,11 +203,12 @@ class _FfmpegFrameReader:
         self._stderr_lines: list[str] = []
 
     def start(self, connect_timeout: float = 15.0) -> bool:
+        loglevel = ffmpeg_loglevel()
         args = [
             "ffmpeg",
             "-y",
             "-loglevel",
-            "error",
+            loglevel,
         ]
 
         local_addr = os.getenv("RTSP_LOCAL_ADDR", "").strip()
@@ -232,7 +243,14 @@ class _FfmpegFrameReader:
             self.last_error = str(exc)
             return False
 
-        threading.Thread(target=self._drain_stderr, daemon=True).start()
+        if loglevel in ("quiet", "panic", "fatal", "error"):
+            threading.Thread(target=self._drain_stderr, daemon=True).start()
+        else:
+            threading.Thread(
+                target=_log_ffmpeg_stderr,
+                args=(self.process, "FFmpeg RTSP"),
+                daemon=True,
+            ).start()
 
         deadline = time.monotonic() + connect_timeout
         while time.monotonic() < deadline:

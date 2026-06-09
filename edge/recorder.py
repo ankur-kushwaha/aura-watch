@@ -14,6 +14,29 @@ from typing import Optional
 import numpy as np
 import requests
 
+_FFMPEG_LOG_LEVELS = frozenset(
+    {"quiet", "panic", "fatal", "error", "warning", "info", "verbose", "debug", "trace"}
+)
+
+
+def ffmpeg_loglevel() -> str:
+    """Resolve FFmpeg -loglevel from FFMPEG_LOGLEVEL or DEBUG_LOGS."""
+    explicit = os.getenv("FFMPEG_LOGLEVEL", "").strip().lower()
+    if explicit in _FFMPEG_LOG_LEVELS:
+        return explicit
+    if os.getenv("DEBUG_LOGS", "true").lower() != "false":
+        return "info"
+    return "error"
+
+
+def _log_ffmpeg_stderr(process: subprocess.Popen, prefix: str) -> None:
+    if not process.stderr:
+        return
+    for line in process.stderr:
+        text = line.decode("utf-8", errors="replace").strip()
+        if text:
+            print(f"[{prefix}] {text}", flush=True)
+
 
 class HlsEncoder:
     """Pipe annotated BGR frames into FFmpeg for live HLS output."""
@@ -40,11 +63,12 @@ class HlsEncoder:
     def start(self):
         playlist = os.path.join(self.output_dir, "index.m3u8")
         segment_time = max(self.segment_sec, 0.5)
+        loglevel = ffmpeg_loglevel()
         args = [
             "ffmpeg",
             "-y",
             "-loglevel",
-            "error",
+            loglevel,
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -86,6 +110,12 @@ class HlsEncoder:
             daemon=True,
         )
         self._writer_thread.start()
+        if loglevel not in ("quiet", "panic", "fatal", "error"):
+            threading.Thread(
+                target=_log_ffmpeg_stderr,
+                args=(self.process, "FFmpeg HLS"),
+                daemon=True,
+            ).start()
 
     def write_frame(self, frame: np.ndarray):
         try:
