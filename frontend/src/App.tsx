@@ -242,7 +242,7 @@ function DeviceInstallTooltip() {
           </div>
 
           <p style={{ fontSize: '0.67rem', color: 'var(--color-text-muted)', marginTop: '8px', lineHeight: 1.4 }}>
-            Installs, starts the agent, and registers it with this dashboard automatically. The device list refreshes every few seconds.
+            Installs, starts the agent, and registers it with this dashboard automatically via WebSocket.
           </p>
         </div>
       )}
@@ -473,6 +473,9 @@ function App({ onLogout }: AppProps) {
             setStreamLoading(false);
           }
           break;
+        case 'devices_changed':
+          fetchDevices();
+          break;
         default:
           break;
       }
@@ -492,7 +495,7 @@ function App({ onLogout }: AppProps) {
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
     };
-  }, []);
+  }, [fetchDevices]);
 
   // Fetch initial data
   useEffect(() => {
@@ -501,14 +504,6 @@ function App({ onLogout }: AppProps) {
       fetchClips();
     });
   }, [fetchDevices, fetchClips]);
-
-  // Poll for newly registered edge devices
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchDevices();
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [fetchDevices]);
 
   // Sync selected stream details when selectedStreamId or streams list changes
   useEffect(() => {

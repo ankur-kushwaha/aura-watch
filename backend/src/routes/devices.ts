@@ -10,9 +10,18 @@ const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../s
 export type ClipUploadCallback = (filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number, streamId: string) => Promise<void>;
 
 let onClipUploadedCallback: ClipUploadCallback | null = null;
+let onDevicesChangedCallback: (() => void) | null = null;
 
 export function registerOnClipUploaded(cb: ClipUploadCallback) {
   onClipUploadedCallback = cb;
+}
+
+export function registerOnDevicesChanged(cb: () => void) {
+  onDevicesChangedCallback = cb;
+}
+
+function notifyDevicesChanged() {
+  onDevicesChangedCallback?.();
 }
 
 /**
@@ -136,6 +145,7 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     console.log(`[Cloud Hub] Device registered/updated: ${name} (${deviceId}) with ${streams.length} stream(s)`);
+    notifyDevicesChanged();
     res.json({ device, streams });
   } catch (error) {
     console.error('Error registering device:', error);
@@ -157,6 +167,7 @@ router.delete('/:deviceId', async (req: Request, res: Response) => {
       where: { deviceId },
     });
     console.log(`[Cloud Hub] Device and its streams unregistered: ${deviceId}`);
+    notifyDevicesChanged();
     res.json({ message: 'Device unregistered successfully' });
   } catch (error) {
     console.error('Error deleting device:', error);

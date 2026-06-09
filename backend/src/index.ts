@@ -11,7 +11,7 @@ dotenv.config();
 
 import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
-import devicesRouter, { registerOnClipUploaded } from './routes/devices';
+import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from './routes/devices';
 import streamsRouter, { registerOnStreamsUpdated, registerOnStreamFileRequest } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
@@ -117,10 +117,25 @@ if (fs.existsSync(FRONTEND_DIR)) {
 // WebSocket Maps
 // Maps deviceId -> WebSocket connection
 const activeDevices = new Map<string, WebSocket>();
+// All connected UI WebSocket clients
+const uiClients = new Set<WebSocket>();
 // Maps UI WebSocket -> deviceId they are subscribed to
 const uiSubscriptions = new Map<WebSocket, string>();
 // Maps UI WebSocket -> streamId they are subscribed to
 const uiStreamSubscriptions = new Map<WebSocket, string>();
+
+function broadcastDevicesChanged() {
+  const message = JSON.stringify({ type: 'devices_changed' });
+  for (const ws of uiClients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
+    }
+  }
+}
+
+registerOnDevicesChanged(() => {
+  broadcastDevicesChanged();
+});
 
 function broadcastToSubscribedUIs(deviceId: string, data: any) {
   const message = JSON.stringify(data);
@@ -376,6 +391,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
     }
 
     broadcastLogToSubscribedUIs(deviceId, `Edge device connected.`);
+    broadcastDevicesChanged();
 
     // If there is already a UI client subscribed to any of the device's streams, toggle streaming for them
     for (const stream of streams) {
@@ -475,10 +491,12 @@ wss.on('connection', async (ws: WebSocket, req) => {
       }
 
       broadcastLogToSubscribedUIs(deviceId, `Edge device disconnected.`);
+      broadcastDevicesChanged();
     });
 
   } else {
     // UI connection
+    uiClients.add(ws);
     console.log('[WS] UI client connected');
 
     ws.on('message', async (messageData: string) => {
@@ -553,6 +571,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
     });
 
     ws.on('close', () => {
+      uiClients.delete(ws);
       uiSubscriptions.delete(ws);
       const prevStreamId = uiStreamSubscriptions.get(ws);
       uiStreamSubscriptions.delete(ws);
