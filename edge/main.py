@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aura Watch edge agent — YOLO + ByteTrack annotated HLS streaming."""
+"""Aura Watch edge agent — YOLO + ByteTrack annotated video streaming."""
 
 from __future__ import annotations
 
@@ -20,17 +20,16 @@ from dotenv import load_dotenv
 from camera import CameraCapture
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
-    HlsEncoder,
+    SegmentEncoder,
     clear_directory,
-    concat_hls_segments,
-    copy_new_hls_segments,
+    concat_segments,
+    copy_new_segments,
     get_video_duration_seconds,
     kill_ffmpeg_for_dir,
     remove_directory,
     transcode_for_gemini,
     upload_clip,
 )
-from stream_server import HlsStreamServer
 from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names, resolve_yolo_device
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -59,8 +58,8 @@ YOLO_DETECT_INTERVAL = max(int(os.getenv("YOLO_DETECT_INTERVAL", "2")), 1)
 CAMERA_FPS = max(int(os.getenv("CAMERA_FPS", "30")), 1)
 ENCODE_FPS = max(int(os.getenv("ENCODE_FPS", str(CAMERA_FPS))), 1)
 FRAME_STREAM_FPS = float(os.getenv("FRAME_STREAM_FPS", "12"))
-HLS_SEGMENT_SEC = float(os.getenv("HLS_SEGMENT_SEC", "1"))
-EDGE_HTTP_PORT = int(os.getenv("EDGE_HTTP_PORT", "8090"))
+SEGMENT_SEC = float(os.getenv("SEGMENT_SEC", os.getenv("HLS_SEGMENT_SEC", "1")))
+SEGMENT_MAX_COUNT = max(int(os.getenv("SEGMENT_MAX_COUNT", "4")), 2)
 PREVIEW_JPEG_QUALITY = int(os.getenv("PREVIEW_JPEG_QUALITY", "70"))
 RECORDING_COOLDOWN_SEC = float(os.getenv("RECORDING_COOLDOWN_SEC", "45"))
 RECORDING_MAX_SEC = float(os.getenv("RECORDING_MAX_SEC", "60"))
@@ -99,9 +98,6 @@ class EdgeAgent:
         self.streams_config: dict[str, EdgeConfig] = {}
         self.pipelines: dict[str, dict[str, Any]] = {}
 
-        self.hls_server = HlsStreamServer(os.path.join(BASE_DIR, "storage"), EDGE_HTTP_PORT)
-        self.stream_host = self.hls_server.stream_host
-
         os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
         os.makedirs(os.path.join(BASE_DIR, "storage"), exist_ok=True)
 
@@ -127,14 +123,6 @@ class EdgeAgent:
     def send_status(self, stream_id: str, status: str):
         self._ws_send({"type": "status_change", "streamId": stream_id, "status": status})
 
-    def _announce_stream_host(self):
-        self._ws_send(
-            {
-                "type": "stream_announce",
-                "streamHost": self.stream_host,
-            }
-        )
-
     def _ws_send(self, payload: dict[str, Any]):
         if not self.ws:
             return
@@ -155,7 +143,6 @@ class EdgeAgent:
             "trackingEnabled": False,
             "motionThreshold": 25,
             "pixelChangeThreshold": 0.02,
-            "streamHost": self.stream_host,
             "status": "Idle",
         }
         response = requests.post(url, json=payload, timeout=30)
@@ -207,10 +194,10 @@ class EdgeAgent:
         if not config:
             return
 
-        hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
-        os.makedirs(hls_dir, exist_ok=True)
-        clear_directory(hls_dir)
-        kill_ffmpeg_for_dir(hls_dir)
+        segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
+        os.makedirs(segment_dir, exist_ok=True)
+        clear_directory(segment_dir)
+        kill_ffmpeg_for_dir(segment_dir)
 
         stop_event = threading.Event()
         pipeline_data = {
@@ -246,9 +233,9 @@ class EdgeAgent:
         if thread and thread.is_alive():
             thread.join(timeout=10)
 
-        hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
-        kill_ffmpeg_for_dir(hls_dir)
-        clear_directory(hls_dir)
+        segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
+        kill_ffmpeg_for_dir(segment_dir)
+        clear_directory(segment_dir)
         self.send_status(stream_id, "Offline")
 
     def restart_stream_pipeline(self, stream_id: str):
@@ -327,13 +314,14 @@ class EdgeAgent:
                 f"device={YOLO_DEVICE} imgsz={YOLO_IMGSZ} interval={YOLO_DETECT_INTERVAL}"
             )
 
-            hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
-            encoder = HlsEncoder(
-                hls_dir,
+            segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
+            encoder = SegmentEncoder(
+                segment_dir,
                 camera.width,
                 camera.height,
                 fps=ENCODE_FPS,
-                segment_sec=HLS_SEGMENT_SEC,
+                segment_sec=SEGMENT_SEC,
+                max_segments=SEGMENT_MAX_COUNT,
             )
             pipeline_data["encoder"] = encoder
             encoder.start()
@@ -348,7 +336,7 @@ class EdgeAgent:
                 encode_fps=ENCODE_FPS,
                 stream_fps=FRAME_STREAM_FPS,
                 jpeg_quality=PREVIEW_JPEG_QUALITY,
-                hls_segment_sec=HLS_SEGMENT_SEC,
+                segment_sec=SEGMENT_SEC,
                 tracking_enabled=config.tracking_enabled,
             )
             pipeline_data["settings"] = settings
@@ -493,11 +481,11 @@ class EdgeAgent:
             f"[{name}] Recording while objects are detected (max {int(RECORDING_MAX_SEC)}s, stream continues)..."
         )
 
-        hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
+        segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
 
         try:
             while not p_data["stop_event"].is_set() and not self.shutdown_event.is_set():
-                copy_new_hls_segments(hls_dir, staging_dir, copied_segments)
+                copy_new_segments(segment_dir, staging_dir, copied_segments)
                 elapsed = time.monotonic() - recording_start
 
                 with p_data["detection_lock"]:
@@ -516,16 +504,16 @@ class EdgeAgent:
 
                 time.sleep(0.4)
 
-            copy_new_hls_segments(hls_dir, staging_dir, copied_segments)
+            copy_new_segments(segment_dir, staging_dir, copied_segments)
 
             if not copied_segments:
-                raise RuntimeError("No HLS segments captured during recording")
+                raise RuntimeError("No segments captured during recording")
 
-            duration = len(copied_segments) * HLS_SEGMENT_SEC
+            duration = len(copied_segments) * SEGMENT_SEC
             self.send_log(
                 f"[{name}] Compiling ~{duration}s of footage ({len(copied_segments)} segments) into {filename}..."
             )
-            concat_hls_segments(staging_dir, output_path)
+            concat_segments(staging_dir, output_path)
             actual_duration = get_video_duration_seconds(output_path) or duration
             self.send_log(f"[{name}] Clip compiled successfully: {filename} ({actual_duration:.1f}s)")
 
@@ -583,13 +571,19 @@ class EdgeAgent:
             if p_data_curr and not p_data_curr["stop_event"].is_set():
                 self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
 
-    def _handle_stream_file_request(self, request_id: str, filename: str):
-        is_clip = filename.startswith("clip_") and filename.endswith(".mp4")
-        if is_clip:
-            file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
-        else:
-            file_path = os.path.join(BASE_DIR, "storage", filename)
+    def _handle_clip_file_request(self, request_id: str, filename: str):
+        if not (filename.startswith("clip_") and filename.endswith(".mp4")):
+            self._ws_send(
+                {
+                    "type": "response_stream_file",
+                    "requestId": request_id,
+                    "success": False,
+                    "error": f"Unsupported file: {filename}",
+                }
+            )
+            return
 
+        file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
         if not os.path.exists(file_path):
             self._ws_send(
                 {
@@ -602,27 +596,15 @@ class EdgeAgent:
             return
 
         try:
-            is_playlist = filename.endswith(".m3u8")
-            is_mp4 = filename.endswith(".mp4")
-            content_type = (
-                "application/x-mpegURL"
-                if is_playlist
-                else ("video/mp4" if is_mp4 else "video/MP2T")
-            )
-
-            if is_playlist:
-                with open(file_path, "r", encoding="utf-8") as handle:
-                    data = handle.read()
-            else:
-                with open(file_path, "rb") as handle:
-                    data = base64.b64encode(handle.read()).decode("ascii")
+            with open(file_path, "rb") as handle:
+                data = base64.b64encode(handle.read()).decode("ascii")
 
             self._ws_send(
                 {
                     "type": "response_stream_file",
                     "requestId": request_id,
                     "success": True,
-                    "contentType": content_type,
+                    "contentType": "video/mp4",
                     "data": data,
                 }
             )
@@ -656,7 +638,7 @@ class EdgeAgent:
                     self.send_log(f"Low-latency preview streaming {state} for stream {stream_id}.")
 
             elif msg_type == "request_stream_file":
-                self._handle_stream_file_request(data["requestId"], data["filename"])
+                self._handle_clip_file_request(data["requestId"], data["filename"])
 
             elif msg_type == "delete_clip_file":
                 filename = data.get("filename", "")
@@ -671,7 +653,7 @@ class EdgeAgent:
     def _schedule_heartbeat(self):
         if self.shutdown_event.is_set():
             return
-        self._ws_send({"type": "heartbeat", "streamHost": self.stream_host})
+        self._ws_send({"type": "heartbeat"})
         self.heartbeat_timer = threading.Timer(10.0, self._schedule_heartbeat)
         self.heartbeat_timer.daemon = True
         self.heartbeat_timer.start()
@@ -681,7 +663,6 @@ class EdgeAgent:
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
         self._schedule_heartbeat()
-        self._announce_stream_host()
 
         # Update and notify status for all active streams
         for stream_id, p_data in self.pipelines.items():
@@ -741,13 +722,10 @@ class EdgeAgent:
         for stream_id in list(self.pipelines.keys()):
             self.stop_stream_pipeline(stream_id)
 
-        self.hls_server.stop()
-
-        # Clean up all HLS folders
         storage_dir = os.path.join(BASE_DIR, "storage")
         if os.path.isdir(storage_dir):
             for name in os.listdir(storage_dir):
-                if name.startswith("hls_"):
+                if name.startswith("segments_"):
                     path = os.path.join(storage_dir, name)
                     kill_ffmpeg_for_dir(path)
                     clear_directory(path)
@@ -762,11 +740,6 @@ class EdgeAgent:
 
     def bootstrap(self):
         try:
-            if not self.hls_server._httpd:
-                self.hls_server.start()
-                self.stream_host = self.hls_server.stream_host
-                print(f"[Edge] HLS HTTP server listening at {self.stream_host}")
-
             print("[Edge] Registering device with Cloud Hub...")
             registered = self.register_device()
             # Expecting response structure: {"device": ..., "streams": [...]}

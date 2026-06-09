@@ -64,7 +64,7 @@ camera-active/
 ├── edge/             # Python edge surveillance agent (YOLO + ByteTrack)
 │   ├── scripts/      # Installer, venv setup, systemd, model export
 │   ├── main.py       # Edge agent entry point
-│   └── storage/      # Local video clips and HLS segments
+│   └── storage/      # Local video clips and segment buffers
 ├── frontend/         # Vite + React + TypeScript + Tailwind CSS UI
 │   └── src/          # Main dashboard, interactive RAG panel & stream player
 ├── package.json      # Monorepo setup scripts & concurrently runner
@@ -213,7 +213,7 @@ Production Cloud Hub: [https://aura-watch.adboardtools.com](https://aura-watch.a
 ## 🛠️ Components In-Depth
 
 ### 🔹 Cloud Hub Backend (`backend/`)
-* **Live Video Proxying**: Recorded HLS clip files remain stored exclusively on the edge device to optimize storage. When the user requests playback in the frontend UI, the backend proxies files on-demand over WebSocket from the edge.
+* **Clip Video Proxying**: Recorded clip files remain stored exclusively on the edge device to optimize storage. When the user requests playback in the frontend UI, the backend proxies files on-demand over WebSocket from the edge.
 * **Gemini Ingestion Pipeline**: When a motion event clip completes, the edge uploads it. The backend:
   1. Sends the clip to Gemini (optimized frame rate) for detailed visual summarization.
   2. Commits metadata to MongoDB.

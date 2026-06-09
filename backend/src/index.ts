@@ -12,7 +12,7 @@ dotenv.config();
 import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from './routes/devices';
-import streamsRouter, { registerOnStreamsUpdated, registerOnStreamFileRequest } from './routes/streams';
+import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
@@ -206,66 +206,6 @@ interface PendingStreamRequest {
 const pendingStreamRequests = new Map<string, PendingStreamRequest>();
 let nextStreamRequestId = 0;
 
-async function fetchHlsFromEdgeHttp(streamHost: string, filename: string): Promise<{ contentType: string; data: Buffer | string }> {
-  const base = streamHost.replace(/\/$/, '');
-  const url = `${base}/${filename}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(4000) });
-  if (!response.ok) {
-    throw new Error(`Edge HTTP ${response.status} for ${filename}`);
-  }
-
-  const contentType = response.headers.get('content-type')
-    || (filename.endsWith('.m3u8') ? 'application/x-mpegURL' : 'video/MP2T');
-
-  if (filename.endsWith('.m3u8')) {
-    return { contentType, data: await response.text() };
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return { contentType, data: buffer };
-}
-
-function fetchHlsFromEdgeWebSocket(deviceId: string, filename: string): Promise<{ contentType: string; data: Buffer | string }> {
-  return new Promise((resolve, reject) => {
-    const deviceSocket = activeDevices.get(deviceId);
-    if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) {
-      return reject(new Error(`Edge device ${deviceId} is offline`));
-    }
-
-    const requestId = `req_${Date.now()}_${nextStreamRequestId++}`;
-
-    const timeout = setTimeout(() => {
-      pendingStreamRequests.delete(requestId);
-      reject(new Error(`Timeout waiting for file ${filename} from device`));
-    }, 5000);
-
-    pendingStreamRequests.set(requestId, { resolve, reject, timeout });
-
-    deviceSocket.send(JSON.stringify({
-      type: 'request_stream_file',
-      requestId,
-      filename
-    }));
-  });
-}
-
-registerOnStreamFileRequest(async (deviceId, filename) => {
-  const match = filename.match(/hls_([^\/]+)/);
-  const streamId = match ? match[1] : null;
-  const stream = streamId ? await prisma.cameraStream.findUnique({ where: { streamId } }) : null;
-  const streamHost = stream?.streamHost;
-
-  if (streamHost) {
-    try {
-      return await fetchHlsFromEdgeHttp(streamHost, filename);
-    } catch (error: any) {
-      console.warn(`[Stream Proxy] HTTP fetch failed for ${deviceId}/${filename}, falling back to WS: ${error.message}`);
-    }
-  }
-
-  return fetchHlsFromEdgeWebSocket(deviceId, filename);
-});
-
 /**
  * Upload to Gemini, fetch summary, generate vector embeddings, and save to MongoDB + Qdrant
  */
@@ -413,20 +353,6 @@ wss.on('connection', async (ws: WebSocket, req) => {
                 status: 'Online',
               }
             });
-            if (data.streamHost) {
-              await prisma.cameraStream.updateMany({
-                where: { deviceId },
-                data: { streamHost: String(data.streamHost) }
-              });
-            }
-            break;
-          case 'stream_announce':
-            if (data.streamHost) {
-              await prisma.cameraStream.updateMany({
-                where: { deviceId },
-                data: { streamHost: String(data.streamHost) }
-              });
-            }
             break;
           case 'status_change':
             if (data.streamId) {

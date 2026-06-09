@@ -86,7 +86,7 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
  * Edge device registers/announces itself on boot
  */
 router.post('/register', async (req: Request, res: Response) => {
-  const { deviceId, name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status, streamHost } = req.body;
+  const { deviceId, name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status } = req.body;
 
   if (!deviceId || !name) {
     return res.status(400).json({ error: 'deviceId and name are required' });
@@ -129,19 +129,9 @@ router.post('/register', async (req: Request, res: Response) => {
           pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
           detectPerson: true,
           detectVehicle: true,
-          streamHost: streamHost ? String(streamHost) : '',
         },
       });
       streams = [defaultStream];
-    } else if (streamHost) {
-      // Update the stream host for the existing default stream or all streams
-      await prisma.cameraStream.updateMany({
-        where: { deviceId },
-        data: { streamHost: String(streamHost) },
-      });
-      streams = await prisma.cameraStream.findMany({
-        where: { deviceId },
-      });
     }
 
     console.log(`[Cloud Hub] Device registered/updated: ${name} (${deviceId}) with ${streams.length} stream(s)`);
@@ -234,39 +224,5 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
 router.post('/:deviceId/reid/crop', handleCropUpload);
 
 
-
-export type StreamFileRequestHandler = (deviceId: string, filename: string) => Promise<{ contentType: string, data: Buffer | string }>;
-let onStreamFileRequestCallback: StreamFileRequestHandler | null = null;
-
-export function registerOnStreamFileRequest(cb: StreamFileRequestHandler) {
-  onStreamFileRequestCallback = cb;
-}
-
-/**
- * GET /api/devices/:deviceId/stream/:filename
- * Proxy endpoint to pull HLS playlist/segments from edge device over WebSocket
- */
-router.get('/:deviceId/stream/:filename', async (req: Request, res: Response) => {
-  const { deviceId, filename } = req.params;
-
-  if (!onStreamFileRequestCallback) {
-    return res.status(500).json({ error: 'Stream proxy not initialized' });
-  }
-
-  try {
-    const result = await onStreamFileRequestCallback(deviceId, filename);
-    res.setHeader('Content-Type', result.contentType);
-    res.send(result.data);
-  } catch (error: any) {
-    console.error(`[Stream Proxy] Error proxying ${filename} for ${deviceId}:`, error.message);
-    if (error.message.includes('offline')) {
-      res.status(503).send(error.message);
-    } else if (error.message.includes('Timeout') || error.message.includes('timeout')) {
-      res.status(504).send(error.message);
-    } else {
-      res.status(404).send(error.message);
-    }
-  }
-});
 
 export default router;

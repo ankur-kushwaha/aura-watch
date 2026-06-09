@@ -188,44 +188,4 @@ router.delete('/:streamId', async (req: Request, res: Response) => {
   }
 });
 
-export type StreamFileRequestHandler = (deviceId: string, filename: string) => Promise<{ contentType: string, data: Buffer | string }>;
-let onStreamFileRequestCallback: StreamFileRequestHandler | null = null;
-
-export function registerOnStreamFileRequest(cb: StreamFileRequestHandler) {
-  onStreamFileRequestCallback = cb;
-}
-
-/**
- * GET /api/streams/:streamId/stream/:filename
- * Proxy endpoint to pull HLS playlist/segments from edge device for a specific stream
- */
-router.get('/:streamId/stream/:filename', async (req: Request, res: Response) => {
-  const { streamId, filename } = req.params;
-
-  if (!onStreamFileRequestCallback) {
-    return res.status(500).json({ error: 'Stream proxy not initialized' });
-  }
-
-  try {
-    const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
-    if (!stream) {
-      return res.status(404).json({ error: 'Camera stream not found' });
-    }
-
-    const targetFilename = filename.startsWith('clip_') ? filename : `hls_${streamId}/${filename}`;
-    const result = await onStreamFileRequestCallback(stream.deviceId, targetFilename);
-    res.setHeader('Content-Type', result.contentType);
-    res.send(result.data);
-  } catch (error: any) {
-    console.error(`[Stream Proxy] Error proxying ${filename} for stream ${streamId}:`, error.message);
-    if (error.message.includes('offline')) {
-      res.status(503).send(error.message);
-    } else if (error.message.includes('Timeout') || error.message.includes('timeout')) {
-      res.status(504).send(error.message);
-    } else {
-      res.status(404).send(error.message);
-    }
-  }
-});
-
 export default router;

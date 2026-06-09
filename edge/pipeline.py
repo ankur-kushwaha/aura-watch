@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 
 from camera import CameraCapture
-from recorder import HlsEncoder
+from recorder import SegmentEncoder
 from yolo_tracker import YoloByteTracker
 
 
@@ -25,7 +25,7 @@ class PipelineSettings:
     encode_fps: int = 30
     stream_fps: float = 12.0
     jpeg_quality: int = 70
-    hls_segment_sec: float = 1.0
+    segment_sec: float = 1.0
     tracking_enabled: bool = False
 
 
@@ -41,7 +41,7 @@ class VisionPipeline:
         self,
         camera: CameraCapture,
         tracker: YoloByteTracker,
-        encoder: HlsEncoder,
+        encoder: SegmentEncoder,
         settings: PipelineSettings,
         on_preview_frame: Optional[FrameCallback] = None,
         on_detections: Optional[DetectionCallback] = None,
