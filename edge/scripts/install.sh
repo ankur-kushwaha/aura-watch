@@ -1,16 +1,132 @@
-#!/bin/bash
+#!/bin/sh
 
 # Single-line installer for Aura Watch AI - Edge Agent
 set -e
 
 AGENT_STARTED=false
 
-# Helper function to check command existence
 check_command() {
-    if ! command -v "$1" &> /dev/null; then
+    if ! command -v "$1" >/dev/null 2>&1; then
         return 1
     fi
     return 0
+}
+
+detect_os() {
+    case "$(uname -s)" in
+        Darwin) echo "darwin" ;;
+        Linux) echo "linux" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+detect_linux_distro() {
+    if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        echo "${ID:-unknown}"
+    else
+        echo "unknown"
+    fi
+}
+
+print_python_install_help() {
+    os=$(detect_os)
+    echo ""
+    echo "  Install Python 3.10+ for your system:"
+    echo ""
+
+    case "$os" in
+        darwin)
+            echo "  macOS (Homebrew — recommended):"
+            echo "    brew install python3"
+            echo ""
+            echo "  macOS (official installer):"
+            echo "    https://www.python.org/downloads/macos/"
+            echo ""
+            echo "  After installing, verify with: python3 --version"
+            ;;
+        linux)
+            distro=$(detect_linux_distro)
+            case "$distro" in
+                debian|ubuntu|raspbian|raspberrypi|linuxmint|pop)
+                    echo "  Debian / Ubuntu / Raspberry Pi OS:"
+                    echo "    sudo apt update"
+                    echo "    sudo apt install -y python3 python3-pip python3-venv"
+                    ;;
+                fedora)
+                    echo "  Fedora:"
+                    echo "    sudo dnf install -y python3 python3-pip"
+                    ;;
+                rhel|centos|rocky|almalinux|ol)
+                    echo "  RHEL / Rocky / AlmaLinux / CentOS:"
+                    echo "    sudo dnf install -y python3 python3-pip"
+                    echo "    # or on older systems: sudo yum install -y python3 python3-pip"
+                    ;;
+                arch|manjaro|endeavouros)
+                    echo "  Arch Linux:"
+                    echo "    sudo pacman -S --needed python python-pip"
+                    ;;
+                alpine)
+                    echo "  Alpine Linux:"
+                    echo "    sudo apk add python3 py3-pip"
+                    ;;
+                opensuse*|sles)
+                    echo "  openSUSE / SLES:"
+                    echo "    sudo zypper install python3 python3-pip"
+                    ;;
+                *)
+                    echo "  Linux (pick your package manager):"
+                    echo "    Debian/Ubuntu/Raspberry Pi: sudo apt install python3 python3-pip"
+                    echo "    Fedora/RHEL/Rocky:          sudo dnf install python3 python3-pip"
+                    echo "    Arch:                       sudo pacman -S python python-pip"
+                    echo "    Alpine:                     sudo apk add python3 py3-pip"
+                    ;;
+            esac
+            echo ""
+            echo "  After installing, verify with: python3 --version"
+            ;;
+        *)
+            echo "  Download Python 3.10+ for your platform:"
+            echo "    https://www.python.org/downloads/"
+            echo ""
+            echo "  After installing, verify with: python3 --version"
+            ;;
+    esac
+    echo ""
+}
+
+print_ffmpeg_install_help() {
+    os=$(detect_os)
+    case "$os" in
+        darwin)
+            echo "     macOS: brew install ffmpeg"
+            ;;
+        linux)
+            distro=$(detect_linux_distro)
+            case "$distro" in
+                debian|ubuntu|raspbian|raspberrypi|linuxmint|pop)
+                    echo "     Debian/Ubuntu/Raspberry Pi: sudo apt install ffmpeg"
+                    ;;
+                fedora|rhel|centos|rocky|almalinux|ol)
+                    echo "     Fedora/RHEL/Rocky: sudo dnf install ffmpeg"
+                    ;;
+                arch|manjaro|endeavouros)
+                    echo "     Arch: sudo pacman -S ffmpeg"
+                    ;;
+                alpine)
+                    echo "     Alpine: sudo apk add ffmpeg"
+                    ;;
+                *)
+                    echo "     Debian/Ubuntu: sudo apt install ffmpeg"
+                    echo "     Fedora/RHEL:   sudo dnf install ffmpeg"
+                    ;;
+            esac
+            ;;
+        *)
+            echo "     Install FFmpeg from https://ffmpeg.org/download.html"
+            ;;
+    esac
 }
 
 resolve_python() {
@@ -23,18 +139,26 @@ resolve_python() {
     fi
 }
 
+python_meets_minimum() {
+    python_cmd=$1
+    "$python_cmd" - <<'PY' >/dev/null 2>&1
+import sys
+sys.exit(0 if sys.version_info >= (3, 10) else 1)
+PY
+}
+
 derive_ws_url() {
-    local http_url="$1"
+    http_url=$1
     case "$http_url" in
-        https://*) echo "${http_url/https:\/\//wss://}" ;;
-        http://*)  echo "${http_url/http:\/\//ws://}" ;;
+        https://*) echo "${http_url#https://}" | sed 's|^|wss://|' ;;
+        http://*)  echo "${http_url#http://}"  | sed 's|^|ws://|' ;;
         *)         echo "ws://localhost:5000" ;;
     esac
 }
 
 start_agent_background() {
-    local edge_dir="$1"
-    local python_cmd="$2"
+    edge_dir=$1
+    python_cmd=$2
     cd "$edge_dir"
     nohup "$python_cmd" main.py >> agent.log 2>&1 &
     echo $! > agent.pid
@@ -63,14 +187,16 @@ echo "🔍 Checking system prerequisites..."
 PYTHON_CMD=""
 if PYTHON_CMD=$(resolve_python); then
     PYTHON_VERSION=$("$PYTHON_CMD" --version 2>&1)
-    echo "  ✅ Python 3: Installed ($PYTHON_VERSION via $PYTHON_CMD)"
-else
-    echo "  ❌ Python 3: Not installed. Please install Python 3.10+ first."
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        echo "     sudo apt install python3 python3-pip"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "     brew install python3"
+    if python_meets_minimum "$PYTHON_CMD"; then
+        echo "  ✅ Python 3: Installed ($PYTHON_VERSION via $PYTHON_CMD)"
+    else
+        echo "  ❌ Python 3: Found ($PYTHON_VERSION) but version 3.10+ is required."
+        print_python_install_help
+        exit 1
     fi
+else
+    echo "  ❌ Python 3: Not installed."
+    print_python_install_help
     exit 1
 fi
 
@@ -79,6 +205,20 @@ if check_command git; then
     echo "  ✅ Git: Installed"
 else
     echo "  ❌ Git: Not installed. Please install Git first."
+    os=$(detect_os)
+    case "$os" in
+        darwin) echo "     macOS: brew install git" ;;
+        linux)
+            distro=$(detect_linux_distro)
+            case "$distro" in
+                debian|ubuntu|raspbian|raspberrypi) echo "     sudo apt install git" ;;
+                fedora|rhel|centos|rocky|almalinux) echo "     sudo dnf install git" ;;
+                arch|manjaro) echo "     sudo pacman -S git" ;;
+                *) echo "     Use your system package manager to install git." ;;
+            esac
+            ;;
+        *) echo "     https://git-scm.com/downloads" ;;
+    esac
     exit 1
 fi
 
@@ -87,11 +227,7 @@ if check_command ffmpeg; then
     echo "  ✅ FFmpeg: Installed"
 else
     echo "  ⚠️  FFmpeg: Not detected. FFmpeg is required to pipe camera streams."
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        echo "     You can install it later using: sudo apt install ffmpeg"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "     You can install it later using: brew install ffmpeg"
-    fi
+    print_ffmpeg_install_help
 fi
 echo ""
 
@@ -102,7 +238,7 @@ if [ "$NONINTERACTIVE" = true ]; then
     echo "📂 Install directory: $INSTALL_DIR"
 else
     echo "📂 Where would you like to install the Edge Agent?"
-    read -p "Install directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR </dev/tty
+    read -r -p "Install directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR </dev/tty
     INSTALL_DIR=${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}
 fi
 
@@ -132,7 +268,7 @@ if [ "$NONINTERACTIVE" = true ]; then
     CLOUD_URL="$DEFAULT_CLOUD_URL"
     echo "   Cloud Hub HTTP URL: $CLOUD_URL"
 else
-    read -p "Cloud Hub HTTP URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL_INPUT </dev/tty
+    read -r -p "Cloud Hub HTTP URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL_INPUT </dev/tty
     CLOUD_URL=${CLOUD_URL_INPUT:-$DEFAULT_CLOUD_URL}
 fi
 
@@ -142,7 +278,7 @@ elif [ "$NONINTERACTIVE" = true ]; then
     CLOUD_WS_URL=$(derive_ws_url "$CLOUD_URL")
 else
     DEFAULT_CLOUD_WS_URL=$(derive_ws_url "$CLOUD_URL")
-    read -p "Cloud Hub WebSocket URL [$DEFAULT_CLOUD_WS_URL]: " CLOUD_WS_URL_INPUT </dev/tty
+    read -r -p "Cloud Hub WebSocket URL [$DEFAULT_CLOUD_WS_URL]: " CLOUD_WS_URL_INPUT </dev/tty
     CLOUD_WS_URL=${CLOUD_WS_URL_INPUT:-$DEFAULT_CLOUD_WS_URL}
 fi
 echo "   Cloud Hub WebSocket URL: $CLOUD_WS_URL"
@@ -153,7 +289,7 @@ if [ "$NONINTERACTIVE" = true ]; then
     DEVICE_NAME="$DEFAULT_DEVICE_NAME"
     echo "   Device Name: $DEVICE_NAME"
 else
-    read -p "Device Name [$DEFAULT_DEVICE_NAME]: " DEVICE_NAME_INPUT </dev/tty
+    read -r -p "Device Name [$DEFAULT_DEVICE_NAME]: " DEVICE_NAME_INPUT </dev/tty
     DEVICE_NAME=${DEVICE_NAME_INPUT:-$DEFAULT_DEVICE_NAME}
 fi
 
@@ -181,21 +317,17 @@ echo ""
 echo "🆔 Generating Device ID from hardware/CPU serial..."
 DEVICE_ID=""
 
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    DEVICE_ID=$(ioreg -rd1 -c IOPlatformExpertDevice | awk -F'"' '/IOPlatformSerialNumber/ {print $4}')
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    # Linux
+if [ "$(detect_os)" = "darwin" ]; then
+    DEVICE_ID=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformSerialNumber/ {print $4}')
+elif [ "$(detect_os)" = "linux" ]; then
     if [ -f /proc/cpuinfo ]; then
-        # Try Raspberry Pi serial number
         DEVICE_ID=$(awk '/Serial/ {print $3}' /proc/cpuinfo)
     fi
-    
-    # If not found (e.g., standard PC/VM), try reading DMI system/product serial
+
     if [ -z "$DEVICE_ID" ] && [ -f /sys/class/dmi/id/product_serial ]; then
         DEVICE_ID=$(cat /sys/class/dmi/id/product_serial 2>/dev/null || true)
     fi
-    
+
     if [ -z "$DEVICE_ID" ] && [ -f /sys/class/dmi/id/board_serial ]; then
         DEVICE_ID=$(cat /sys/class/dmi/id/board_serial 2>/dev/null || true)
     fi
@@ -206,14 +338,13 @@ DEVICE_ID=$(echo "$DEVICE_ID" | xargs)
 
 # If empty or placeholder/generic serial, fall back to random
 if [ -z "$DEVICE_ID" ] || [ "$DEVICE_ID" = "None" ] || [ "$DEVICE_ID" = "0000000000000000" ] || [ "$DEVICE_ID" = "System Serial Number" ] || [ "$DEVICE_ID" = "Not Specified" ]; then
-    RANDOM_ID=$(head /dev/urandom | tr -dc a-z0-9 | head -c 16 || true)
+    RANDOM_ID=$(head /dev/urandom 2>/dev/null | tr -dc 'a-z0-9' | head -c 16 || true)
     if [ -z "$RANDOM_ID" ]; then
-        RANDOM_ID="edge_\$(date +%s)_\$RANDOM"
+        RANDOM_ID="edge_$(date +%s)_$$"
     fi
     DEVICE_ID="edge_$RANDOM_ID"
     echo "   ⚠️  Could not retrieve hardware serial number. Generated random ID: $DEVICE_ID"
 else
-    # Clean up serial number (remove non-alphanumeric, prefix with edge_)
     CLEAN_ID=$(echo "$DEVICE_ID" | tr -dc 'a-zA-Z0-9_-')
     DEVICE_ID="edge_$CLEAN_ID"
     echo "   ✅ Found hardware serial number: $DEVICE_ID"
@@ -235,32 +366,36 @@ EDGE_DIR="$INSTALL_DIR/edge"
 if [ "$NONINTERACTIVE" = true ]; then
     echo "🚀 Starting Edge Agent (non-interactive mode)..."
     start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+elif [ "$(detect_os)" = "linux" ]; then
     echo "📋 Linux system detected."
-    read -p "Would you like to install the Edge Agent as a systemd background service? (y/n) [y]: " REGISTER_SERVICE </dev/tty
+    read -r -p "Would you like to install the Edge Agent as a systemd background service? (y/n) [y]: " REGISTER_SERVICE </dev/tty
     REGISTER_SERVICE=${REGISTER_SERVICE:-y}
 
-    if [[ "$REGISTER_SERVICE" =~ ^[Yy]$ ]]; then
-        echo "⚙️  Running daemon registration..."
-        chmod +x scripts/setup-service.sh
-        if ./scripts/setup-service.sh; then
-            AGENT_STARTED=true
-            echo "   ✅ Edge Agent registered as systemd service and started."
-        else
-            echo "   ⚠️  Systemd setup failed. You can start the agent manually."
-        fi
-    fi
+    case "$REGISTER_SERVICE" in
+        [Yy]*)
+            echo "⚙️  Running daemon registration..."
+            chmod +x scripts/setup-service.sh
+            if ./scripts/setup-service.sh; then
+                AGENT_STARTED=true
+                echo "   ✅ Edge Agent registered as systemd service and started."
+            else
+                echo "   ⚠️  Systemd setup failed. You can start the agent manually."
+            fi
+            ;;
+    esac
 else
     echo "ℹ️  Systemd service registration is only supported on Linux (Raspberry Pi/Jetson)."
 fi
 
 if [ "$AGENT_STARTED" = false ]; then
-    read -p "Start the Edge Agent now in the background? (y/n) [y]: " START_NOW </dev/tty
+    read -r -p "Start the Edge Agent now in the background? (y/n) [y]: " START_NOW </dev/tty
     START_NOW=${START_NOW:-y}
-    if [[ "$START_NOW" =~ ^[Yy]$ ]]; then
-        echo "🚀 Starting Edge Agent..."
-        start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
-    fi
+    case "$START_NOW" in
+        [Yy]*)
+            echo "🚀 Starting Edge Agent..."
+            start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
+            ;;
+    esac
 fi
 
 echo ""
@@ -283,7 +418,7 @@ if [ -f "$EDGE_DIR/agent.pid" ]; then
     echo "   kill \$(cat $EDGE_DIR/agent.pid)"
     echo ""
 fi
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+if [ "$(detect_os)" = "linux" ]; then
     echo "To manage the systemd background service (if installed):"
     echo "   sudo systemctl status aura-watch-edge.service"
     echo "   sudo systemctl restart aura-watch-edge.service"

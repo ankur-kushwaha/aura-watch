@@ -8,9 +8,21 @@ The edge agent runs YOLOv8 nano object detection with ByteTrack, streams annotat
 
 Ensure the following are installed on your edge device:
 1. **Python 3.10+**
-2. **FFmpeg** (used for HLS encoding and video clip recording)
+2. **Git** (required by the one-line installer to clone the repo)
+3. **FFmpeg** (used for HLS encoding and video clip recording)
    - On Debian/Ubuntu/Raspberry Pi OS: `sudo apt install ffmpeg`
    - On macOS: `brew install ffmpeg`
+
+If Python is missing, install it for your OS:
+
+| OS | Command |
+|----|---------|
+| **Raspberry Pi / Debian / Ubuntu** | `sudo apt update && sudo apt install -y python3 python3-pip python3-venv` |
+| **Fedora / RHEL / Rocky** | `sudo dnf install -y python3 python3-pip` |
+| **Arch Linux** | `sudo pacman -S --needed python python-pip` |
+| **macOS** | `brew install python3` or [python.org/downloads](https://www.python.org/downloads/macos/) |
+
+Verify with: `python3 --version` (must show 3.10 or newer).
 
 ## Installation
 
