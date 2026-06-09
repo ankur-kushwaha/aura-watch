@@ -8,7 +8,7 @@ Aura Watch AI is a state-of-the-art, edge-native, AI-powered smart surveillance 
 
 Aura Watch AI consists of three core components working in harmony:
 
-1. **Edge Surveillance Agent (`edge/`)**: Lightweight agent running on the camera device (e.g. Raspberry Pi, NVIDIA Jetson, or developer laptop) that performs localized grayscale motion detection and video recording, and connects back to the backend hub via WebSockets.
+1. **Edge Surveillance Agent (`edge/`)**: Python agent running on the camera device (Raspberry Pi, NVIDIA Jetson, or dev laptop). Performs **YOLOv8 + ByteTrack** object detection, records clips on detection, streams live annotated video, and connects to the Cloud Hub via WebSockets.
 2. **Cloud Hub Backend (`backend/`)**: Central server that manages device configurations, acts as a WebSocket hub, runs AI video processing pipelines (Gemini Video AI + OpenAI/Gemini Embeddings), and exposes APIs.
 3. **Dashboard Frontend (`frontend/`)**: React (Vite + TypeScript) single-page dashboard to configure devices, view live frame feeds, browse recorded clips, see live system logs, and talk to the "Ask Camera AI" assistant.
 
@@ -61,10 +61,10 @@ camera-active/
 │   ├── prisma/       # MongoDB schema design (EdgeDevice & VideoClip)
 │   ├── src/          # Source code (routes, Gemini/OpenAI & Qdrant services)
 │   └── storage/      # Temporary storage for video ingestion
-├── edge/             # TypeScript edge surveillance client
-│   ├── scripts/      # Systemd service creation & deployment utilities
-│   ├── src/          # Local motion detection & frame/clip recorder
-│   └── storage/      # Local 10-second video clips storage
+├── edge/             # Python edge surveillance agent (YOLO + ByteTrack)
+│   ├── scripts/      # Installer, venv setup, systemd, model export
+│   ├── main.py       # Edge agent entry point
+│   └── storage/      # Local video clips and HLS segments
 ├── frontend/         # Vite + React + TypeScript + Tailwind CSS UI
 │   └── src/          # Main dashboard, interactive RAG panel & stream player
 ├── package.json      # Monorepo setup scripts & concurrently runner
@@ -77,15 +77,20 @@ camera-active/
 
 Ensure the following tools are installed on your target machine(s):
 
+### Cloud Hub (backend + frontend)
+
 * **Node.js**: `v18.x` or higher
-* **FFmpeg**: Required for both camera stream piping and recording.
-  * **macOS**: `brew install ffmpeg`
-  * **Ubuntu/Debian**: `sudo apt update && sudo apt install ffmpeg`
+* **FFmpeg**: Required for video processing on the hub.
 * **MongoDB**: A running instance or an Atlas connection string.
 * **Qdrant Database**: A running local instance or a Qdrant Cloud cluster.
 * **API Keys**:
   * **Google Gemini API Key** (Required for video summarization)
   * **OpenAI API Key** (Required if using OpenAI for text embeddings)
+
+### Edge device (camera agent)
+
+* **Python 3.10+**, **Git**, and **FFmpeg** — Node.js is **not** required on the edge.
+  * See [edge/README.md](edge/README.md) for OS-specific install commands.
 
 ---
 
@@ -93,27 +98,41 @@ Ensure the following tools are installed on your target machine(s):
 
 ### 1. Installation
 
-To install all dependencies across the root, backend, frontend, and edge (Python) directories, run the helper script in the root directory:
+To install dependencies for the **Cloud Hub** (backend + frontend + edge Python venv for local dev):
 
 ```bash
 npm run install-all
 ```
 
-#### ⚡ Quick Edge Agent Installer (Single-line Command)
-If you are deploying the Edge Agent onto a remote device (e.g. Raspberry Pi, NVIDIA Jetson, or secondary developer computer), you can download, configure, and register it as a background service with a single command:
+This runs `npm install` for backend/frontend and `scripts/setup-venv.sh` for the edge agent.
+
+#### ⚡ Quick Edge Agent Installer (single-line)
+
+Deploy the edge agent to a remote device (Raspberry Pi, Jetson, or secondary computer) with one command:
 
 ```bash
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
 ```
 
-This interactive script will:
-1. Verify system prerequisites (`Python 3`, `git`, `FFmpeg`).
-2. Clone the repository to your chosen directory.
-3. Prompt you for the Cloud Hub URLs and Device Name (or use env vars when copied from the dashboard).
-4. Automatically write the `.env` configuration file and generate a persistent device ID.
-5. Install Python dependencies for the edge agent.
-6. Start the agent in the background and register it with the Cloud Hub.
-7. Option to install as a systemd background service on Linux (interactive mode).
+Or with the production Cloud Hub pre-filled (also used by the dashboard copy button):
+
+```bash
+CLOUD_URL='https://aura-watch.adboardtools.com' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
+```
+
+The installer will:
+
+1. Verify prerequisites (`Python 3.10+`, `git`, `FFmpeg`)
+2. Clone or update the repo in `~/aura-watch-edge`
+3. Prompt for Cloud Hub URL and device name (or use `CLOUD_URL` env for non-interactive mode)
+4. Write `.env` and a persistent `.device-id`
+5. Create a Python virtual environment (`.venv`) and install dependencies
+6. On Raspberry Pi: use lighter `requirements-pi.txt` and CPU-only PyTorch
+7. Start the agent and optionally register a **systemd** service (Linux)
+
+> **Re-running the installer** pulls latest code but **overwrites `.env`**. Back up custom settings first. Model export (ONNX/CoreML) is a separate one-time step — see [edge/README.md](edge/README.md#performance-optimization).
+
+Full edge documentation: **[edge/README.md](edge/README.md)**
 
 ---
 
@@ -173,16 +192,21 @@ npm run dev
 
 #### 🎥 Start Edge Surveillance Agent
 
-If you are running the edge agent in development mode on the same machine (using your webcam):
-```bash
-# From another terminal tab inside the root
-npm run edge
-```
-Or run directly inside the `edge/` folder:
+If you are running the edge agent locally (webcam or RTSP), set up the venv first:
+
 ```bash
 cd edge
+sh scripts/setup-venv.sh . python3
 .venv/bin/python main.py
 ```
+
+Or from the monorepo root:
+
+```bash
+npm run edge
+```
+
+Production Cloud Hub: [https://aura-watch.adboardtools.com](https://aura-watch.adboardtools.com)
 
 ---
 
@@ -198,8 +222,10 @@ cd edge
 * **RAG Assistant**: Exposes `/api/rag/query` which executes a hybrid search on Qdrant + fallback MongoDB and feeds the context to Gemini/OpenAI to generate accurate conversational answers about events.
 
 ### 🔹 Edge Agent (`edge/`)
-* **Grayscale Motion Tracking**: Analyzes adjacent video frames in grayscale using a threshold config. Reduces CPU and memory footprint on low-power devices.
-* **Smart Re-encoding**: Re-encodes clips to low-FPS/optimized resolutions before transmitting them to Gemini to dramatically speed up upload times and reduce API token consumption.
+* **YOLOv8 + ByteTrack**: Real-time person/vehicle detection and multi-object tracking on the edge device.
+* **Platform-optimized inference**: Export to ONNX (Pi), CoreML (Mac), TensorRT (Jetson), or OpenVINO (Intel) for faster FPS — see [edge/README.md](edge/README.md#performance-optimization).
+* **Smart Re-encoding**: Re-encodes clips to low-FPS/optimized resolutions before uploading to Gemini.
+* **Python virtual environment**: Installed via `scripts/setup-venv.sh` — required on Raspberry Pi OS (PEP 668).
 * **Autostart Service (Linux)**:
   Register the edge agent as a systemd background service on system boot:
   ```bash
