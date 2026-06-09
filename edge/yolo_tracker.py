@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import platform
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any
 
 import cv2
 import numpy as np
@@ -141,6 +141,12 @@ class YoloByteTracker:
         self.model = YOLO(self.model_path)
         self._objects_active = False
         self._last_detections: list[Detection] = []
+        
+        # Track states for ReID stabilization
+        self._track_states: dict[int, dict[str, Any]] = {}
+        self.reid_confidence_threshold = float(os.getenv("REID_CONFIDENCE_THRESHOLD", "0.65"))
+        self.reid_min_bbox_size = int(os.getenv("REID_MIN_BBOX_SIZE", "2500"))
+        self.reid_visible_sec = float(os.getenv("REID_VISIBLE_SEC", "1.0"))
 
     def process(
         self,
@@ -148,15 +154,17 @@ class YoloByteTracker:
         *,
         run_inference: bool = True,
         tracking_enabled: bool = True,
-    ) -> tuple[np.ndarray, list[Detection], bool]:
-        """Run detection + tracking, return annotated frame, detections, and new-detection flag."""
+    ) -> tuple[np.ndarray, list[Detection], bool, list[Detection]]:
+        """Run detection + tracking, return annotated frame, detections, new-detection flag, and newly stabilized ReID detections."""
         if not tracking_enabled:
-            return frame, [], False
+            return frame, [], False, []
 
         if not run_inference and self._last_detections:
             detections = list(self._last_detections)
             annotated = draw_detections(frame, detections)
-            return annotated, detections, self._update_detection_state(detections)
+            new_detection = self._update_detection_state(detections)
+            stabilized = self._update_track_states_and_get_stabilized(detections)
+            return annotated, detections, new_detection, stabilized
 
         results = self.model.track(
             frame,
@@ -175,7 +183,53 @@ class YoloByteTracker:
         self._last_detections = detections
         annotated = draw_detections(frame, detections)
         new_detection = self._update_detection_state(detections)
-        return annotated, detections, new_detection
+        stabilized = self._update_track_states_and_get_stabilized(detections)
+        return annotated, detections, new_detection, stabilized
+
+    def _update_track_states_and_get_stabilized(self, detections: list[Detection]) -> list[Detection]:
+        import time
+        now = time.monotonic()
+
+        # Prune inactive tracks (>10 seconds)
+        for tid in list(self._track_states.keys()):
+            if now - self._track_states[tid]["last_seen"] > 10.0:
+                del self._track_states[tid]
+
+        stabilized_targets: list[Detection] = []
+        for d in detections:
+            if d.track_id is None:
+                continue
+            if d.class_name != "person":
+                continue
+
+            tid = d.track_id
+            x1, y1, x2, y2 = d.bbox
+            w = x2 - x1
+            h = y2 - y1
+            area = w * h
+
+            if tid not in self._track_states:
+                self._track_states[tid] = {
+                    "first_seen": now,
+                    "last_seen": now,
+                    "sent_reid": False
+                }
+            else:
+                self._track_states[tid]["last_seen"] = now
+
+            state = self._track_states[tid]
+            visible_duration = now - state["first_seen"]
+
+            if (
+                not state["sent_reid"]
+                and visible_duration >= self.reid_visible_sec
+                and d.confidence >= self.reid_confidence_threshold
+                and area >= self.reid_min_bbox_size
+            ):
+                state["sent_reid"] = True
+                stabilized_targets.append(d)
+
+        return stabilized_targets
 
     def _update_detection_state(self, detections: list[Detection]) -> bool:
         objects_present = len(detections) > 0
@@ -186,6 +240,7 @@ class YoloByteTracker:
     def reset(self):
         self._objects_active = False
         self._last_detections = []
+        self._track_states = {}
 
     def reset_detection_edge(self):
         """Re-arm the new-detection edge after cooldown or clip finalization."""

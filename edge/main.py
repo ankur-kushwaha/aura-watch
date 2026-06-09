@@ -266,6 +266,13 @@ class EdgeAgent:
                 if self.stream_frames:
                     self._send_annotated_frame(frame, settings.jpeg_quality)
 
+            def on_reid(crop_jpeg, track_id, confidence, bbox):
+                threading.Thread(
+                    target=self._upload_reid_crop,
+                    args=(crop_jpeg, track_id, confidence, bbox),
+                    daemon=True,
+                ).start()
+
             def on_detections(detections, new_detection):
                 with self._detection_lock:
                     if detections:
@@ -285,6 +292,7 @@ class EdgeAgent:
                 settings=settings,
                 on_preview_frame=on_preview,
                 on_detections=on_detections,
+                on_reid_crop=on_reid,
                 should_stop=lambda: self.pipeline_stop.is_set() or self.shutdown_event.is_set(),
             )
 
@@ -325,6 +333,26 @@ class EdgeAgent:
             return
         encoded = base64.b64encode(jpeg).decode("ascii")
         self._ws_send({"type": "frame", "image": encoded})
+
+    def _upload_reid_crop(self, crop_jpeg: bytes, track_id: int, confidence: float, bbox: tuple[int, int, int, int]):
+        url = f"{CLOUD_URL.rstrip('/')}/api/devices/{self.device_id}/reid/crop"
+        bbox_str = ",".join(map(str, bbox))
+        headers = {
+            "Content-Type": "image/jpeg",
+            "x-track-id": str(track_id),
+            "x-confidence": f"{confidence:.4f}",
+            "x-bbox": bbox_str,
+            "x-timestamp": str(int(time.time() * 1000)),
+            "x-class-name": "person",
+        }
+        try:
+            response = requests.post(url, data=crop_jpeg, headers=headers, timeout=15)
+            if response.status_code >= 200 and response.status_code < 300:
+                self.send_log(f"Successfully uploaded ReID crop for track {track_id}")
+            else:
+                self.send_log(f"[ReID Error] Upload failed ({response.status_code}): {response.text}")
+        except Exception as exc:
+            self.send_log(f"[ReID Error] Upload exception: {exc}")
 
     def _try_start_clip_recording(self, detection_names: str) -> bool:
         with self._recording_lock:

@@ -16,12 +16,15 @@ export function mongoIdToUuid(mongoId: string): string {
   return `${padded.slice(0, 8)}-${padded.slice(8, 12)}-${padded.slice(12, 16)}-${padded.slice(16, 20)}-${padded.slice(20, 32)}`;
 }
 
+const REID_COLLECTION_NAME = 'reid_embeddings';
+
 export async function initQdrant() {
   try {
     console.log(`Checking Qdrant collections at ${process.env.QDRANT_URL}...`);
     const collections = await qdrant.getCollections();
-    const exists = collections.collections.some(c => c.name === COLLECTION_NAME);
     
+    // Check video_clips
+    const exists = collections.collections.some(c => c.name === COLLECTION_NAME);
     if (!exists) {
       console.log(`Creating Qdrant collection: ${COLLECTION_NAME}`);
       await qdrant.createCollection(COLLECTION_NAME, {
@@ -34,8 +37,23 @@ export async function initQdrant() {
     } else {
       console.log(`Qdrant collection ${COLLECTION_NAME} already exists.`);
     }
+
+    // Check reid_embeddings
+    const reidExists = collections.collections.some(c => c.name === REID_COLLECTION_NAME);
+    if (!reidExists) {
+      console.log(`Creating Qdrant collection: ${REID_COLLECTION_NAME}`);
+      await qdrant.createCollection(REID_COLLECTION_NAME, {
+        vectors: {
+          size: 512, // OSNet dimension
+          distance: 'Cosine',
+        },
+      });
+      console.log(`Collection ${REID_COLLECTION_NAME} created successfully.`);
+    } else {
+      console.log(`Qdrant collection ${REID_COLLECTION_NAME} already exists.`);
+    }
   } catch (error) {
-    console.error('Failed to initialize Qdrant collection:', error);
+    console.error('Failed to initialize Qdrant collections:', error);
   }
 }
 
@@ -224,4 +242,96 @@ export async function fallbackSearchClips(
     return [];
   }
 }
+
+export async function upsertReidVector(mongoId: string, vector: number[], payload: any) {
+  const qdrantId = mongoIdToUuid(mongoId);
+  try {
+    await qdrant.upsert(REID_COLLECTION_NAME, {
+      wait: true,
+      points: [
+        {
+          id: qdrantId,
+          vector: vector,
+          payload: {
+            ...payload,
+            mongoId,
+          },
+        },
+      ],
+    });
+    console.log(`Successfully indexed ReID embedding in Qdrant with ID: ${qdrantId}`);
+  } catch (error) {
+    console.error(`Error indexing ReID embedding ${mongoId} in Qdrant:`, error);
+  }
+}
+
+export async function deleteReidVector(mongoId: string) {
+  const qdrantId = mongoIdToUuid(mongoId);
+  try {
+    await qdrant.delete(REID_COLLECTION_NAME, {
+      points: [qdrantId],
+    });
+    console.log(`Deleted ReID vector from Qdrant: ${qdrantId}`);
+  } catch (error) {
+    console.error(`Error deleting ReID vector from Qdrant:`, error);
+  }
+}
+
+export async function deleteReidVectors(mongoIds: string[]) {
+  if (mongoIds.length === 0) return;
+  const qdrantIds = mongoIds.map(mongoIdToUuid);
+  try {
+    await qdrant.delete(REID_COLLECTION_NAME, {
+      points: qdrantIds,
+    });
+    console.log(`Deleted ${qdrantIds.length} ReID vector(s) from Qdrant`);
+  } catch (error) {
+    console.error(`Error deleting ReID vectors from Qdrant:`, error);
+  }
+}
+
+export async function searchReidVectors(
+  vector: number[],
+  limit = 20,
+  options?: { startTime?: string; endTime?: string; deviceId?: string }
+) {
+  try {
+    const filterConditions: any[] = [];
+
+    if (options?.startTime || options?.endTime) {
+      const rangeCondition: any = {};
+      if (options.startTime) {
+        rangeCondition.gte = options.startTime;
+      }
+      if (options.endTime) {
+        rangeCondition.lte = options.endTime;
+      }
+      filterConditions.push({
+        key: 'timestamp',
+        range: rangeCondition,
+      });
+    }
+
+    if (options?.deviceId) {
+      filterConditions.push({
+        key: 'deviceId',
+        match: {
+          value: options.deviceId,
+        },
+      });
+    }
+
+    const results = await qdrant.search(REID_COLLECTION_NAME, {
+      vector: vector,
+      limit: limit,
+      filter: filterConditions.length > 0 ? { must: filterConditions } : undefined,
+      with_payload: true,
+    });
+    return results;
+  } catch (error) {
+    console.error('Error searching ReID vectors in Qdrant:', error);
+    return [];
+  }
+}
+
 

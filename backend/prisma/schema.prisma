@@ -33,3 +33,24 @@ model EdgeDevice {
   detectVehicle        Boolean  @default(true)
   streamHost           String   @default("")
 }
+
+model ReidDetection {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  deviceId   String
+  cameraName String
+  trackId    Int
+  timestamp  DateTime @default(now())
+  filename   String
+  bbox       String   // "x1,y1,x2,y2"
+  className  String
+}
+
+model TopologyRoute {
+  id               String @id @default(auto()) @map("_id") @db.ObjectId
+  fromCamera       String
+  toCamera         String
+  minTimeSeconds   Float
+  maxTimeSeconds   Float
+  topologyScore    Float  @default(1.0)
+}
+

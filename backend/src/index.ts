@@ -12,6 +12,7 @@ dotenv.config();
 import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, { registerOnConfigUpdated, registerOnClipUploaded, registerOnStreamFileRequest } from './routes/devices';
+import reidRouter, { registerOnReidCropUploaded } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import prisma from './services/db';
@@ -22,10 +23,14 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 5000;
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../storage/videos');
+const CROPS_DIR = path.join(__dirname, '../storage/crops');
 
-// Ensure video storage directory exists
+// Ensure storage directories exist
 if (!fs.existsSync(VIDEO_DIR)) {
   fs.mkdirSync(VIDEO_DIR, { recursive: true });
+}
+if (!fs.existsSync(CROPS_DIR)) {
+  fs.mkdirSync(CROPS_DIR, { recursive: true });
 }
 
 // Middleware
@@ -86,6 +91,8 @@ app.get('/api/videos/:filename', async (req, res) => {
 app.use('/api/clips', clipsRouter);
 app.use('/api/rag', ragRouter);
 app.use('/api/devices', devicesRouter);
+app.use('/api/reid', reidRouter);
+app.use('/api/crops', express.static(CROPS_DIR));
 
 // Serve static frontend files
 const FRONTEND_DIR = path.join(__dirname, '../../frontend/dist');
@@ -153,6 +160,14 @@ registerOnClipDeleted((deviceId, filename) => {
       filename
     }));
   }
+});
+
+registerOnReidCropUploaded((detection) => {
+  console.log(`[ReID Broadcast] Broadcasting crop detection for track ${detection.trackId} on ${detection.deviceId}`);
+  broadcastToSubscribedUIs(detection.deviceId, {
+    type: 'new_reid_crop',
+    detection,
+  });
 });
 
 interface PendingStreamRequest {
@@ -518,6 +533,11 @@ async function shutdown() {
     });
   });
 
+  // Stop ReID worker
+  console.log('[Server] Stopping ReID worker process...');
+  const { reidWorker } = require('./services/reidWorker');
+  reidWorker.stop();
+
   // Disconnect database
   console.log('[Server] Disconnecting from database...');
   await prisma.$disconnect();
@@ -549,6 +569,14 @@ server.listen(PORT, async () => {
   
   // Initialize Qdrant Collection
   await initQdrant();
+
+  // Start persistent ReID worker process
+  try {
+    const { reidWorker } = require('./services/reidWorker');
+    await reidWorker.start();
+  } catch (err) {
+    console.error('Failed to start ReID worker:', err);
+  }
   
   // Set all devices to Offline initially (until they connect and send WS link)
   await prisma.edgeDevice.updateMany({

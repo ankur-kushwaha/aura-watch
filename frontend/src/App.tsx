@@ -16,7 +16,10 @@ import {
   Link2,
   Terminal,
   SlidersHorizontal,
-  LogOut
+  LogOut,
+  Fingerprint,
+  Network,
+  Map
 } from 'lucide-react';
 
 interface VideoClip {
@@ -66,6 +69,26 @@ interface RagResponseClip {
   score: number;
 }
 
+interface ReidDetection {
+  id: string;
+  deviceId: string;
+  cameraName: string;
+  trackId: number;
+  timestamp: string;
+  filename: string;
+  bbox: string;
+  className: string;
+}
+
+interface ReidRoute {
+  id?: string;
+  fromCamera: string;
+  toCamera: string;
+  minTimeSeconds: number;
+  maxTimeSeconds: number;
+  topologyScore: number;
+}
+
 const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 
@@ -77,6 +100,24 @@ function App({ onLogout }: AppProps) {
   // App States
   const [devices, setDevices] = useState<EdgeDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'events' | 'reid'>('events');
+  
+  // ReID States
+  const [reidCrops, setReidCrops] = useState<ReidDetection[]>([]);
+  const [loadingReidCrops, setLoadingReidCrops] = useState<boolean>(false);
+  const [selectedReidCrop, setSelectedReidCrop] = useState<ReidDetection | null>(null);
+  const [reidMatches, setReidMatches] = useState<any[]>([]);
+  const [isReidSearching, setIsReidSearching] = useState<boolean>(false);
+  
+  // Topology States
+  const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
+  const [newRoute, setNewRoute] = useState<ReidRoute>({
+    fromCamera: '',
+    toCamera: '',
+    minTimeSeconds: 5,
+    maxTimeSeconds: 60,
+    topologyScore: 1.0,
+  });
   const selectedDeviceIdRef = useRef(selectedDeviceId);
 
   useEffect(() => {
@@ -229,6 +270,15 @@ function App({ onLogout }: AppProps) {
           setClips((prev) => [data.clip, ...prev]);
           setSelectedClip(data.clip);
           break;
+        case 'new_reid_crop':
+          if (data.detection) {
+            setReidCrops((prev) => {
+              const alreadyExists = prev.some(c => c.id === data.detection.id);
+              if (alreadyExists) return prev;
+              return [data.detection, ...prev];
+            });
+          }
+          break;
         case 'frame':
           if (data.image) {
             setLiveFrame(`data:image/jpeg;base64,${data.image}`);
@@ -320,6 +370,106 @@ function App({ onLogout }: AppProps) {
       }
     };
   }, [connectWS]);
+
+  const fetchReidCrops = useCallback(async () => {
+    setLoadingReidCrops(true);
+    try {
+      const res = await fetch(`${API_BASE}/reid/detections`);
+      const data = await res.json();
+      setReidCrops(data);
+    } catch (err) {
+      console.error('Failed to fetch ReID crops', err);
+    } finally {
+      setLoadingReidCrops(false);
+    }
+  }, []);
+
+  const fetchTopology = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/reid/topology`);
+      const data = await res.json();
+      setTopologyRoutes(data);
+    } catch (err) {
+      console.error('Failed to fetch topology routes', err);
+    }
+  }, []);
+
+  const handleReidTrack = async (detection: ReidDetection) => {
+    setSelectedReidCrop(detection);
+    setIsReidSearching(true);
+    setReidMatches([]);
+    try {
+      const res = await fetch(`${API_BASE}/reid/track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detectionId: detection.id }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(`Search error: ${data.error}`);
+      } else {
+        setReidMatches(data.matches || []);
+      }
+    } catch (err: any) {
+      console.error('ReID search failed', err);
+      alert(`ReID search failed: ${err.message}`);
+    } finally {
+      setIsReidSearching(false);
+    }
+  };
+
+  const handleAddTopology = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRoute.fromCamera || !newRoute.toCamera) {
+      alert('Select both source and target cameras.');
+      return;
+    }
+    if (newRoute.fromCamera === newRoute.toCamera) {
+      alert('Source and target cameras must be different.');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/reid/topology`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRoute),
+      });
+      if (res.ok) {
+        fetchTopology();
+        setNewRoute(prev => ({
+          ...prev,
+          fromCamera: '',
+          toCamera: '',
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to save topology route', err);
+    }
+  };
+
+  const handleDeleteReidDetection = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this face crop?')) return;
+    try {
+      const res = await fetch(`${API_BASE}/reid/detections/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setReidCrops(prev => prev.filter(c => c.id !== id));
+        if (selectedReidCrop?.id === id) {
+          setSelectedReidCrop(null);
+          setReidMatches([]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete ReID detection', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'reid') {
+      fetchReidCrops();
+      fetchTopology();
+    }
+  }, [activeTab, fetchReidCrops, fetchTopology]);
 
   // useEffect(() => {
   //   if (chatContainerRef.current) {
@@ -619,6 +769,30 @@ function App({ onLogout }: AppProps) {
         </div>
       </header>
 
+      {/* NAVIGATION TABS */}
+      <div className="flex gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-fit">
+        <button
+          onClick={() => setActiveTab('events')}
+          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${
+            activeTab === 'events'
+              ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+              : 'text-text-secondary hover:text-text-primary bg-transparent'
+          }`}
+        >
+          <Video size={16} /> Archive & AI Analyst
+        </button>
+        <button
+          onClick={() => setActiveTab('reid')}
+          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${
+            activeTab === 'reid'
+              ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+              : 'text-text-secondary hover:text-text-primary bg-transparent'
+          }`}
+        >
+          <Fingerprint size={16} /> Cross-Camera ReID Tracker
+        </button>
+      </div>
+
       {/* DASHBOARD LAYOUT */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
@@ -893,298 +1067,587 @@ function App({ onLogout }: AppProps) {
 
         {/* RIGHT COLUMN: CLIPS PLAYBACK & AI CHAT */}
         <div className="lg:col-span-8 flex flex-col gap-6">
-
-          {/* EVENT ARCHIVE & PLAYBACK PANEL */}
-          <div className="glass-panel p-5 flex flex-col h-[480px]">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-[1.1rem] flex items-center gap-2">
-                <Video size={18} color="var(--color-primary)" /> Event Archive & Playback
-              </h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleDeleteAllClips}
-                  className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md hover:text-danger"
-                  disabled={loadingClips || deletingAllClips || clips.length === 0}
-                >
-                  <Trash2 size={12} /> Delete All
-                </button>
-                <button
-                  onClick={fetchClips}
-                  className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
-                  disabled={loadingClips || deletingAllClips}
-                >
-                  <RefreshCw size={12} className={loadingClips ? 'animate-spin' : ''} /> Refresh
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0 lg:overflow-hidden">
-              {/* Left pane: Clips History List */}
-              <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2.5 overflow-y-auto min-w-0 pr-1 lg:h-full">
-                {clips.length === 0 ? (
-                  <div className="h-full flex justify-center items-center text-text-muted text-[0.85rem]">
-                    No clips recorded yet.
-                  </div>
-                ) : (
-                  clips.map((c) => (
-                    <div
-                      key={c.id}
-                      onClick={() => setSelectedClip(c)}
-                      className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-center cursor-pointer transition-all duration-200 w-full min-w-0`}
+          {activeTab === 'events' ? (
+            <>
+              {/* EVENT ARCHIVE & PLAYBACK PANEL */}
+              <div className="glass-panel p-5 flex flex-col h-[480px]">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-[1.1rem] flex items-center gap-2">
+                    <Video size={18} color="var(--color-primary)" /> Event Archive & Playback
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleDeleteAllClips}
+                      className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md hover:text-danger"
+                      disabled={loadingClips || deletingAllClips || clips.length === 0}
                     >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0">
-                          <Play size={16} fill="currentColor" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex justify-between items-center mb-0.5">
-                            <span className="text-[0.85rem] font-semibold text-text-primary">{c.camera}</span>
-                            <span className="text-[0.7rem] text-text-muted">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          </div>
-                          <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
-                            {c.summary}
-                          </p>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={(e) => handleDeleteClip(c.id, e)}
-                        className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {/* Vertical Divider */}
-              <div className="hidden lg:block w-[1px] bg-[rgba(255,255,255,0.08)] self-stretch" />
-
-              {/* Right pane: Clip Viewer */}
-              <div className="flex-1 flex flex-col min-w-0 overflow-y-auto pr-1 lg:h-full">
-                {selectedClip ? (
-                  <div className="flex flex-col gap-3">
-                    <div className="bg-[#000] rounded-xl overflow-hidden h-[220px] border border-[rgba(255,255,255,0.08)] shrink-0">
-                      <video
-                        key={selectedClip.id}
-                        src={`${API_BASE}/videos/${selectedClip.filename}`}
-                        controls
-                        autoPlay
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1.5 flex-wrap gap-1">
-                        <h3 className="text-[0.85rem] font-semibold break-all text-text-primary">{selectedClip.filename}</h3>
-                        <span className="text-[0.7rem] text-text-muted flex items-center gap-1 whitespace-nowrap">
-                          <Clock size={12} /> {formatDate(selectedClip.timestamp)}
-                        </span>
-                      </div>
-                      <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
-                        <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
-                          <Sparkles size={12} />Video Summary
-                        </p>
-                        <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{selectedClip.summary}</p>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="h-full flex flex-col justify-center items-center border border-dashed border-border-glass rounded-xl text-text-muted p-5 text-center">
-                    <Video size={32} className="text-text-muted mb-2.5 mx-auto" />
-                    <p className="text-[0.85rem] font-semibold">No Event Selected</p>
-                    <p className="text-[0.75rem] mt-1 max-w-[220px] mx-auto">Select a clip from the history list to play and view the AI summary.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* AI ANALYST PANEL (RAG CHAT) */}
-          <div className="glass-panel p-5 flex flex-col h-[480px]">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-[1.1rem] flex items-center gap-2">
-                <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
-              </h2>
-              <button
-                type="button"
-                onClick={() => setShowFilters(!showFilters)}
-                className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
-                  showFilters || filterStartTime || filterEndTime || filterDeviceId
-                    ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
-                    : ''
-                }`}
-              >
-                <SlidersHorizontal size={12} />
-                Search Filters
-                {(filterStartTime || filterEndTime || filterDeviceId) && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
-                )}
-              </button>
-            </div>
-
-            {/* Collapsible Filter Inputs */}
-            {showFilters && (
-              <div className="glass-panel p-3.5 mb-3.5 bg-[rgba(255,255,255,0.01)] border-[rgba(255,255,255,0.08)] rounded-[10px] flex flex-col gap-3">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[0.7rem] text-text-secondary">Target Camera</label>
-                    <select
-                      value={filterDeviceId}
-                      onChange={(e) => setFilterDeviceId(e.target.value)}
-                      className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                      <Trash2 size={12} /> Delete All
+                    </button>
+                    <button
+                      onClick={fetchClips}
+                      className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
+                      disabled={loadingClips || deletingAllClips}
                     >
-                      <option value="">All Cameras</option>
-                      {devices.map((d) => (
-                        <option key={d.deviceId} value={d.deviceId}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[0.7rem] text-text-secondary">Start Time</label>
-                    <input
-                      type="datetime-local"
-                      value={filterStartTime}
-                      onChange={(e) => setFilterStartTime(e.target.value)}
-                      className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[0.7rem] text-text-secondary">End Time</label>
-                    <input
-                      type="datetime-local"
-                      value={filterEndTime}
-                      onChange={(e) => setFilterEndTime(e.target.value)}
-                      className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
-                    />
+                      <RefreshCw size={12} className={loadingClips ? 'animate-spin' : ''} /> Refresh
+                    </button>
                   </div>
                 </div>
-                {(filterStartTime || filterEndTime || filterDeviceId) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFilterStartTime('');
-                      setFilterEndTime('');
-                      setFilterDeviceId('');
-                    }}
-                    className="btn btn-secondary py-1 px-2 text-[0.7rem] self-end rounded flex items-center gap-1 hover:text-danger hover:border-danger bg-transparent font-semibold border-none"
-                  >
-                    Clear Filters
-                  </button>
-                )}
-              </div>
-            )}
 
-            {/* Chat message space */}
-            <div
-              ref={chatContainerRef}
-              className="flex-1 overflow-y-auto flex flex-col gap-3 pr-1 mb-3.5 border-b border-[rgba(255,255,255,0.05)]"
-            >
-              {chatHistory.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-text-muted text-center p-5">
-                  <HelpCircle size={32} className="text-text-muted mb-2.5 mx-auto" />
-                  <p className="text-[0.85rem] font-semibold">No active session query.</p>
-                  <p className="text-[0.75rem] max-w-[300px] mt-1">Ask questions about video events, e.g.: "Has anyone walked past in a red shirt?" or "What activity was recorded on my camera?"</p>
-                </div>
-              ) : (
-                chatHistory.map((chat, idx) => (
-                  <div key={idx} className={`flex flex-col max-w-[85%] ${chat.role === 'user' ? 'self-end' : 'self-start'}`}>
-                    <div className={`p-2.5 px-3.5 rounded-xl text-[0.85rem] leading-[1.4] ${chat.role === 'user'
-                      ? 'bg-gradient-to-br from-primary to-[#6d28d9] text-white shadow-[0_4px_10px_rgba(124,58,237,0.15)] border-none'
-                      : 'bg-[rgba(255,255,255,0.04)] border border-border-glass text-text-primary'
-                      }`}>
-                      {chat.content}
-                    </div>
-
-                    {/* Cited references when assistant responds */}
-                    {chat.role === 'assistant' && chat.clips && chat.clips.length > 0 && (
-                      <div className="mt-2 w-full flex flex-col gap-1.5">
-                        <div className="flex items-center gap-1.5 text-[0.75rem] text-text-muted">
-                          <Video size={12} color="var(--color-primary)" />
-                          <span>Cited Video Footage:</span>
-                        </div>
-                        <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
-                          {chat.clips.map((c, cIdx) => {
-                            const filename = c.filename || c.filepath.split(/[/\\]/).pop() || '';
-                            const videoUrl = `${API_BASE}/videos/${filename}`;
-                            const matchPercentage = c.score ? Math.round(c.score * 100) : null;
-
-                            return (
-                              <div
-                                key={cIdx}
-                                className="glass-panel shrink-0 w-[200px] p-2 rounded-[10px] border border-[rgba(255,255,255,0.06)] bg-[rgba(15,23,42,0.6)]"
-                              >
-                                <div className="w-full h-[112px] bg-[#020617] rounded-md overflow-hidden relative border border-[rgba(255,255,255,0.05)] mb-1.5">
-                                  <video
-                                    src={videoUrl}
-                                    controls
-                                    preload="metadata"
-                                    className="w-full h-full object-contain"
-                                  />
-                                </div>
-
-                                <div className="flex flex-col gap-0.5">
-                                  <div className="flex justify-between items-center">
-                                    <span
-                                      title={c.camera}
-                                      className="text-[0.75rem] font-semibold text-text-primary overflow-hidden text-ellipsis whitespace-nowrap max-w-[110px]"
-                                    >
-                                      {c.camera}
-                                    </span>
-                                    <span className="text-[0.65rem] text-text-muted">
-                                      {new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                                    </span>
-                                  </div>
-
-                                  <div className="flex justify-between items-center mt-0.5">
-                                    {matchPercentage !== null && (
-                                      <span className="text-[0.65rem] text-secondary bg-[rgba(6,182,212,0.1)] py-0.5 px-1.5 rounded font-semibold">
-                                        {matchPercentage}% Match
-                                      </span>
-                                    )}
-                                    <button
-                                      onClick={() => selectAndPlayClip(c.id)}
-                                      className="btn btn-secondary py-0.5 px-2 text-[0.65rem] h-[20px] rounded flex items-center gap-0.5 bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.08)]"
-                                    >
-                                      <Link2 size={10} /> View
-                                    </button>
-                                  </div>
-                                </div>
+                <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0 lg:overflow-hidden">
+                  {/* Left pane: Clips History List */}
+                  <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2.5 overflow-y-auto min-w-0 pr-1 lg:h-full">
+                    {clips.length === 0 ? (
+                      <div className="h-full flex justify-center items-center text-text-muted text-[0.85rem]">
+                        No clips recorded yet.
+                      </div>
+                    ) : (
+                      clips.map((c) => (
+                        <div
+                          key={c.id}
+                          onClick={() => setSelectedClip(c)}
+                          className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-center cursor-pointer transition-all duration-200 w-full min-w-0`}
+                        >
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0">
+                              <Play size={16} fill="currentColor" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex justify-between items-center mb-0.5">
+                                <span className="text-[0.85rem] font-semibold text-text-primary">{c.camera}</span>
+                                <span className="text-[0.7rem] text-text-muted">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                               </div>
-                            );
-                          })}
+                              <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
+                                {c.summary}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={(e) => handleDeleteClip(c.id, e)}
+                            className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Vertical Divider */}
+                  <div className="hidden lg:block w-[1px] bg-[rgba(255,255,255,0.08)] self-stretch" />
+
+                  {/* Right pane: Clip Viewer */}
+                  <div className="flex-1 flex flex-col min-w-0 overflow-y-auto pr-1 lg:h-full">
+                    {selectedClip ? (
+                      <div className="flex flex-col gap-3">
+                        <div className="bg-[#000] rounded-xl overflow-hidden h-[220px] border border-[rgba(255,255,255,0.08)] shrink-0">
+                          <video
+                            key={selectedClip.id}
+                            src={`${API_BASE}/videos/${selectedClip.filename}`}
+                            controls
+                            autoPlay
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-1.5 flex-wrap gap-1">
+                            <h3 className="text-[0.85rem] font-semibold break-all text-text-primary">{selectedClip.filename}</h3>
+                            <span className="text-[0.7rem] text-text-muted flex items-center gap-1 whitespace-nowrap">
+                              <Clock size={12} /> {formatDate(selectedClip.timestamp)}
+                            </span>
+                          </div>
+                          <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
+                            <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
+                              <Sparkles size={12} />Video Summary
+                            </p>
+                            <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{selectedClip.summary}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="h-full flex flex-col justify-center items-center border border-dashed border-border-glass rounded-xl text-text-muted p-5 text-center">
+                        <Video size={32} className="text-text-muted mb-2.5 mx-auto" />
+                        <p className="text-[0.85rem] font-semibold">No Event Selected</p>
+                        <p className="text-[0.75rem] mt-1 max-w-[220px] mx-auto">Select a clip from the history list to play and view the AI summary.</p>
                       </div>
                     )}
                   </div>
-                ))
-              )}
-              {isAsking && (
-                <div className="self-start bg-[rgba(255,255,255,0.04)] border border-border-glass p-2.5 px-3.5 rounded-xl text-[0.85rem] flex items-center gap-2">
-                  <RefreshCw size={12} className="animate-spin" /> Searching vectors and answering...
                 </div>
-              )}
+              </div>
+
+              {/* AI ANALYST PANEL (RAG CHAT) */}
+              <div className="glass-panel p-5 flex flex-col h-[480px]">
+                <div className="flex justify-between items-center mb-3">
+                  <h2 className="text-[1.1rem] flex items-center gap-2">
+                    <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setShowFilters(!showFilters)}
+                    className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
+                      showFilters || filterStartTime || filterEndTime || filterDeviceId
+                        ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
+                        : ''
+                    }`}
+                  >
+                    <SlidersHorizontal size={12} />
+                    Search Filters
+                    {(filterStartTime || filterEndTime || filterDeviceId) && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
+                    )}
+                  </button>
+                </div>
+
+                {/* Collapsible Filter Inputs */}
+                {showFilters && (
+                  <div className="glass-panel p-3.5 mb-3.5 bg-[rgba(255,255,255,0.01)] border-[rgba(255,255,255,0.08)] rounded-[10px] flex flex-col gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">Target Camera</label>
+                        <select
+                          value={filterDeviceId}
+                          onChange={(e) => setFilterDeviceId(e.target.value)}
+                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                        >
+                          <option value="">All Cameras</option>
+                          {devices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">Start Time</label>
+                        <input
+                          type="datetime-local"
+                          value={filterStartTime}
+                          onChange={(e) => setFilterStartTime(e.target.value)}
+                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">End Time</label>
+                        <input
+                          type="datetime-local"
+                          value={filterEndTime}
+                          onChange={(e) => setFilterEndTime(e.target.value)}
+                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                        />
+                      </div>
+                    </div>
+                    {(filterStartTime || filterEndTime || filterDeviceId) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFilterStartTime('');
+                          setFilterEndTime('');
+                          setFilterDeviceId('');
+                        }}
+                        className="btn btn-secondary py-1 px-2 text-[0.7rem] self-end rounded flex items-center gap-1 hover:text-danger hover:border-danger bg-transparent font-semibold border-none"
+                      >
+                        Clear Filters
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Chat message space */}
+                <div
+                  ref={chatContainerRef}
+                  className="flex-1 overflow-y-auto flex flex-col gap-3 pr-1 mb-3.5 border-b border-[rgba(255,255,255,0.05)]"
+                >
+                  {chatHistory.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-text-muted text-center p-5">
+                      <HelpCircle size={32} className="text-text-muted mb-2.5 mx-auto" />
+                      <p className="text-[0.85rem] font-semibold">No active session query.</p>
+                      <p className="text-[0.75rem] max-w-[300px] mt-1">Ask questions about video events, e.g.: "Has anyone walked past in a red shirt?" or "What activity was recorded on my camera?"</p>
+                    </div>
+                  ) : (
+                    chatHistory.map((chat, idx) => (
+                      <div key={idx} className={`flex flex-col max-w-[85%] ${chat.role === 'user' ? 'self-end' : 'self-start'}`}>
+                        <div className={`p-2.5 px-3.5 rounded-xl text-[0.85rem] leading-[1.4] ${chat.role === 'user'
+                          ? 'bg-gradient-to-br from-primary to-[#6d28d9] text-white shadow-[0_4px_10px_rgba(124,58,237,0.15)] border-none'
+                          : 'bg-[rgba(255,255,255,0.04)] border border-border-glass text-text-primary'
+                          }`}>
+                          {chat.content}
+                        </div>
+
+                        {/* Cited references when assistant responds */}
+                        {chat.role === 'assistant' && chat.clips && chat.clips.length > 0 && (
+                          <div className="mt-2 w-full flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5 text-[0.75rem] text-text-muted">
+                              <Video size={12} color="var(--color-primary)" />
+                              <span>Cited Video Footage:</span>
+                            </div>
+                            <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
+                              {chat.clips.map((c, cIdx) => {
+                                const filename = c.filename || c.filepath.split(/[/\\]/).pop() || '';
+                                const videoUrl = `${API_BASE}/videos/${filename}`;
+                                const matchPercentage = c.score ? Math.round(c.score * 100) : null;
+
+                                return (
+                                  <div
+                                    key={cIdx}
+                                    className="glass-panel shrink-0 w-[200px] p-2 rounded-[10px] border border-[rgba(255,255,255,0.06)] bg-[rgba(15,23,42,0.6)]"
+                                  >
+                                    <div className="w-full h-[112px] bg-[#020617] rounded-md overflow-hidden relative border border-[rgba(255,255,255,0.05)] mb-1.5">
+                                      <video
+                                        src={videoUrl}
+                                        controls
+                                        preload="metadata"
+                                        className="w-full h-full object-contain"
+                                      />
+                                    </div>
+
+                                    <div className="flex flex-col gap-0.5">
+                                      <div className="flex justify-between items-center">
+                                        <span
+                                          title={c.camera}
+                                          className="text-[0.75rem] font-semibold text-text-primary overflow-hidden text-ellipsis whitespace-nowrap max-w-[110px]"
+                                        >
+                                          {c.camera}
+                                        </span>
+                                        <span className="text-[0.65rem] text-text-muted">
+                                          {new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex justify-between items-center mt-0.5">
+                                        {matchPercentage !== null && (
+                                          <span className="text-[0.65rem] text-secondary bg-[rgba(6,182,212,0.1)] py-0.5 px-1.5 rounded font-semibold">
+                                            {matchPercentage}% Match
+                                          </span>
+                                        )}
+                                        <button
+                                          onClick={() => selectAndPlayClip(c.id)}
+                                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] h-[20px] rounded flex items-center gap-0.5 bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.08)]"
+                                        >
+                                          <Link2 size={10} /> View
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                  {isAsking && (
+                    <div className="self-start bg-[rgba(255,255,255,0.04)] border border-border-glass p-2.5 px-3.5 rounded-xl text-[0.85rem] flex items-center gap-2">
+                      <RefreshCw size={12} className="animate-spin" /> Searching vectors and answering...
+                    </div>
+                  )}
+                </div>
+
+                {/* Question query input */}
+                <form onSubmit={handleAskQuestion} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Ask about your camera recordings..."
+                    className="flex-1"
+                    disabled={isAsking}
+                  />
+                  <button type="submit" className="btn btn-primary py-2.5 px-3.5" disabled={isAsking}>
+                    <Send size={16} />
+                  </button>
+                </form>
+              </div>
+            </>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[984px]">
+              {/* LEFT: Recent Face Crops Gallery */}
+              <div className="glass-panel p-5 flex flex-col h-full">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-[1.1rem] flex items-center gap-2">
+                    <Fingerprint size={18} color="var(--color-primary)" /> Stabilized Person Crops
+                  </h2>
+                  <button
+                    onClick={fetchReidCrops}
+                    className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
+                    disabled={loadingReidCrops}
+                  >
+                    <RefreshCw size={12} className={loadingReidCrops ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-1">
+                  {reidCrops.length === 0 ? (
+                    <div className="h-full flex flex-col justify-center items-center text-text-muted text-[0.85rem] py-12">
+                      <Fingerprint size={32} className="mb-2" />
+                      <span>No stabilized person crops found.</span>
+                      <span className="text-[0.75rem] mt-1 text-center max-w-[240px]">Once a person stands visible for &gt;1s, their crop will appear here.</span>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {reidCrops.map((crop) => {
+                        const isSelected = selectedReidCrop?.id === crop.id;
+                        const imageUrl = `${API_BASE}/crops/${crop.filename}`;
+
+                        return (
+                          <div
+                            key={crop.id}
+                            onClick={() => handleReidTrack(crop)}
+                            className={`glass-panel interactive ${isSelected ? 'active border-primary bg-[rgba(124,58,237,0.1)]' : 'border-border-glass'} p-2 rounded-[10px] cursor-pointer flex flex-col gap-2 relative`}
+                          >
+                            <div className="w-full aspect-square bg-black rounded-lg overflow-hidden border border-[rgba(255,255,255,0.05)] relative">
+                              <img src={imageUrl} alt="Person crop" className="w-full h-full object-cover" />
+                              <div className="absolute bottom-1 right-1 text-[0.65rem] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono">
+                                ID:{crop.trackId}
+                              </div>
+                            </div>
+                            
+                            <div className="flex flex-col min-w-0">
+                              <div className="text-[0.8rem] font-bold text-text-primary truncate">{crop.cameraName}</div>
+                              <div className="text-[0.65rem] text-text-muted truncate">
+                                {new Date(crop.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={(e) => handleDeleteReidDetection(crop.id, e)}
+                              className="absolute top-1 right-1 p-1 bg-black/40 text-text-muted hover:text-danger rounded border-none hover:bg-black/80"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* RIGHT: Timeline Matches & Camera Topology */}
+              <div className="flex flex-col gap-6 h-full">
+                {/* TOP: Journey Timeline */}
+                <div className="glass-panel p-5 flex flex-col h-[580px]">
+                  <h2 className="text-[1.1rem] flex items-center gap-2 mb-4">
+                    <Map size={18} color="var(--color-primary)" /> Cross-Camera Matching Journey
+                  </h2>
+
+                  <div className="flex-1 overflow-y-auto pr-1">
+                    {isReidSearching ? (
+                      <div className="h-full flex flex-col justify-center items-center text-text-muted">
+                        <RefreshCw size={24} className="animate-spin mb-2" />
+                        <span>Computing topology weights and cosine distance...</span>
+                      </div>
+                    ) : selectedReidCrop ? (
+                      <div className="flex flex-col gap-4">
+                        {/* Query Node */}
+                        <div className="bg-[rgba(124,58,237,0.05)] border border-primary/20 rounded-xl p-3.5 flex gap-4 items-center">
+                          <img 
+                            src={`${API_BASE}/crops/${selectedReidCrop.filename}`} 
+                            alt="Query face" 
+                            className="w-14 h-14 rounded-lg object-cover border border-primary/30 bg-black shrink-0" 
+                          />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[0.65rem] text-primary uppercase font-bold tracking-wider">Search Query Target</span>
+                            <h3 className="text-[0.85rem] font-bold text-text-primary break-all">{selectedReidCrop.cameraName}</h3>
+                            <span className="text-[0.7rem] text-text-muted flex items-center gap-1">
+                              <Clock size={12} /> {new Date(selectedReidCrop.timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Connection Timeline path */}
+                        {reidMatches.length === 0 ? (
+                          <div className="text-center text-text-muted text-[0.8rem] py-8 border border-dashed border-border-glass rounded-xl mt-4">
+                            No valid cross-camera matches found matching travel constraints.
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-1 mt-2">
+                            <h4 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-2">Likely Transitions & Timeline</h4>
+                            
+                            <div className="relative border-l-2 border-primary/25 ml-7 pl-6 flex flex-col gap-6">
+                              {reidMatches.map((match) => {
+                                const matchPercentage = Math.round(match.scores.finalScore * 100);
+                                
+                                // Calculate elapsed time from query node
+                                const currentT = new Date(match.timestamp).getTime();
+                                const queryT = new Date(selectedReidCrop.timestamp).getTime();
+                                const diffSec = Math.abs(currentT - queryT) / 1000;
+                                let delayStr = '';
+                                if (diffSec < 60) {
+                                  delayStr = `${Math.round(diffSec)}s`;
+                                } else {
+                                  delayStr = `${Math.floor(diffSec / 60)}m ${Math.round(diffSec % 60)}s`;
+                                }
+
+                                return (
+                                  <div key={match.id} className="relative">
+                                    {/* Bullet point node */}
+                                    <div className="absolute -left-[31px] top-4 bg-primary border-2 border-[#090d16] w-4 h-4 rounded-full flex items-center justify-center shadow-[0_0_8px_rgba(124,58,237,0.6)]" />
+
+                                    <div className="glass-panel p-3.5 flex gap-4 items-center bg-[rgba(255,255,255,0.02)] border-border-glass rounded-xl relative hover:border-primary/30 transition-all duration-200">
+                                      <img 
+                                        src={`${API_BASE}/crops/${match.filename}`} 
+                                        alt="Match face" 
+                                        className="w-12 h-12 rounded-lg object-cover border border-[rgba(255,255,255,0.05)] bg-black shrink-0" 
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex justify-between items-start flex-wrap gap-1 mb-0.5">
+                                          <span className="text-[0.85rem] font-bold text-text-primary">{match.cameraName}</span>
+                                          <span className="text-[0.75rem] font-extrabold text-[#06b6d4] bg-[rgba(6,182,212,0.1)] px-2 py-0.5 rounded whitespace-nowrap">
+                                            {matchPercentage}% Match
+                                          </span>
+                                        </div>
+                                        
+                                        <div className="text-[0.7rem] text-text-muted flex justify-between items-center flex-wrap gap-2">
+                                          <span className="flex items-center gap-1">
+                                            <Clock size={11} /> {new Date(match.timestamp).toLocaleTimeString()}
+                                          </span>
+                                          <span className="text-secondary font-medium">
+                                            {delayStr} diff
+                                          </span>
+                                        </div>
+
+                                        <div className="flex gap-2.5 mt-1.5 flex-wrap text-[0.65rem] text-text-muted">
+                                          <span>Vec: {Math.round(match.scores.vectorSimilarity * 100)}%</span>
+                                          <span>•</span>
+                                          <span>Time: {Math.round(match.scores.timeScore * 100)}%</span>
+                                          <span>•</span>
+                                          <span>Topo: {Math.round(match.scores.topologyScore * 100)}%</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="h-full flex flex-col justify-center items-center text-text-muted text-center p-5">
+                        <Fingerprint size={32} className="mb-2.5 mx-auto" />
+                        <p className="text-[0.85rem] font-semibold font-sans">No Target Selected</p>
+                        <p className="text-[0.75rem] mt-1 max-w-[220px]">Select any stabilized face crop from the gallery on the left to track them across all cameras.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* BOTTOM: Camera Topology Manager */}
+                <div className="glass-panel p-5 flex flex-col h-[380px]">
+                  <h2 className="text-[1.1rem] flex items-center gap-2 mb-3">
+                    <Network size={18} color="var(--color-secondary)" /> Camera Topology Links & Constraints
+                  </h2>
+
+                  <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
+                    {/* Left: Form */}
+                    <form onSubmit={handleAddTopology} className="flex flex-col gap-2.5 md:w-[220px] shrink-0">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">Source Camera</label>
+                        <select
+                          value={newRoute.fromCamera}
+                          onChange={(e) => setNewRoute({ ...newRoute, fromCamera: e.target.value })}
+                          required
+                          className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
+                        >
+                          <option value="">Select Camera</option>
+                          {devices.map((d) => (
+                            <option key={d.deviceId} value={d.name}>{d.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">Target Camera</label>
+                        <select
+                          value={newRoute.toCamera}
+                          onChange={(e) => setNewRoute({ ...newRoute, toCamera: e.target.value })}
+                          required
+                          className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
+                        >
+                          <option value="">Select Camera</option>
+                          {devices.map((d) => (
+                            <option key={d.deviceId} value={d.name}>{d.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[0.7rem] text-text-secondary">Min Sec</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={newRoute.minTimeSeconds}
+                            onChange={(e) => setNewRoute({ ...newRoute, minTimeSeconds: parseFloat(e.target.value) })}
+                            required
+                            className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[0.7rem] text-text-secondary">Max Sec</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={newRoute.maxTimeSeconds}
+                            onChange={(e) => setNewRoute({ ...newRoute, maxTimeSeconds: parseFloat(e.target.value) })}
+                            required
+                            className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">Topology Score (0.1 - 1.0)</label>
+                        <input
+                          type="number"
+                          min="0.1"
+                          max="1.0"
+                          step="0.1"
+                          value={newRoute.topologyScore}
+                          onChange={(e) => setNewRoute({ ...newRoute, topologyScore: parseFloat(e.target.value) })}
+                          required
+                          className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
+                        />
+                      </div>
+
+                      <button type="submit" className="btn btn-primary text-[0.75rem] py-1.5 px-3 rounded mt-1 shadow-none">
+                        Save Link Rule
+                      </button>
+                    </form>
+
+                    {/* Right: List */}
+                    <div className="flex-1 overflow-y-auto pr-1">
+                      {topologyRoutes.length === 0 ? (
+                        <div className="h-full flex justify-center items-center text-text-muted text-[0.8rem] border border-dashed border-border-glass rounded-xl p-4 text-center">
+                          No links configured. Define adjacent cameras and expected travel times on the left.
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          {topologyRoutes.map((r, rIdx) => (
+                            <div key={rIdx} className="glass-panel p-2 px-3 bg-[rgba(255,255,255,0.01)] border-border-glass rounded-lg flex items-center justify-between text-[0.75rem]">
+                              <div className="min-w-0 flex-1">
+                                <div className="font-semibold text-text-primary flex items-center gap-1.5">
+                                  <span>{r.fromCamera}</span>
+                                  <span className="text-text-muted">↔</span>
+                                  <span>{r.toCamera}</span>
+                                </div>
+                                <div className="text-text-secondary mt-0.5 text-[0.7rem]">
+                                  Transition: {r.minTimeSeconds}s - {r.maxTimeSeconds}s • Weight: {r.topologyScore}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-
-            {/* Question query input */}
-            <form onSubmit={handleAskQuestion} className="flex gap-2">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Ask about your camera recordings..."
-                className="flex-1"
-                disabled={isAsking}
-              />
-              <button type="submit" className="btn btn-primary py-2.5 px-3.5" disabled={isAsking}>
-                <Send size={16} />
-              </button>
-            </form>
-          </div>
-
+          )}
         </div>
+
 
       </div>
     </div>

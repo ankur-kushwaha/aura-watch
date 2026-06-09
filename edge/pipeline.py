@@ -28,6 +28,7 @@ class PipelineSettings:
 
 FrameCallback = Callable[[np.ndarray], None]
 DetectionCallback = Callable[[list, bool], None]
+ReidCallback = Callable[[bytes, int, float, tuple[int, int, int, int]], None]
 
 
 class VisionPipeline:
@@ -41,6 +42,7 @@ class VisionPipeline:
         settings: PipelineSettings,
         on_preview_frame: Optional[FrameCallback] = None,
         on_detections: Optional[DetectionCallback] = None,
+        on_reid_crop: Optional[ReidCallback] = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ):
         self.camera = camera
@@ -49,6 +51,7 @@ class VisionPipeline:
         self.settings = settings
         self.on_preview_frame = on_preview_frame
         self.on_detections = on_detections
+        self.on_reid_crop = on_reid_crop
         self.should_stop = should_stop or (lambda: False)
 
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
@@ -84,7 +87,7 @@ class VisionPipeline:
             self._frame_index += 1
             run_inference = self._frame_index % max(self.settings.detect_interval, 1) == 0
 
-            annotated, detections, new_detection = self.tracker.process(
+            annotated, detections, new_detection, stabilized = self.tracker.process(
                 frame,
                 run_inference=run_inference,
                 tracking_enabled=self.settings.tracking_enabled,
@@ -92,6 +95,19 @@ class VisionPipeline:
 
             if self.on_detections:
                 self.on_detections(detections, new_detection)
+
+            if self.on_reid_crop and stabilized:
+                h_f, w_f = frame.shape[:2]
+                for d in stabilized:
+                    x1 = max(0, min(d.bbox[0], w_f - 1))
+                    y1 = max(0, min(d.bbox[1], h_f - 1))
+                    x2 = max(0, min(d.bbox[2], w_f))
+                    y2 = max(0, min(d.bbox[3], h_f))
+                    if x2 > x1 and y2 > y1:
+                        crop = frame[y1:y2, x1:x2]
+                        ok, jpeg_buf = cv2.imencode(".jpg", crop)
+                        if ok:
+                            self.on_reid_crop(jpeg_buf.tobytes(), d.track_id, d.confidence, d.bbox)
 
             self.encoder.write_frame(annotated)
 
