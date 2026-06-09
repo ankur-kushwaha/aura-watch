@@ -36,8 +36,18 @@ from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_na
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-CLOUD_URL = os.getenv("CLOUD_URL", "https://aura-watch.adboardtools.com")
-CLOUD_WS_URL = os.getenv("CLOUD_WS_URL", "wss://aura-watch.adboardtools.com")
+
+def derive_ws_url(http_url: str) -> str:
+    url = http_url.rstrip("/")
+    if url.startswith("https://"):
+        return "wss://" + url[len("https://") :]
+    if url.startswith("http://"):
+        return "ws://" + url[len("http://") :]
+    return "wss://aura-watch.adboardtools.com"
+
+
+CLOUD_URL = os.getenv("CLOUD_URL", "https://aura-watch.adboardtools.com").rstrip("/")
+CLOUD_WS_URL = derive_ws_url(CLOUD_URL)
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Office Edge Device")
 LOCAL_VIDEO_DIR = os.getenv("LOCAL_VIDEO_DIR", os.path.join(BASE_DIR, "storage", "temp_clips"))
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")

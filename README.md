@@ -152,8 +152,7 @@ cp .env.example .env
 ```
 
 Open `edge/.env` and customize:
-* `CLOUD_URL`: API URL of the Cloud Hub (default `http://localhost:5000`).
-* `CLOUD_WS_URL`: WebSocket URL of the Cloud Hub (default `ws://localhost:5000`).
+* `CLOUD_URL`: API URL of the Cloud Hub (default `https://aura-watch.adboardtools.com`). WebSocket URL is derived automatically.
 * `DEVICE_NAME`: Display name of this camera (e.g. "Living Room Cam").
 * *Optional FPS/Resolution adjustments to optimize Gemini bandwidth limits.*
 

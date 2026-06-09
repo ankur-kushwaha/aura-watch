@@ -29,7 +29,7 @@ Verify with: `python3 --version` (must show 3.10 or newer).
 ### Method A: Single-Line Interactive Installer (Recommended)
 You can download, configure, start, and register the agent in a single command. When copied from the dashboard UI, the Cloud Hub URL is pre-filled automatically:
 ```bash
-CLOUD_URL='https://your-hub.example.com' CLOUD_WS_URL='wss://your-hub.example.com' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
+CLOUD_URL='https://your-hub.example.com' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
 ```
 
 Or run interactively (you will be prompted for the Cloud Hub URL):
@@ -54,8 +54,7 @@ cp .env.example .env
 ```
 
 Set the following options in your `.env`:
-* `CLOUD_URL`: The HTTP URL of your Cloud Hub backend (e.g. `http://192.168.1.100:5000` or public cloud domain).
-* `CLOUD_WS_URL`: The WebSocket URL of your Cloud Hub backend (e.g. `ws://192.168.1.100:5000` or public cloud WS domain).
+* `CLOUD_URL`: The HTTP URL of your Cloud Hub backend (e.g. `https://aura-watch.adboardtools.com` or `http://192.168.1.100:5000`). WebSocket URL is derived automatically (`https` → `wss`, `http` → `ws`).
 * `DEVICE_NAME`: A descriptive name for this specific edge camera device (e.g., "Front Door", "Warehouse Jetson").
 
 ## Running the Agent

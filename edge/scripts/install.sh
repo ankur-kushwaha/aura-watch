@@ -147,15 +147,6 @@ sys.exit(0 if sys.version_info >= (3, 10) else 1)
 PY
 }
 
-derive_ws_url() {
-    http_url=$1
-    case "$http_url" in
-        https://*) echo "${http_url#https://}" | sed 's|^|wss://|' ;;
-        http://*)  echo "${http_url#http://}"  | sed 's|^|ws://|' ;;
-        *)         echo "ws://localhost:5000" ;;
-    esac
-}
-
 start_agent_background() {
     edge_dir=$1
     python_cmd=$2
@@ -263,7 +254,7 @@ echo ""
 echo "⚙️  Configuring your Edge Agent..."
 echo "----------------------------------"
 
-DEFAULT_CLOUD_URL="${CLOUD_URL:-http://localhost:5000}"
+DEFAULT_CLOUD_URL="${CLOUD_URL:-https://aura-watch.adboardtools.com}"
 if [ "$NONINTERACTIVE" = true ]; then
     CLOUD_URL="$DEFAULT_CLOUD_URL"
     echo "   Cloud Hub HTTP URL: $CLOUD_URL"
@@ -271,17 +262,6 @@ else
     read -r -p "Cloud Hub HTTP URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL_INPUT </dev/tty
     CLOUD_URL=${CLOUD_URL_INPUT:-$DEFAULT_CLOUD_URL}
 fi
-
-if [ -n "${CLOUD_WS_URL:-}" ]; then
-    :
-elif [ "$NONINTERACTIVE" = true ]; then
-    CLOUD_WS_URL=$(derive_ws_url "$CLOUD_URL")
-else
-    DEFAULT_CLOUD_WS_URL=$(derive_ws_url "$CLOUD_URL")
-    read -r -p "Cloud Hub WebSocket URL [$DEFAULT_CLOUD_WS_URL]: " CLOUD_WS_URL_INPUT </dev/tty
-    CLOUD_WS_URL=${CLOUD_WS_URL_INPUT:-$DEFAULT_CLOUD_WS_URL}
-fi
-echo "   Cloud Hub WebSocket URL: $CLOUD_WS_URL"
 
 HOST_LABEL=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo "Edge Device")
 DEFAULT_DEVICE_NAME="${DEVICE_NAME:-$HOST_LABEL}"
@@ -296,7 +276,6 @@ fi
 # Create .env config file
 cat <<EOT > .env
 CLOUD_URL=$CLOUD_URL
-CLOUD_WS_URL=$CLOUD_WS_URL
 DEVICE_NAME="$DEVICE_NAME"
 LOCAL_VIDEO_DIR=./storage/temp_clips
 

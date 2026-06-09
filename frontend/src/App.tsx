@@ -113,7 +113,7 @@ const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location
 const HUB_HTTP = import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
 
 function buildInstallCmd() {
-  return `CLOUD_URL='${HUB_HTTP}' CLOUD_WS_URL='${WS_BASE}' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
+  return `CLOUD_URL='${HUB_HTTP}' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
 }
 
 function DeviceInstallTooltip() {
