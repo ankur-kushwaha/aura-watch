@@ -22,7 +22,10 @@ import {
   Network,
   Map,
   Plus,
-  X
+  X,
+  Info,
+  Copy,
+  Check
 } from 'lucide-react';
 
 interface VideoClip {
@@ -107,6 +110,140 @@ interface ReidRoute {
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+
+const INSTALL_CMD = `sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
+
+function DeviceInstallTooltip() {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(INSTALL_CMD).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="How to add a new device"
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: '2px',
+          cursor: 'pointer',
+          color: 'var(--color-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          transition: 'color 0.2s',
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-primary)')}
+        onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-text-muted)')}
+      >
+        <Info size={15} />
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 10px)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 999,
+            width: '340px',
+            background: 'rgba(15, 17, 26, 0.97)',
+            border: '1px solid rgba(124, 58, 237, 0.35)',
+            borderRadius: '12px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(124,58,237,0.15)',
+            backdropFilter: 'blur(16px)',
+            padding: '14px 16px',
+          }}
+        >
+          {/* Arrow */}
+          <div style={{
+            position: 'absolute',
+            top: '-6px',
+            left: '50%',
+            transform: 'translateX(-50%) rotate(45deg)',
+            width: '10px',
+            height: '10px',
+            background: 'rgba(15, 17, 26, 0.97)',
+            border: '1px solid rgba(124, 58, 237, 0.35)',
+            borderRight: 'none',
+            borderBottom: 'none',
+          }} />
+
+          <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '6px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            ➕ Add a New Edge Device
+          </p>
+          <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '10px', lineHeight: 1.5 }}>
+            Run this command on the target device (Linux / macOS) to install and register the edge agent:
+          </p>
+
+          <div style={{
+            background: 'rgba(0,0,0,0.5)',
+            borderRadius: '8px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            padding: '10px 12px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '8px',
+          }}>
+            <code style={{
+              flex: 1,
+              fontSize: '0.68rem',
+              color: '#38bdf8',
+              fontFamily: 'monospace',
+              wordBreak: 'break-all',
+              lineHeight: 1.6,
+            }}>
+              {INSTALL_CMD}
+            </code>
+            <button
+              type="button"
+              onClick={handleCopy}
+              title="Copy command"
+              style={{
+                background: copied ? 'rgba(16,185,129,0.15)' : 'rgba(124,58,237,0.15)',
+                border: `1px solid ${copied ? 'rgba(16,185,129,0.4)' : 'rgba(124,58,237,0.4)'}`,
+                borderRadius: '6px',
+                padding: '4px 6px',
+                cursor: 'pointer',
+                color: copied ? '#10b981' : 'var(--color-primary)',
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                transition: 'all 0.2s',
+              }}
+            >
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
+          </div>
+
+          <p style={{ fontSize: '0.67rem', color: 'var(--color-text-muted)', marginTop: '8px', lineHeight: 1.4 }}>
+            The agent will auto-register with this dashboard and appear in the list above.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface AppProps {
   onLogout: () => void;
@@ -921,6 +1058,7 @@ function App({ onLogout }: AppProps) {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Cpu size={18} color="var(--color-primary)" /> Registered Edge Devices
+                <DeviceInstallTooltip />
               </h2>
               <button
                 onClick={() => fetchDevices()}
