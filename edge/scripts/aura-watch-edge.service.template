@@ -9,7 +9,6 @@ WorkingDirectory=__DIR__
 ExecStart=__PYTHON__ __DIR__/main.py
 Restart=on-failure
 RestartSec=10
-Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target

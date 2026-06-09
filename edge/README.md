@@ -64,9 +64,9 @@ To run the agent in the foreground:
 python3 main.py
 ```
 
-Or via npm script:
+From the monorepo root (requires Node.js only for the npm wrapper):
 ```bash
-npm run dev
+npm run edge
 ```
 
 ## Running on Boot (Linux Systemd)

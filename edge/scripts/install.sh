@@ -59,24 +59,6 @@ echo ""
 # 1. Prerequisites Check
 echo "🔍 Checking system prerequisites..."
 
-# Node.js
-if check_command node; then
-    NODE_VERSION=$(node -v)
-    echo "  ✅ Node.js: Installed ($NODE_VERSION)"
-else
-    echo "  ❌ Node.js: Not installed. Please install Node.js (version 18+) first."
-    exit 1
-fi
-
-# NPM
-if check_command npm; then
-    NPM_VERSION=$(npm -v)
-    echo "  ✅ npm: Installed ($NPM_VERSION)"
-else
-    echo "  ❌ npm: Not installed."
-    exit 1
-fi
-
 # Python 3
 PYTHON_CMD=""
 if PYTHON_CMD=$(resolve_python); then
@@ -241,12 +223,7 @@ echo "$DEVICE_ID" > .device-id
 echo "   ✅ Saved Device ID to $INSTALL_DIR/edge/.device-id"
 echo ""
 
-# 5. Build and Installation
-echo "📦 Installing npm dependencies..."
-npm install --omit=dev
-echo "   ✅ npm dependencies installed."
-echo ""
-
+# 5. Install Python dependencies
 echo "🐍 Installing Python dependencies..."
 "$PYTHON_CMD" -m pip install -r requirements.txt
 echo "   ✅ Python dependencies installed."
