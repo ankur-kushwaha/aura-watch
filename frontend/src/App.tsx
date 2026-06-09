@@ -27,7 +27,8 @@ import {
   Check,
   Power,
   RotateCcw,
-  ScrollText
+  ScrollText,
+  Download
 } from 'lucide-react';
 
 interface VideoClip {
@@ -826,6 +827,37 @@ function App({ onLogout }: AppProps) {
     }
   };
 
+  const handleUpdateService = async (deviceId: string, deviceName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (
+      !confirm(
+        `Pull latest code and update aura-watch-edge on "${deviceName}"?\n\nThis runs git pull, updates dependencies, and restarts the service. It may take several minutes.`
+      )
+    ) {
+      return;
+    }
+
+    setDeviceCommandPending(`${deviceId}:update`);
+    try {
+      const res = await fetch(`${API_BASE}/devices/${deviceId}/command/update-service`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = data.output ? `\n\n${data.output}` : '';
+        alert((data.error || 'Failed to update service') + detail);
+      } else {
+        const detail = data.output ? `\n\n${data.output}` : '';
+        alert((data.message || 'Update complete') + detail);
+      }
+    } catch (err) {
+      console.error('Failed to update service', err);
+      alert('Failed to update service');
+    } finally {
+      setDeviceCommandPending(null);
+    }
+  };
+
   const fetchJournalLogs = useCallback(async (deviceId: string) => {
     setLoadingJournalLogs(true);
     try {
@@ -1154,6 +1186,15 @@ function App({ onLogout }: AppProps) {
                         >
                           <RotateCcw size={11} />
                           {deviceCommandPending === `${dev.deviceId}:restart` ? 'Restarting...' : 'Restart Service'}
+                        </button>
+                        <button
+                          onClick={(e) => handleUpdateService(dev.deviceId, dev.name, e)}
+                          disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:update`}
+                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
+                          title="Pull latest code from git and update service"
+                        >
+                          <Download size={11} />
+                          {deviceCommandPending === `${dev.deviceId}:update` ? 'Updating...' : 'Update'}
                         </button>
                         <button
                           onClick={(e) => openDeviceLogsModal(dev.deviceId, dev.name, e)}

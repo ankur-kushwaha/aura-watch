@@ -265,6 +265,26 @@ router.post('/:deviceId/command/restart-service', async (req: Request, res: Resp
 });
 
 /**
+ * POST /api/devices/:deviceId/command/update-service
+ * git pull latest code, refresh dependencies, and restart aura-watch-edge
+ */
+router.post('/:deviceId/command/update-service', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  try {
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const result = await sendDeviceCommand(deviceId, 'update_service', {}, 300000);
+    res.json({ message: result.message || 'Update complete', ...result });
+  } catch (error: any) {
+    const status = error.message === 'Device is offline' ? 503 : 500;
+    res.status(status).json({ error: error.message || 'Failed to update edge service' });
+  }
+});
+
+/**
  * GET /api/devices/:deviceId/logs
  * Fetch recent journalctl logs from the edge device's aura-watch-edge service
  */

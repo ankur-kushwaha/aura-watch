@@ -581,6 +581,105 @@ class EdgeAgent:
             if p_data_curr and not p_data_curr["stop_event"].is_set():
                 self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
 
+    def _find_repo_root(self) -> str:
+        parent = os.path.abspath(os.path.join(BASE_DIR, ".."))
+        if os.path.isdir(os.path.join(parent, ".git")):
+            return parent
+        if os.path.isdir(os.path.join(BASE_DIR, ".git")):
+            return BASE_DIR
+        return BASE_DIR
+
+    def _run_update_service(self, request_id: str):
+        def respond(success: bool, message: str = "", **extra: Any):
+            self._ws_send(
+                {
+                    "type": "response_device_command",
+                    "requestId": request_id,
+                    "success": success,
+                    "message": message,
+                    **extra,
+                }
+            )
+
+        try:
+            repo_root = self._find_repo_root()
+            if not os.path.isdir(os.path.join(repo_root, ".git")):
+                respond(
+                    False,
+                    error=f"No git repository found at {repo_root}. Install via install.sh first.",
+                )
+                return
+
+            self.send_log(f"Starting edge service update (git pull in {repo_root})...")
+
+            pull_result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            output_parts: list[str] = []
+            if pull_result.stdout.strip():
+                output_parts.append(pull_result.stdout.strip())
+            if pull_result.stderr.strip():
+                output_parts.append(pull_result.stderr.strip())
+
+            if pull_result.returncode != 0:
+                respond(
+                    False,
+                    error="git pull failed",
+                    output="\n".join(output_parts),
+                )
+                return
+
+            pull_summary = pull_result.stdout.strip() or "Already up to date."
+            self.send_log(f"git pull complete: {pull_summary}")
+
+            venv_script = os.path.join(BASE_DIR, "scripts", "setup-venv.sh")
+            if os.path.isfile(venv_script):
+                self.send_log("Updating Python dependencies (this may take a few minutes)...")
+                venv_result = subprocess.run(
+                    ["sh", venv_script, ".", "python3"],
+                    cwd=BASE_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                venv_output = (venv_result.stderr or venv_result.stdout or "").strip()
+                if venv_output:
+                    for line in venv_output.splitlines()[-8:]:
+                        self.send_log(line)
+                if venv_result.returncode != 0:
+                    respond(
+                        False,
+                        error="Dependency update failed",
+                        output="\n".join(output_parts + [venv_output]),
+                    )
+                    return
+                output_parts.append("Dependencies updated.")
+            else:
+                self.send_log("setup-venv.sh not found; skipping dependency update.")
+
+            respond(
+                True,
+                "Update complete. Restarting aura-watch-edge service...",
+                output="\n".join(output_parts),
+            )
+            threading.Timer(
+                0.5,
+                lambda: subprocess.run(
+                    ["sudo", "systemctl", "restart", "aura-watch-edge.service"],
+                    check=False,
+                ),
+            ).start()
+        except subprocess.TimeoutExpired:
+            respond(False, error="Update timed out.")
+        except FileNotFoundError as exc:
+            respond(False, error=f"Required command not found: {exc}")
+        except Exception as exc:
+            respond(False, error=f"Update failed: {exc}")
+
     def _handle_device_command(self, request_id: str, command: str, params: dict[str, Any]):
         def respond(success: bool, message: str = "", **extra: Any):
             self._ws_send(
@@ -592,6 +691,16 @@ class EdgeAgent:
                     **extra,
                 }
             )
+
+        if command == "update_service":
+            self.send_log("Edge service update requested from cloud dashboard.")
+            threading.Thread(
+                target=self._run_update_service,
+                args=(request_id,),
+                name="edge-update",
+                daemon=True,
+            ).start()
+            return
 
         if command == "reboot":
             self.send_log("Device reboot requested from cloud dashboard.")
