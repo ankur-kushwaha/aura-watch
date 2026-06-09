@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Hls from 'hls.js';
 import {
@@ -121,14 +122,14 @@ function App({ onLogout }: AppProps) {
   // When non-null, the dialog is in "add" mode and this is the target deviceId
   const [addingStreamForDeviceId, setAddingStreamForDeviceId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'events' | 'reid'>('events');
-  
+
   // ReID States
   const [reidCrops, setReidCrops] = useState<ReidDetection[]>([]);
   const [loadingReidCrops, setLoadingReidCrops] = useState<boolean>(false);
   const [selectedReidCrop, setSelectedReidCrop] = useState<ReidDetection | null>(null);
   const [reidMatches, setReidMatches] = useState<any[]>([]);
   const [isReidSearching, setIsReidSearching] = useState<boolean>(false);
-  
+
   // Topology States
   const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
   const [newRoute, setNewRoute] = useState<ReidRoute>({
@@ -260,24 +261,24 @@ function App({ onLogout }: AppProps) {
               prev.map((s) =>
                 s.streamId === data.streamId
                   ? {
-                      ...s,
-                      status: data.status,
-                      ...(data.cameraConfig ? {
-                        name: data.cameraConfig.name,
-                        cameraType: data.cameraConfig.cameraType,
-                        streamUrl: data.cameraConfig.streamUrl,
-                        trackingEnabled: data.cameraConfig.trackingEnabled,
-                        motionThreshold: data.cameraConfig.motionThreshold,
-                        pixelChangeThreshold: data.cameraConfig.pixelChangeThreshold,
-                        detectPerson: data.cameraConfig.detectPerson ?? true,
-                        detectVehicle: data.cameraConfig.detectVehicle ?? true,
-                        streamHost: data.cameraConfig.streamHost,
-                      } : {})
-                    }
+                    ...s,
+                    status: data.status,
+                    ...(data.cameraConfig ? {
+                      name: data.cameraConfig.name,
+                      cameraType: data.cameraConfig.cameraType,
+                      streamUrl: data.cameraConfig.streamUrl,
+                      trackingEnabled: data.cameraConfig.trackingEnabled,
+                      motionThreshold: data.cameraConfig.motionThreshold,
+                      pixelChangeThreshold: data.cameraConfig.pixelChangeThreshold,
+                      detectPerson: data.cameraConfig.detectPerson ?? true,
+                      detectVehicle: data.cameraConfig.detectVehicle ?? true,
+                      streamHost: data.cameraConfig.streamHost,
+                    } : {})
+                  }
                   : s
               )
             );
-            
+
             if (data.streamId === selectedStreamIdRef.current) {
               setStatus(data.status);
               if (data.cameraConfig) {
@@ -722,6 +723,31 @@ function App({ onLogout }: AppProps) {
     setShowConfigDialog(true);
   };
 
+  const handleDeleteDevice = async (deviceId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this edge device and all its streams?')) return;
+    try {
+      const res = await fetch(`${API_BASE}/devices/${deviceId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        // Remove device and its streams from state
+        setDevices((prev) => prev.filter((d) => d.deviceId !== deviceId));
+        setStreams((prev) => {
+          const remaining = prev.filter((s) => s.deviceId !== deviceId);
+          // If selected stream belonged to deleted device, reset selection
+          setSelectedStreamId((prevId) => {
+            const stillExists = remaining.some((s) => s.streamId === prevId);
+            return stillExists ? prevId : (remaining.length > 0 ? remaining[0].streamId : '');
+          });
+          return remaining;
+        });
+      }
+    } catch (err) {
+      console.error('Failed to delete device', err);
+    }
+  };
+
   const handleDeleteStream = async (streamId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this camera stream?')) return;
@@ -792,7 +818,7 @@ function App({ onLogout }: AppProps) {
       const res = await fetch(`${API_BASE}/rag/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           question: userMessage,
           history: chatHistory.map(h => ({ role: h.role, content: h.content })),
           startTime: filterStartTime ? new Date(filterStartTime).toISOString() : undefined,
@@ -866,21 +892,19 @@ function App({ onLogout }: AppProps) {
       <div className="flex gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-fit">
         <button
           onClick={() => setActiveTab('events')}
-          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${
-            activeTab === 'events'
-              ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
-              : 'text-text-secondary hover:text-text-primary bg-transparent'
-          }`}
+          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'events'
+            ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+            : 'text-text-secondary hover:text-text-primary bg-transparent'
+            }`}
         >
           <Video size={16} /> Archive & AI Analyst
         </button>
         <button
           onClick={() => setActiveTab('reid')}
-          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${
-            activeTab === 'reid'
-              ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
-              : 'text-text-secondary hover:text-text-primary bg-transparent'
-          }`}
+          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'reid'
+            ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+            : 'text-text-secondary hover:text-text-primary bg-transparent'
+            }`}
         >
           <Fingerprint size={16} /> Cross-Camera ReID Tracker
         </button>
@@ -926,9 +950,8 @@ function App({ onLogout }: AppProps) {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <span
-                              className={`w-2 h-2 rounded-full inline-block flex-shrink-0 ${
-                                isDeviceOnline ? 'bg-emerald-400' : 'bg-text-muted'
-                              }`}
+                              className={`w-2 h-2 rounded-full inline-block flex-shrink-0 ${isDeviceOnline ? 'bg-emerald-400' : 'bg-text-muted'
+                                }`}
                               style={{
                                 boxShadow: isDeviceOnline
                                   ? '0 0 8px var(--color-success)'
@@ -943,15 +966,24 @@ function App({ onLogout }: AppProps) {
                             ID: {dev.deviceId} • Device: {dev.status}
                           </p>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAddStream(dev.deviceId);
-                          }}
-                          className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md flex items-center gap-1 hover:border-primary/50 hover:text-primary transition-all duration-200"
-                        >
-                          <Plus size={12} /> Add Stream
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAddStream(dev.deviceId);
+                            }}
+                            className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md flex items-center gap-1 hover:border-primary/50 hover:text-primary transition-all duration-200"
+                          >
+                            <Plus size={12} /> Add Stream
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteDevice(dev.deviceId, e)}
+                            className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border border-transparent hover:border-danger/30 rounded-md shrink-0 transition-all duration-200"
+                            title="Delete Device"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Nested Streams List */}
@@ -968,13 +1000,13 @@ function App({ onLogout }: AppProps) {
                               stream.status === 'Monitoring'
                                 ? 'var(--color-success)'
                                 : stream.status === 'Recording'
-                                ? 'var(--color-danger)'
-                                : stream.status === 'Processing Video' ||
-                                  stream.status === 'Processing'
-                                ? 'var(--color-primary)'
-                                : stream.status === 'Idle'
-                                ? 'var(--color-secondary)'
-                                : 'var(--color-text-muted)';
+                                  ? 'var(--color-danger)'
+                                  : stream.status === 'Processing Video' ||
+                                    stream.status === 'Processing'
+                                    ? 'var(--color-primary)'
+                                    : stream.status === 'Idle'
+                                      ? 'var(--color-secondary)'
+                                      : 'var(--color-text-muted)';
 
                             return (
                               <div
@@ -983,11 +1015,10 @@ function App({ onLogout }: AppProps) {
                                   setSelectedStreamId(stream.streamId);
                                   setSelectedDeviceId(dev.deviceId);
                                 }}
-                                className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${
-                                  isSelected
-                                    ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
-                                    : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
-                                }`}
+                                className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${isSelected
+                                  ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
+                                  : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
+                                  }`}
                               >
                                 <div className="flex items-center gap-2 min-w-0 flex-1">
                                   <span
@@ -1022,11 +1053,10 @@ function App({ onLogout }: AppProps) {
                                         stream.trackingEnabled
                                       );
                                     }}
-                                    className={`btn ${
-                                      stream.trackingEnabled && isStreamOnline
-                                        ? 'btn-primary'
-                                        : 'btn-secondary'
-                                    } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
+                                    className={`btn ${stream.trackingEnabled && isStreamOnline
+                                      ? 'btn-primary'
+                                      : 'btn-secondary'
+                                      } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
                                     disabled={!isStreamOnline}
                                   >
                                     {stream.trackingEnabled && isStreamOnline ? (
@@ -1313,11 +1343,10 @@ function App({ onLogout }: AppProps) {
                   <button
                     type="button"
                     onClick={() => setShowFilters(!showFilters)}
-                    className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
-                      showFilters || filterStartTime || filterEndTime || filterStreamId
-                        ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
-                        : ''
-                    }`}
+                    className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${showFilters || filterStartTime || filterEndTime || filterStreamId
+                      ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
+                      : ''
+                      }`}
                   >
                     <SlidersHorizontal size={12} />
                     Search Filters
@@ -1530,7 +1559,7 @@ function App({ onLogout }: AppProps) {
                                 ID:{crop.trackId}
                               </div>
                             </div>
-                            
+
                             <div className="flex flex-col min-w-0">
                               <div className="text-[0.8rem] font-bold text-text-primary truncate">{crop.cameraName}</div>
                               <div className="text-[0.65rem] text-text-muted truncate">
@@ -1570,10 +1599,10 @@ function App({ onLogout }: AppProps) {
                       <div className="flex flex-col gap-4">
                         {/* Query Node */}
                         <div className="bg-[rgba(124,58,237,0.05)] border border-primary/20 rounded-xl p-3.5 flex gap-4 items-center">
-                          <img 
-                            src={`${API_BASE}/crops/${selectedReidCrop.filename}`} 
-                            alt="Query face" 
-                            className="w-14 h-14 rounded-lg object-cover border border-primary/30 bg-black shrink-0" 
+                          <img
+                            src={`${API_BASE}/crops/${selectedReidCrop.filename}`}
+                            alt="Query face"
+                            className="w-14 h-14 rounded-lg object-cover border border-primary/30 bg-black shrink-0"
                           />
                           <div className="min-w-0 flex-1">
                             <span className="text-[0.65rem] text-primary uppercase font-bold tracking-wider">Search Query Target</span>
@@ -1592,21 +1621,18 @@ function App({ onLogout }: AppProps) {
                         ) : (
                           <div className="flex flex-col gap-1 mt-2">
                             <h4 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-2">Likely Transitions & Timeline</h4>
-                            
+
                             <div className="relative border-l-2 border-primary/25 ml-7 pl-6 flex flex-col gap-6">
                               {reidMatches.map((match) => {
                                 const matchPercentage = Math.round(match.scores.finalScore * 100);
-                                
+
                                 // Calculate elapsed time from query node
                                 const currentT = new Date(match.timestamp).getTime();
                                 const queryT = new Date(selectedReidCrop.timestamp).getTime();
                                 const diffSec = Math.abs(currentT - queryT) / 1000;
-                                let delayStr = '';
-                                if (diffSec < 60) {
-                                  delayStr = `${Math.round(diffSec)}s`;
-                                } else {
-                                  delayStr = `${Math.floor(diffSec / 60)}m ${Math.round(diffSec % 60)}s`;
-                                }
+                                const delayStr = diffSec < 60
+                                  ? `${Math.round(diffSec)}s`
+                                  : `${Math.floor(diffSec / 60)}m ${Math.round(diffSec % 60)}s`;
 
                                 return (
                                   <div key={match.id} className="relative">
@@ -1614,10 +1640,10 @@ function App({ onLogout }: AppProps) {
                                     <div className="absolute -left-[31px] top-4 bg-primary border-2 border-[#090d16] w-4 h-4 rounded-full flex items-center justify-center shadow-[0_0_8px_rgba(124,58,237,0.6)]" />
 
                                     <div className="glass-panel p-3.5 flex gap-4 items-center bg-[rgba(255,255,255,0.02)] border-border-glass rounded-xl relative hover:border-primary/30 transition-all duration-200">
-                                      <img 
-                                        src={`${API_BASE}/crops/${match.filename}`} 
-                                        alt="Match face" 
-                                        className="w-12 h-12 rounded-lg object-cover border border-[rgba(255,255,255,0.05)] bg-black shrink-0" 
+                                      <img
+                                        src={`${API_BASE}/crops/${match.filename}`}
+                                        alt="Match face"
+                                        className="w-12 h-12 rounded-lg object-cover border border-[rgba(255,255,255,0.05)] bg-black shrink-0"
                                       />
                                       <div className="min-w-0 flex-1">
                                         <div className="flex justify-between items-start flex-wrap gap-1 mb-0.5">
@@ -1626,7 +1652,7 @@ function App({ onLogout }: AppProps) {
                                             {matchPercentage}% Match
                                           </span>
                                         </div>
-                                        
+
                                         <div className="text-[0.7rem] text-text-muted flex justify-between items-center flex-wrap gap-2">
                                           <span className="flex items-center gap-1">
                                             <Clock size={11} /> {new Date(match.timestamp).toLocaleTimeString()}
