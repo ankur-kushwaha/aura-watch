@@ -598,6 +598,58 @@ class EdgeAgent:
             return BASE_DIR
         return BASE_DIR
 
+    def _force_git_pull(self, repo_root: str) -> tuple[bool, str]:
+        fetch_result = subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        output_parts: list[str] = []
+        if fetch_result.stdout.strip():
+            output_parts.append(fetch_result.stdout.strip())
+        if fetch_result.stderr.strip():
+            output_parts.append(fetch_result.stderr.strip())
+        if fetch_result.returncode != 0:
+            return False, "\n".join(output_parts) or "git fetch failed"
+
+        upstream = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "@{u}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        reset_target = "@{u}"
+        if upstream.returncode != 0:
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            ).stdout.strip() or "main"
+            reset_target = f"origin/{branch}"
+
+        reset_result = subprocess.run(
+            ["git", "reset", "--hard", reset_target],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if reset_result.stdout.strip():
+            output_parts.append(reset_result.stdout.strip())
+        if reset_result.stderr.strip():
+            output_parts.append(reset_result.stderr.strip())
+        if reset_result.returncode != 0:
+            return False, "\n".join(output_parts) or "git reset --hard failed"
+
+        summary = reset_result.stdout.strip() or f"Reset to {reset_target}"
+        output_parts.append(summary)
+        return True, "\n".join(output_parts)
+
     def _run_update_service(self, request_id: str):
         def respond(success: bool, message: str = "", **extra: Any):
             self._ws_send(
@@ -619,31 +671,20 @@ class EdgeAgent:
                 )
                 return
 
-            self.send_log(f"Starting edge service update (git pull in {repo_root})...")
+            self.send_log(f"Starting edge service update (force pull in {repo_root})...")
 
-            pull_result = subprocess.run(
-                ["git", "pull", "--ff-only"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            output_parts: list[str] = []
-            if pull_result.stdout.strip():
-                output_parts.append(pull_result.stdout.strip())
-            if pull_result.stderr.strip():
-                output_parts.append(pull_result.stderr.strip())
+            pull_ok, pull_output = self._force_git_pull(repo_root)
+            output_parts: list[str] = [pull_output] if pull_output else []
 
-            if pull_result.returncode != 0:
+            if not pull_ok:
                 respond(
                     False,
-                    error="git pull failed",
+                    error="git force pull failed",
                     output="\n".join(output_parts),
                 )
                 return
 
-            pull_summary = pull_result.stdout.strip() or "Already up to date."
-            self.send_log(f"git pull complete: {pull_summary}")
+            self.send_log(f"git force pull complete: {pull_output.splitlines()[-1] if pull_output else 'done'}")
 
             venv_script = os.path.join(BASE_DIR, "scripts", "setup-venv.sh")
             if os.path.isfile(venv_script):

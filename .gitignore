@@ -65,3 +65,4 @@ Thumbs.db
 
 edge/storage/
 edge/.venv/
+edge/.device-id
