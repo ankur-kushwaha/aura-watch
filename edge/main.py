@@ -56,6 +56,8 @@ YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
 YOLO_DEVICE = resolve_yolo_device(os.getenv("YOLO_DEVICE", "auto"))
 YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "416"))
 YOLO_DETECT_INTERVAL = max(int(os.getenv("YOLO_DETECT_INTERVAL", "2")), 1)
+CAMERA_FPS = max(int(os.getenv("CAMERA_FPS", "30")), 1)
+ENCODE_FPS = max(int(os.getenv("ENCODE_FPS", str(CAMERA_FPS))), 1)
 FRAME_STREAM_FPS = float(os.getenv("FRAME_STREAM_FPS", "12"))
 HLS_SEGMENT_SEC = float(os.getenv("HLS_SEGMENT_SEC", "1"))
 EDGE_HTTP_PORT = int(os.getenv("EDGE_HTTP_PORT", "8090"))
@@ -310,7 +312,7 @@ class EdgeAgent:
                 hls_dir,
                 camera.width,
                 camera.height,
-                fps=30,
+                fps=ENCODE_FPS,
                 segment_sec=HLS_SEGMENT_SEC,
             )
             pipeline_data["encoder"] = encoder
@@ -323,7 +325,7 @@ class EdgeAgent:
 
             settings = PipelineSettings(
                 detect_interval=YOLO_DETECT_INTERVAL,
-                encode_fps=30,
+                encode_fps=ENCODE_FPS,
                 stream_fps=FRAME_STREAM_FPS,
                 jpeg_quality=PREVIEW_JPEG_QUALITY,
                 hls_segment_sec=HLS_SEGMENT_SEC,

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
+
+CAMERA_STALL_TIMEOUT_SEC = float(os.getenv("CAMERA_STALL_TIMEOUT_SEC", "45"))
 
 import cv2
 import numpy as np
@@ -71,19 +74,21 @@ class VisionPipeline:
         stream_interval = 1.0 / max(self.settings.stream_fps, 1.0)
         last_stream_time = 0.0
         last_frame_time = time.monotonic()
-        stale_frames = 0
+        last_frame_received_at = time.monotonic()
 
         while not self.should_stop():
             try:
                 frame = self._frame_queue.get(timeout=0.5)
             except queue.Empty:
-                stale_frames += 1
-                if stale_frames >= 300:
-                    detail = self.camera.last_error or "stream stalled"
-                    raise RuntimeError(f"Camera stream lost ({detail})")
+                stalled_for = time.monotonic() - last_frame_received_at
+                if stalled_for >= CAMERA_STALL_TIMEOUT_SEC:
+                    detail = self.camera.last_error or "no frames from camera"
+                    raise RuntimeError(
+                        f"Camera stream lost ({detail}; no frame for {stalled_for:.0f}s)"
+                    )
                 continue
 
-            stale_frames = 0
+            last_frame_received_at = time.monotonic()
             self._frame_index += 1
             run_inference = self._frame_index % max(self.settings.detect_interval, 1) == 0
 
@@ -123,11 +128,21 @@ class VisionPipeline:
             last_frame_time = time.monotonic()
 
     def _capture_loop(self):
+        consecutive_failures = 0
         while not self.should_stop():
             frame = self.camera.read()
             if frame is None:
-                time.sleep(0.01)
+                consecutive_failures += 1
+                if consecutive_failures == 100:
+                    detail = self.camera.last_error or "camera.read() returned None"
+                    print(
+                        f"[Camera] Warning: no frames after {consecutive_failures} reads ({detail})",
+                        flush=True,
+                    )
+                time.sleep(0.05)
                 continue
+
+            consecutive_failures = 0
 
             try:
                 self._frame_queue.put_nowait(frame)

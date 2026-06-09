@@ -737,12 +737,12 @@ function App({ onLogout }: AppProps) {
 
     if (Hls.isSupported()) {
       const activeHls = new Hls({
-        maxBufferLength: 2,
-        maxMaxBufferLength: 4,
-        liveSyncDuration: 1,
-        liveMaxLatencyDuration: 3,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 20,
+        liveSyncDuration: 3,
+        liveMaxLatencyDuration: 15,
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: false,
       });
       hls = activeHls;
 

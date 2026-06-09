@@ -155,7 +155,12 @@ class CameraCapture:
 
     def _open_webcam(self):
         source = self._resolve_webcam_source()
-        self._cap = cv2.VideoCapture(source)
+        if platform.system() == "Linux":
+            self._cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
+        else:
+            self._cap = cv2.VideoCapture(source)
+
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
@@ -166,6 +171,14 @@ class CameraCapture:
 
         self.width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH) or self.width)
         self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or self.height)
+
+        # Warm up capture — first reads on Pi/V4L2 are often empty
+        for _ in range(10):
+            ok, _frame = self._cap.read()
+            if ok:
+                break
+            time.sleep(0.05)
+
         return True
 
     def _resolve_webcam_source(self):

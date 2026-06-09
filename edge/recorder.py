@@ -117,7 +117,12 @@ class HlsEncoder:
                 daemon=True,
             ).start()
 
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
     def write_frame(self, frame: np.ndarray):
+        if not self.is_running():
+            return
         try:
             self._write_queue.put_nowait(frame)
         except queue.Full:
