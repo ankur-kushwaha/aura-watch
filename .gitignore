@@ -23,6 +23,7 @@ out/
 
 # Local media storage (camera recordings, etc.)
 backend/storage/videos/*
+backend/.venv-reid/
 backend/storage/crops/*
 !backend/storage/videos/.gitkeep
 
