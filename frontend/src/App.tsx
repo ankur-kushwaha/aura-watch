@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Hls from 'hls.js';
 import {
   Camera,
   Settings,
@@ -318,9 +317,6 @@ function App({ onLogout }: AppProps) {
   // Live Camera Feed Video States
   const [streamLoading, setStreamLoading] = useState<boolean>(true);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
-  const [useHlsFallback, setUseHlsFallback] = useState<boolean>(false);
-  const lastFrameAtRef = useRef<number>(0);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -468,8 +464,6 @@ function App({ onLogout }: AppProps) {
         case 'frame':
           if (data.image && data.streamId === selectedStreamIdRef.current) {
             setLiveFrame(`data:image/jpeg;base64,${data.image}`);
-            lastFrameAtRef.current = Date.now();
-            setUseHlsFallback(false);
             setStreamLoading(false);
           }
           break;
@@ -681,107 +675,8 @@ function App({ onLogout }: AppProps) {
     Promise.resolve().then(() => {
       setStreamLoading(true);
       setLiveFrame(null);
-      setUseHlsFallback(false);
-      lastFrameAtRef.current = 0;
     });
   }, [selectedStreamId]);
-
-  // Fall back to HLS if WebSocket preview frames never arrive or stop
-  useEffect(() => {
-    if (!selectedStreamId || status === 'Offline') return;
-
-    const startupTimeout = setTimeout(() => {
-      if (!lastFrameAtRef.current) {
-        setUseHlsFallback(true);
-      }
-    }, 5000);
-
-    const interval = setInterval(() => {
-      const lastFrameAt = lastFrameAtRef.current;
-      if (!lastFrameAt) return;
-      if (Date.now() - lastFrameAt > 4000) {
-        setUseHlsFallback(true);
-        setStreamLoading(true);
-      }
-    }, 1000);
-
-    return () => {
-      clearTimeout(startupTimeout);
-      clearInterval(interval);
-    };
-  }, [selectedStreamId, status]);
-
-  const isStreamOffline = status === 'Offline';
-
-  // Initialize HLS player as fallback when WebSocket preview is unavailable
-  useEffect(() => {
-    if (!selectedStreamId || isStreamOffline || !useHlsFallback) {
-      return;
-    }
-
-    const video = videoRef.current;
-    if (!video) return;
-
-    const streamUrl = `${API_BASE}/streams/${selectedStreamId}/stream/index.m3u8`;
-    let hls: Hls | null = null;
-
-    const startPlaying = () => {
-      video.play().catch(err => {
-        console.log('HLS play error:', err.message);
-      });
-    };
-
-    video.onplaying = () => {
-      setStreamLoading(false);
-    };
-
-    if (Hls.isSupported()) {
-      const activeHls = new Hls({
-        maxBufferLength: 10,
-        maxMaxBufferLength: 20,
-        liveSyncDuration: 3,
-        liveMaxLatencyDuration: 15,
-        enableWorker: true,
-        lowLatencyMode: false,
-      });
-      hls = activeHls;
-
-      activeHls.loadSource(streamUrl);
-      activeHls.attachMedia(video);
-      activeHls.on(Hls.Events.MANIFEST_PARSED, startPlaying);
-
-      activeHls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              console.log('HLS Network error, retrying in 2s...');
-              setTimeout(() => {
-                activeHls.loadSource(streamUrl);
-              }, 2000);
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              console.log('HLS Media error, recovering...');
-              activeHls.recoverMediaError();
-              break;
-            default:
-              console.error('Fatal HLS error:', data);
-              break;
-          }
-        }
-      });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = streamUrl;
-      video.addEventListener('canplay', startPlaying);
-    }
-
-    return () => {
-      if (hls) {
-        hls.destroy();
-      }
-      video.src = '';
-      video.onplaying = null;
-    };
-  }, [selectedStreamId, isStreamOffline, useHlsFallback]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1287,22 +1182,15 @@ function App({ onLogout }: AppProps) {
 
               {selectedStreamId && status !== 'Offline' ? (
                 <div className="w-full relative">
-                  {liveFrame && !useHlsFallback ? (
+                  {liveFrame && (
                     <img
                       src={liveFrame}
                       alt="Live camera preview"
                       className="w-full h-auto block"
                     />
-                  ) : (
-                    <video
-                      ref={videoRef}
-                      muted
-                      controls
-                      className={`w-full h-auto block ${streamLoading ? 'hidden' : 'block'}`}
-                    />
                   )}
 
-                  {liveFrame && !useHlsFallback && (
+                  {liveFrame && (
                     <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(16,185,129,0.2)] text-emerald-400 border border-[rgba(16,185,129,0.35)]">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
                       LIVE
@@ -1315,9 +1203,7 @@ function App({ onLogout }: AppProps) {
                         <RefreshCw size={36} color="var(--color-primary)" />
                       </div>
                       <p className="text-[0.9rem]">Initializing Live Stream...</p>
-                      <p className="text-[0.75rem] mt-1">
-                        {useHlsFallback ? 'Connecting via HLS fallback' : 'Connecting to edge camera (WebSocket)'}
-                      </p>
+                      <p className="text-[0.75rem] mt-1">Connecting to edge camera (WebSocket)</p>
                     </div>
                   )}
                 </div>
