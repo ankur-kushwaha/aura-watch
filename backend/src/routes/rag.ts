@@ -1,12 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { generateTextEmbedding, answerWithTools } from '../services/ai';
 import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
+import prisma from '../services/db';
 
 const router = Router();
 
 /**
  * POST /api/rag/query
  * Perform a vector search on video summaries and answer the user's question with citations.
+ * Also supports REID detection queries via a second tool available to the AI.
  */
 router.post('/query', async (req: Request, res: Response) => {
   const { question, history = [], startTime, endTime, deviceId, streamId } = req.body;
@@ -19,7 +21,7 @@ router.post('/query', async (req: Request, res: Response) => {
     console.log(`[RAG] Received query: "${question}" with history size: ${history.length}, filters:`, { startTime, endTime, deviceId, streamId });
 
     // Call AI service with tools
-    const { answer, clips } = await answerWithTools(
+    const { answer, clips, reidDetections } = await answerWithTools(
       question,
       history,
       async (queryText: string, toolStartTime?: string, toolEndTime?: string) => {
@@ -53,10 +55,52 @@ router.post('/query', async (req: Request, res: Response) => {
         }
 
         return searchResults;
+      },
+      async (cameraName?: string, className?: string, toolStartTime?: string, toolEndTime?: string) => {
+        // Prioritize UI-provided time filter over LLM-parsed filter
+        const finalStartTime = startTime || toolStartTime;
+        const finalEndTime = endTime || toolEndTime;
+
+        console.log(`[RAG Router callback] Executing REID detection search`, {
+          cameraName,
+          className,
+          finalStartTime,
+          finalEndTime,
+          streamId
+        });
+
+        const where: any = {};
+
+        if (cameraName) {
+          where.cameraName = { contains: cameraName, mode: 'insensitive' };
+        }
+
+        if (className) {
+          where.className = className;
+        }
+
+        if (streamId) {
+          where.streamId = streamId;
+        }
+
+        if (finalStartTime || finalEndTime) {
+          where.timestamp = {};
+          if (finalStartTime) where.timestamp.gte = new Date(finalStartTime);
+          if (finalEndTime) where.timestamp.lte = new Date(finalEndTime);
+        }
+
+        const detections = await prisma.reidDetection.findMany({
+          where,
+          orderBy: { timestamp: 'desc' },
+          take: 200, // cap to avoid huge context
+        });
+
+        console.log(`[RAG REID callback] Found ${detections.length} REID detections`);
+        return detections;
       }
     );
 
-    // Construct list of cited clips for the frontend
+    // Construct list of cited video clips for the frontend
     const citedClips = clips.map((result: any) => {
       const payload = result.payload;
       const filename = payload.filename || (payload.filepath ? payload.filepath.split(/[/\\]/).pop() : '');
@@ -71,10 +115,22 @@ router.post('/query', async (req: Request, res: Response) => {
       };
     });
 
+    // Construct list of cited REID detections for the frontend
+    const citedReid = reidDetections.map((det: any) => ({
+      id: det.id,
+      cameraName: det.cameraName,
+      trackId: det.trackId,
+      timestamp: det.timestamp instanceof Date ? det.timestamp.toISOString() : det.timestamp,
+      filename: det.filename,
+      className: det.className,
+      bbox: det.bbox,
+    }));
+
     // Return response
     res.json({
       answer,
       clips: citedClips,
+      reidDetections: citedReid,
     });
 
   } catch (error) {

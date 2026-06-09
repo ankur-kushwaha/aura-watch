@@ -26,11 +26,13 @@ export interface AIService {
    * Answers a user query by calling search tools if necessary, maintaining conversation history.
    * @param question The user's current question.
    * @param history The conversation history.
-   * @param searchQdrantFn Function to run Qdrant/MongoDB search query.
+   * @param searchQdrantFn Function to run Qdrant/MongoDB video clip search query.
+   * @param searchReidFn Function to run REID detection database query.
    */
   answerWithTools(
     question: string,
     history: { role: 'user' | 'assistant'; content: string }[],
-    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>
-  ): Promise<{ answer: string; clips: any[] }>;
+    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>,
+    searchReidFn: (cameraName?: string, className?: string, startTime?: string, endTime?: string) => Promise<any[]>
+  ): Promise<{ answer: string; clips: any[]; reidDetections: any[] }>;
 }

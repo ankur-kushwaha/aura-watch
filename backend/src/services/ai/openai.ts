@@ -198,20 +198,23 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
   async answerWithTools(
     question: string,
     history: { role: 'user' | 'assistant'; content: string }[],
-    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>
-  ): Promise<{ answer: string; clips: any[] }> {
+    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>,
+    searchReidFn: (cameraName?: string, className?: string, startTime?: string, endTime?: string) => Promise<any[]>
+  ): Promise<{ answer: string; clips: any[]; reidDetections: any[] }> {
     const currentLocalTime = new Date().toISOString();
     const systemMessage = {
       role: 'system',
       content: `You are an AI video surveillance analyst dashboard.
 The user is asking a question about the security camera recordings.
 The current system time is ${currentLocalTime}. Use this reference to resolve relative timestamps like "yesterday", "today", "last 2 hours", "8:00 AM", etc. into absolute ISO-8601 strings.
-You have access to a tool 'searchQdrant' to search the database of video summaries.
-When the user asks about events, motion, people, times, or camera footage, you should call 'searchQdrant' with a clear search query describing the events.
-If the query implies a time filter (e.g. "between 8 and 9", "since yesterday", "in the last 2 hours"), specify those as startTime and endTime arguments.
-Answer the user's question accurately and objectively using only the retrieved summaries.
-If the search returns no clips or no relevant information, state that clearly.
-Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where appropriate. Keep the answer concise and helpful.`
+You have access to two tools:
+1. 'searchQdrant' — searches the video clip summaries database for events and activity descriptions. Use this when the user asks about what happened, what activity was recorded, or asks for specific scene descriptions.
+2. 'searchReidDetections' — queries the raw person/vehicle REID detection records (individual frames where a person or vehicle was detected). Use this when the user asks about how many people were detected, whether someone was present, which cameras detected people or vehicles, or asks about detection counts and presence over a time window.
+You may call both tools if the question requires both video context and detection data.
+If the query implies a time filter, resolve it to absolute ISO-8601 strings.
+Answer the user's question accurately and objectively using only the retrieved data.
+If the search returns no results, state that clearly.
+Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response where appropriate. Keep the answer concise and helpful.`
     };
 
     const messages: any[] = [
@@ -256,61 +259,131 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
                 required: ['queryText']
               }
             }
+          },
+          {
+            type: 'function',
+            function: {
+              name: 'searchReidDetections',
+              description: 'Query raw REID person/vehicle detection records from the database. Use this for counting detections, checking presence of people or vehicles on specific cameras, or getting detection statistics over a time window.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  cameraName: {
+                    type: 'string',
+                    description: 'Filter detections to a specific camera by name (optional). Leave unset to search across all cameras.'
+                  },
+                  className: {
+                    type: 'string',
+                    description: 'Filter by object class: "person" or "vehicle" (optional). Leave unset for all classes.'
+                  },
+                  startTime: {
+                    type: 'string',
+                    description: 'ISO-8601 string for the start of the time window (optional).'
+                  },
+                  endTime: {
+                    type: 'string',
+                    description: 'ISO-8601 string for the end of the time window (optional).'
+                  }
+                },
+                required: []
+              }
+            }
           }
         ]
       });
 
       let finalAnswer = '';
       let clips: any[] = [];
+      let reidDetections: any[] = [];
 
       const choice = response.choices[0];
       const message = choice.message;
 
       if (message.tool_calls && message.tool_calls.length > 0) {
-        const toolCall = message.tool_calls[0] as any;
-        if (toolCall.function && toolCall.function.name === 'searchQdrant') {
-          const args = JSON.parse(toolCall.function.arguments);
-          const queryText = args.queryText;
-          const toolStartTime = args.startTime;
-          const toolEndTime = args.endTime;
-          console.log(`[OpenAI Tool Call] Model requested searchQdrant with query: "${queryText}", startTime: "${toolStartTime}", endTime: "${toolEndTime}"`);
+        // Process all tool calls and build responses
+        const toolMessages: any[] = [];
 
-          // Execute function
-          const searchResults = await searchQdrantFn(queryText, toolStartTime, toolEndTime);
-          clips = searchResults;
+        for (const toolCall of message.tool_calls as any[]) {
+          if (!toolCall.function) continue;
+          const args = JSON.parse(toolCall.function.arguments || '{}');
 
-          const contexts = searchResults.map((result: any, i: number) => {
-            const payload = result.payload;
-            return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
-          });
+          if (toolCall.function.name === 'searchQdrant') {
+            const queryText = args.queryText;
+            const toolStartTime = args.startTime;
+            const toolEndTime = args.endTime;
+            console.log(`[OpenAI Tool Call] searchQdrant: "${queryText}", startTime: "${toolStartTime}", endTime: "${toolEndTime}"`);
 
-          const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
+            const searchResults = await searchQdrantFn(queryText, toolStartTime, toolEndTime);
+            clips = searchResults;
 
-          // Append assistant tool request and tool response
-          const secondMessages = [
-            ...messages,
-            message,
-            {
+            const contexts = searchResults.map((result: any, i: number) => {
+              const payload = result.payload;
+              return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
+            });
+            const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
+
+            toolMessages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
               content: contextText
+            });
+
+          } else if (toolCall.function.name === 'searchReidDetections') {
+            const cameraName = args.cameraName;
+            const className = args.className;
+            const toolStartTime = args.startTime;
+            const toolEndTime = args.endTime;
+            console.log(`[OpenAI Tool Call] searchReidDetections: camera="${cameraName}", class="${className}", startTime="${toolStartTime}", endTime="${toolEndTime}"`);
+
+            const reidResults = await searchReidFn(cameraName, className, toolStartTime, toolEndTime);
+            reidDetections = reidResults;
+
+            let reidContext: string;
+            if (reidResults.length === 0) {
+              reidContext = 'No REID detections found matching the criteria.';
+            } else {
+              const grouped: Record<string, { person: number; vehicle: number; trackIds: Set<number> }> = {};
+              for (const det of reidResults) {
+                const cam = det.cameraName || 'Unknown';
+                if (!grouped[cam]) grouped[cam] = { person: 0, vehicle: 0, trackIds: new Set() };
+                if (det.className === 'vehicle') grouped[cam].vehicle++;
+                else grouped[cam].person++;
+                grouped[cam].trackIds.add(det.trackId);
+              }
+              const lines = Object.entries(grouped).map(([cam, stats], i) =>
+                `[Detection ${i + 1}]: Camera: ${cam}, Persons detected: ${stats.person}, Vehicles detected: ${stats.vehicle}, Unique track IDs: ${stats.trackIds.size} (IDs: ${[...stats.trackIds].join(', ')})`
+              );
+              reidContext = lines.join('\n');
             }
-          ];
 
-          console.log('[OpenAI] Resubmitting tool response to get final answer...');
-          const secondResponse = await this.openai.chat.completions.create({
-            model: model,
-            messages: secondMessages
-          });
-
-          finalAnswer = secondResponse.choices[0].message?.content || 'Could not formulate an answer.';
+            toolMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: reidContext
+            });
+          }
         }
+
+        // Append assistant message + all tool responses then get final answer
+        const secondMessages = [
+          ...messages,
+          message,
+          ...toolMessages
+        ];
+
+        console.log('[OpenAI] Resubmitting tool response(s) to get final answer...');
+        const secondResponse = await this.openai.chat.completions.create({
+          model: model,
+          messages: secondMessages
+        });
+
+        finalAnswer = secondResponse.choices[0].message?.content || 'Could not formulate an answer.';
       } else {
         console.log('[OpenAI] Model responded directly without calling a tool.');
         finalAnswer = message.content || 'Could not formulate an answer.';
       }
 
-      return { answer: finalAnswer, clips };
+      return { answer: finalAnswer, clips, reidDetections };
     } catch (error) {
       console.error('[OpenAI] Error answering with tools:', error);
       throw error;

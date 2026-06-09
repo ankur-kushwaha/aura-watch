@@ -173,18 +173,21 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
   async answerWithTools(
     question: string,
     history: { role: 'user' | 'assistant'; content: string }[],
-    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>
-  ): Promise<{ answer: string; clips: any[] }> {
+    searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>,
+    searchReidFn: (cameraName?: string, className?: string, startTime?: string, endTime?: string) => Promise<any[]>
+  ): Promise<{ answer: string; clips: any[]; reidDetections: any[] }> {
     const currentLocalTime = new Date().toISOString();
     const systemInstruction = `You are an AI video surveillance analyst dashboard.
 The user is asking a question about the security camera recordings.
 The current system time is ${currentLocalTime}. Use this reference to resolve relative timestamps like "yesterday", "today", "last 2 hours", "8:00 AM", etc. into absolute ISO-8601 strings.
-You have access to a tool 'searchQdrant' to search the database of video summaries.
-When the user asks about events, motion, people, times, or camera footage, you should call 'searchQdrant' with a clear search query describing the events.
-If the query implies a time filter (e.g. "between 8 and 9", "since yesterday", "in the last 2 hours"), specify those as startTime and endTime arguments.
-Answer the user's question accurately and objectively using only the retrieved summaries.
-If the search returns no clips or no relevant information, state that clearly.
-Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where appropriate. Keep the answer concise and helpful.`;
+You have access to two tools:
+1. 'searchQdrant' — searches the video clip summaries database for events and activity descriptions. Use this when the user asks about what happened, what activity was recorded, or asks for specific scene descriptions.
+2. 'searchReidDetections' — queries the raw person/vehicle REID detection records (individual frames where a person or vehicle was detected). Use this when the user asks about how many people were detected, whether someone was present, which cameras detected people or vehicles, or asks about detection counts and presence over a time window.
+You may call both tools if the question requires both video context and detection data.
+If the query implies a time filter, resolve it to absolute ISO-8601 strings.
+Answer the user's question accurately and objectively using only the retrieved data.
+If the search returns no results, state that clearly.
+Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response where appropriate. Keep the answer concise and helpful.`;
 
     const contents: any[] = [
       ...history.map(h => ({
@@ -219,6 +222,33 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
       }
     };
 
+    const reidToolDeclaration = {
+      name: 'searchReidDetections',
+      description: 'Query raw REID person/vehicle detection records from the database. Use this for counting detections, checking presence of people or vehicles on specific cameras, or getting detection statistics over a time window.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          cameraName: {
+            type: Type.STRING,
+            description: 'Filter detections to a specific camera by name (optional). Leave unset to search across all cameras.'
+          },
+          className: {
+            type: Type.STRING,
+            description: 'Filter by object class: "person" or "vehicle" (optional). Leave unset for all classes.'
+          },
+          startTime: {
+            type: Type.STRING,
+            description: 'ISO-8601 string for the start of the time window (optional).'
+          },
+          endTime: {
+            type: Type.STRING,
+            description: 'ISO-8601 string for the end of the time window (optional).'
+          }
+        },
+        required: []
+      }
+    };
+
     try {
       const response = await this.ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -226,76 +256,121 @@ Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where app
         config: {
           systemInstruction,
           tools: [{
-            functionDeclarations: [searchToolDeclaration]
+            functionDeclarations: [searchToolDeclaration, reidToolDeclaration]
           }]
         }
       });
 
       let finalAnswer = '';
       let clips: any[] = [];
+      let reidDetections: any[] = [];
 
+      // Collect all tool calls from the model response (may be multiple parts)
       const candidate = response.candidates?.[0];
-      const part = candidate?.content?.parts?.[0];
+      const allParts = candidate?.content?.parts || [];
+      const toolCallParts = allParts.filter((p: any) => p?.functionCall);
 
-      if (part?.functionCall) {
-        const call = part.functionCall;
-        if (call.name === 'searchQdrant') {
-          const queryText = (call.args as any)?.queryText;
-          const toolStartTime = (call.args as any)?.startTime;
-          const toolEndTime = (call.args as any)?.endTime;
-          console.log(`[Gemini Tool Call] Model requested searchQdrant with query: "${queryText}", startTime: "${toolStartTime}", endTime: "${toolEndTime}"`);
+      if (toolCallParts.length > 0) {
+        // Build tool responses for all requested tool calls
+        const toolResponseParts: any[] = [];
 
-          // Execute the tool function
-          const searchResults = await searchQdrantFn(queryText, toolStartTime, toolEndTime);
-          clips = searchResults;
+        for (const toolPart of toolCallParts) {
+          const call = toolPart.functionCall;
+          if (!call) continue;
 
-          const contexts = searchResults.map((result: any, i: number) => {
-            const payload = result.payload;
-            return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
-          });
+          if (call.name === 'searchQdrant') {
+            const queryText = (call.args as any)?.queryText;
+            const toolStartTime = (call.args as any)?.startTime;
+            const toolEndTime = (call.args as any)?.endTime;
+            console.log(`[Gemini Tool Call] searchQdrant: "${queryText}", startTime: "${toolStartTime}", endTime: "${toolEndTime}"`);
 
-          const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
+            const searchResults = await searchQdrantFn(queryText, toolStartTime, toolEndTime);
+            clips = searchResults;
 
-          // Construct response payload
-          const secondContents = [
-            ...contents,
-            {
-              role: 'model',
-              parts: [part]
-            },
-            {
-              role: 'tool',
-              parts: [
-                {
-                  functionResponse: {
-                    name: 'searchQdrant',
-                    response: { result: contextText }
-                  }
-                }
-              ]
+            const contexts = searchResults.map((result: any, i: number) => {
+              const payload = result.payload;
+              return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
+            });
+            const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
+
+            toolResponseParts.push({
+              functionResponse: {
+                name: 'searchQdrant',
+                response: { result: contextText }
+              }
+            });
+
+          } else if (call.name === 'searchReidDetections') {
+            const cameraName = (call.args as any)?.cameraName;
+            const className = (call.args as any)?.className;
+            const toolStartTime = (call.args as any)?.startTime;
+            const toolEndTime = (call.args as any)?.endTime;
+            console.log(`[Gemini Tool Call] searchReidDetections: camera="${cameraName}", class="${className}", startTime="${toolStartTime}", endTime="${toolEndTime}"`);
+
+            const reidResults = await searchReidFn(cameraName, className, toolStartTime, toolEndTime);
+            reidDetections = reidResults;
+
+            // Build a text summary of detections for the LLM
+            let reidContext: string;
+            if (reidResults.length === 0) {
+              reidContext = 'No REID detections found matching the criteria.';
+            } else {
+              // Group by camera and class for a concise summary
+              const grouped: Record<string, { person: number; vehicle: number; trackIds: Set<number> }> = {};
+              for (const det of reidResults) {
+                const cam = det.cameraName || 'Unknown';
+                if (!grouped[cam]) grouped[cam] = { person: 0, vehicle: 0, trackIds: new Set() };
+                if (det.className === 'vehicle') grouped[cam].vehicle++;
+                else grouped[cam].person++;
+                grouped[cam].trackIds.add(det.trackId);
+              }
+              const lines = Object.entries(grouped).map(([cam, stats], i) =>
+                `[Detection ${i + 1}]: Camera: ${cam}, Persons detected: ${stats.person}, Vehicles detected: ${stats.vehicle}, Unique track IDs: ${stats.trackIds.size} (IDs: ${[...stats.trackIds].join(', ')})`
+              );
+              reidContext = lines.join('\n');
             }
-          ];
 
-          console.log('[Gemini] Resubmitting tool response to get final answer...');
-          const secondResponse = await this.ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: secondContents,
-            config: {
-              systemInstruction,
-              tools: [{
-                functionDeclarations: [searchToolDeclaration]
-              }]
-            }
-          });
-
-          finalAnswer = secondResponse.text || 'Could not formulate an answer.';
+            toolResponseParts.push({
+              functionResponse: {
+                name: 'searchReidDetections',
+                response: { result: reidContext }
+              }
+            });
+          }
         }
+
+        // Re-submit with all tool responses at once
+        const secondContents = [
+          ...contents,
+          {
+            role: 'model',
+            parts: toolCallParts
+          },
+          {
+            role: 'tool',
+            parts: toolResponseParts
+          }
+        ];
+
+        console.log('[Gemini] Resubmitting tool response(s) to get final answer...');
+        const secondResponse = await this.ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: secondContents,
+          config: {
+            systemInstruction,
+            tools: [{
+              functionDeclarations: [searchToolDeclaration, reidToolDeclaration]
+            }]
+          }
+        });
+
+        finalAnswer = secondResponse.text || 'Could not formulate an answer.';
       } else {
         console.log('[Gemini] Model responded directly without calling a tool.');
         finalAnswer = response.text || 'Could not formulate an answer.';
       }
 
-      return { answer: finalAnswer, clips };
+      return { answer: finalAnswer, clips, reidDetections };
     } catch (error) {
       console.error('[Gemini] Error generating content with tools:', error);
       throw error;

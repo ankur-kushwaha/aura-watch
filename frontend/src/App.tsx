@@ -166,7 +166,7 @@ function App({ onLogout }: AppProps) {
 
   // RAG Q&A states
   const [query, setQuery] = useState<string>('');
-  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; clips?: RagResponseClip[] }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; clips?: RagResponseClip[]; reidDetections?: { id: string; cameraName: string; trackId: number; timestamp: string; filename: string; className: string }[] }[]>([]);
   const [isAsking, setIsAsking] = useState<boolean>(false);
   const [filterStartTime, setFilterStartTime] = useState<string>('');
   const [filterEndTime, setFilterEndTime] = useState<string>('');
@@ -831,7 +831,7 @@ function App({ onLogout }: AppProps) {
 
       setChatHistory((prev) => [
         ...prev,
-        { role: 'assistant', content: data.answer, clips: data.clips }
+        { role: 'assistant', content: data.answer, clips: data.clips, reidDetections: data.reidDetections }
       ]);
     } catch (err) {
       console.error('RAG query failed', err);
@@ -1491,12 +1491,64 @@ function App({ onLogout }: AppProps) {
                             </div>
                           </div>
                         )}
+
+                        {/* Cited REID detections when assistant responds */}
+                        {chat.role === 'assistant' && chat.reidDetections && chat.reidDetections.length > 0 && (
+                          <div className="mt-2 w-full flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5 text-[0.75rem] text-text-muted">
+                              <Fingerprint size={12} color="var(--color-secondary)" />
+                              <span>Cited REID Detections:</span>
+                            </div>
+                            <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
+                              {chat.reidDetections.map((det, dIdx) => {
+                                const imageUrl = `${API_BASE}/crops/${det.filename}`;
+                                return (
+                                  <div
+                                    key={dIdx}
+                                    className="glass-panel shrink-0 w-[160px] p-2 rounded-[10px] border border-[rgba(255,255,255,0.06)] bg-[rgba(15,23,42,0.6)]"
+                                  >
+                                    <div className="w-full h-[100px] bg-[#020617] rounded-md overflow-hidden relative border border-[rgba(255,255,255,0.05)] mb-1.5">
+                                      <img
+                                        src={imageUrl}
+                                        alt={`Track ${det.trackId}`}
+                                        className="w-full h-full object-cover"
+                                      />
+                                      <div className="absolute bottom-1 right-1 text-[0.6rem] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono">
+                                        ID:{det.trackId}
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-col gap-0.5">
+                                      <span
+                                        title={det.cameraName}
+                                        className="text-[0.72rem] font-semibold text-text-primary overflow-hidden text-ellipsis whitespace-nowrap"
+                                      >
+                                        {det.cameraName}
+                                      </span>
+                                      <div className="flex justify-between items-center">
+                                        <span className={`text-[0.6rem] font-bold px-1.5 py-0.5 rounded capitalize ${
+                                          det.className === 'vehicle'
+                                            ? 'bg-[rgba(6,182,212,0.15)] text-[#06b6d4]'
+                                            : 'bg-[rgba(124,58,237,0.15)] text-[#a78bfa]'
+                                        }`}>
+                                          {det.className}
+                                        </span>
+                                        <span className="text-[0.6rem] text-text-muted">
+                                          {new Date(det.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))
                   )}
                   {isAsking && (
                     <div className="self-start bg-[rgba(255,255,255,0.04)] border border-border-glass p-2.5 px-3.5 rounded-xl text-[0.85rem] flex items-center gap-2">
-                      <RefreshCw size={12} className="animate-spin" /> Searching vectors and answering...
+                      <RefreshCw size={12} className="animate-spin" /> Searching clips and REID detections...
                     </div>
                   )}
                 </div>
@@ -1507,7 +1559,7 @@ function App({ onLogout }: AppProps) {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Ask about your camera recordings..."
+                    placeholder="Ask about recordings or detected persons — e.g., 'How many people were seen today?' or 'Was anyone detected after 9pm?'"
                     className="flex-1"
                     disabled={isAsking}
                   />
