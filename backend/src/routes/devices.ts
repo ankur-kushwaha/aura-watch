@@ -7,15 +7,9 @@ import { handleCropUpload } from './reid';
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
 
-export type DeviceConfigCallback = (deviceId: string, config: any) => void;
-export type ClipUploadCallback = (filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number) => Promise<void>;
+export type ClipUploadCallback = (filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number, streamId: string) => Promise<void>;
 
-let onConfigUpdatedCallback: DeviceConfigCallback | null = null;
 let onClipUploadedCallback: ClipUploadCallback | null = null;
-
-export function registerOnConfigUpdated(cb: DeviceConfigCallback) {
-  onConfigUpdatedCallback = cb;
-}
 
 export function registerOnClipUploaded(cb: ClipUploadCallback) {
   onClipUploadedCallback = cb;
@@ -90,79 +84,62 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 
   try {
-    // Check if device already exists. If it does, we preserve its trackingEnabled configuration and return it.
-    // Otherwise we create a new edge device.
+    // Check if device already exists.
     const device = await prisma.edgeDevice.upsert({
       where: { deviceId },
       update: {
         name,
         status: status || 'Idle',
         lastHeartbeat: new Date(),
-        ...(streamHost !== undefined ? { streamHost: String(streamHost) } : {}),
       },
       create: {
         deviceId,
         name,
-        cameraType: cameraType || 'webcam',
-        streamUrl: streamUrl || '0',
-        trackingEnabled: trackingEnabled || false,
         status: status || 'Idle',
-        motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : 25,
-        pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
-        detectPerson: true,
-        detectVehicle: true,
-        streamHost: streamHost ? String(streamHost) : '',
         lastHeartbeat: new Date(),
       },
     });
 
-    console.log(`[Cloud Hub] Device registered/updated: ${name} (${deviceId})`);
-    res.json(device);
+    // Auto-create default camera stream if none exist
+    let streams = await prisma.cameraStream.findMany({
+      where: { deviceId },
+    });
+
+    if (streams.length === 0) {
+      const defaultStreamId = `${deviceId}_default`;
+      const defaultStream = await prisma.cameraStream.create({
+        data: {
+          streamId: defaultStreamId,
+          deviceId,
+          name: 'Default Camera',
+          cameraType: cameraType || 'webcam',
+          streamUrl: streamUrl || '0',
+          trackingEnabled: trackingEnabled || false,
+          status: 'Offline',
+          motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : 25,
+          pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
+          detectPerson: true,
+          detectVehicle: true,
+          streamHost: streamHost ? String(streamHost) : '',
+        },
+      });
+      streams = [defaultStream];
+    } else if (streamHost) {
+      // Update the stream host for the existing default stream or all streams
+      await prisma.cameraStream.updateMany({
+        where: { deviceId },
+        data: { streamHost: String(streamHost) },
+      });
+      streams = await prisma.cameraStream.findMany({
+        where: { deviceId },
+      });
+    }
+
+    console.log(`[Cloud Hub] Device registered/updated: ${name} (${deviceId}) with ${streams.length} stream(s)`);
+    res.json({ device, streams });
   } catch (error) {
     console.error('Error registering device:', error);
     res.status(500).json({ error: 'Failed to register device' });
-  }
-});
-
-/**
- * POST /api/devices/:deviceId/config
- * Update configuration of a device from the Admin UI
- */
-router.post('/:deviceId/config', async (req: Request, res: Response) => {
-  const { deviceId } = req.params;
-  const { name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, detectPerson, detectVehicle } = req.body;
-
-  try {
-    const existing = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    if (!existing) {
-      return res.status(404).json({ error: 'Device not found' });
-    }
-
-    const updatedDevice = await prisma.edgeDevice.update({
-      where: { deviceId },
-      data: {
-        name: name !== undefined ? name : existing.name,
-        cameraType: cameraType !== undefined ? cameraType : existing.cameraType,
-        streamUrl: streamUrl !== undefined ? streamUrl : existing.streamUrl,
-        trackingEnabled: trackingEnabled !== undefined ? trackingEnabled : existing.trackingEnabled,
-        motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : existing.motionThreshold,
-        pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : existing.pixelChangeThreshold,
-        detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : existing.detectPerson,
-        detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : existing.detectVehicle,
-      },
-    });
-
-    console.log(`[Cloud Hub] Configuration updated for device ${deviceId}. Triggering callback...`);
-
-    // Notify the connected WS device of its configuration change
-    if (onConfigUpdatedCallback) {
-      onConfigUpdatedCallback(deviceId, updatedDevice);
-    }
-
-    res.json({ message: 'Configuration updated successfully', config: updatedDevice });
-  } catch (error) {
-    console.error('Error updating device config:', error);
-    res.status(500).json({ error: 'Failed to update configuration' });
   }
 });
 
@@ -173,10 +150,13 @@ router.post('/:deviceId/config', async (req: Request, res: Response) => {
 router.delete('/:deviceId', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
   try {
+    await prisma.cameraStream.deleteMany({
+      where: { deviceId },
+    });
     await prisma.edgeDevice.delete({
       where: { deviceId },
     });
-    console.log(`[Cloud Hub] Device unregistered: ${deviceId}`);
+    console.log(`[Cloud Hub] Device and its streams unregistered: ${deviceId}`);
     res.json({ message: 'Device unregistered successfully' });
   } catch (error) {
     console.error('Error deleting device:', error);
@@ -190,6 +170,7 @@ router.delete('/:deviceId', async (req: Request, res: Response) => {
  */
 router.post('/:deviceId/upload', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
+  const streamId = (req.headers['x-stream-id'] as string) || `${deviceId}_default`;
   const filename = req.headers['x-filename'] as string || `clip_${Date.now()}_${deviceId}.mp4`;
   const tempDir = path.join(__dirname, '../../storage/temp');
   const filepath = path.join(tempDir, filename);
@@ -205,7 +186,7 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
       fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    console.log(`[Cloud Hub] Receiving video file upload: ${filename} for device: ${device.name}`);
+    console.log(`[Cloud Hub] Receiving video file upload: ${filename} for device: ${device.name}, stream: ${streamId}`);
 
     const fileStream = fs.createWriteStream(filepath);
     
@@ -225,7 +206,7 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
 
       // Run background processing (Gemini pipelines, MongoDB, Qdrant) asynchronously
       if (onClipUploadedCallback) {
-        onClipUploadedCallback(filepath, filename, new Date(), deviceId, duration)
+        onClipUploadedCallback(filepath, filename, new Date(), deviceId, duration, streamId)
           .catch((err) => console.error(`[Cloud Hub] Error processing uploaded clip ${filename}:`, err));
       }
     });
@@ -240,6 +221,7 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
  * Edge device uploads a cropped person JPEG frame
  */
 router.post('/:deviceId/reid/crop', handleCropUpload);
+
 
 
 export type StreamFileRequestHandler = (deviceId: string, filename: string) => Promise<{ contentType: string, data: Buffer | string }>;

@@ -99,7 +99,7 @@ export async function deleteClipVectors(mongoIds: string[]) {
 export async function searchClipVectors(
   vector: number[],
   limit = 5,
-  options?: { startTime?: string; endTime?: string; deviceId?: string }
+  options?: { startTime?: string; endTime?: string; deviceId?: string; streamId?: string }
 ) {
   try {
     const filterConditions: any[] = [];
@@ -129,6 +129,16 @@ export async function searchClipVectors(
       });
     }
 
+    // Add stream ID filter if provided
+    if (options?.streamId) {
+      filterConditions.push({
+        key: 'streamId',
+        match: {
+          value: options.streamId,
+        },
+      });
+    }
+
     const results = await qdrant.search(COLLECTION_NAME, {
       vector: vector,
       limit: limit,
@@ -148,7 +158,7 @@ export async function searchClipVectors(
 export async function fallbackSearchClips(
   queryText: string,
   limit = 5,
-  options?: { startTime?: string; endTime?: string; deviceId?: string }
+  options?: { startTime?: string; endTime?: string; deviceId?: string; streamId?: string }
 ) {
   try {
     console.log(`[Qdrant Fallback] Searching MongoDB for keywords matching: "${queryText}"`);
@@ -163,6 +173,9 @@ export async function fallbackSearchClips(
     const baseWhere: any = {};
     if (options?.deviceId) {
       baseWhere.deviceId = options.deviceId;
+    }
+    if (options?.streamId) {
+      baseWhere.streamId = options.streamId;
     }
     if (options?.startTime || options?.endTime) {
       baseWhere.timestamp = {};
@@ -193,6 +206,7 @@ export async function fallbackSearchClips(
           summary: clip.summary,
           camera: clip.camera,
           deviceId: clip.deviceId,
+          streamId: clip.streamId,
         }
       }));
     }
@@ -233,6 +247,7 @@ export async function fallbackSearchClips(
           summary: clip.summary,
           camera: clip.camera,
           deviceId: clip.deviceId,
+          streamId: clip.streamId,
         }
       };
     });

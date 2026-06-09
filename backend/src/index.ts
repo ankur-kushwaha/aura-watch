@@ -11,7 +11,8 @@ dotenv.config();
 
 import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
-import devicesRouter, { registerOnConfigUpdated, registerOnClipUploaded, registerOnStreamFileRequest } from './routes/devices';
+import devicesRouter, { registerOnClipUploaded } from './routes/devices';
+import streamsRouter, { registerOnStreamsUpdated, registerOnStreamFileRequest } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
@@ -91,6 +92,7 @@ app.get('/api/videos/:filename', async (req, res) => {
 app.use('/api/clips', clipsRouter);
 app.use('/api/rag', ragRouter);
 app.use('/api/devices', devicesRouter);
+app.use('/api/streams', streamsRouter);
 app.use('/api/reid', reidRouter);
 app.use('/api/crops', express.static(CROPS_DIR));
 
@@ -117,12 +119,21 @@ if (fs.existsSync(FRONTEND_DIR)) {
 const activeDevices = new Map<string, WebSocket>();
 // Maps UI WebSocket -> deviceId they are subscribed to
 const uiSubscriptions = new Map<WebSocket, string>();
+// Maps UI WebSocket -> streamId they are subscribed to
+const uiStreamSubscriptions = new Map<WebSocket, string>();
 
 function broadcastToSubscribedUIs(deviceId: string, data: any) {
   const message = JSON.stringify(data);
   for (const [ws, subDeviceId] of uiSubscriptions.entries()) {
     if (subDeviceId === deviceId && ws.readyState === WebSocket.OPEN) {
       ws.send(message);
+    }
+  }
+  if (data.streamId) {
+    for (const [ws, subStreamId] of uiStreamSubscriptions.entries()) {
+      if (subStreamId === data.streamId && ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
     }
   }
 }
@@ -136,19 +147,20 @@ function broadcastLogToSubscribedUIs(deviceId: string, message: string) {
   });
 }
 
-// Register callbacks for device changes
-registerOnConfigUpdated((deviceId, config) => {
+// Register callbacks for stream configuration changes
+registerOnStreamsUpdated(async (deviceId) => {
   const deviceSocket = activeDevices.get(deviceId);
   if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-    console.log(`[WS Hub] Pushing configure command to edge device: ${deviceId}`);
-    deviceSocket.send(JSON.stringify({ type: 'configure', config }));
+    const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
+    console.log(`[WS Hub] Pushing configure command to edge device: ${deviceId} with ${streams.length} stream(s)`);
+    deviceSocket.send(JSON.stringify({ type: 'configure', streams }));
   } else {
     console.log(`[WS Hub] Edge device ${deviceId} is currently offline. Config saved in DB.`);
   }
 });
 
-registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration) => {
-  await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration);
+registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId) => {
+  await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId);
 });
 
 registerOnClipDeleted((deviceId, filename) => {
@@ -223,10 +235,14 @@ function fetchHlsFromEdgeWebSocket(deviceId: string, filename: string): Promise<
 }
 
 registerOnStreamFileRequest(async (deviceId, filename) => {
-  const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-  if (device?.streamHost) {
+  const match = filename.match(/hls_([^\/]+)/);
+  const streamId = match ? match[1] : null;
+  const stream = streamId ? await prisma.cameraStream.findUnique({ where: { streamId } }) : null;
+  const streamHost = stream?.streamHost;
+
+  if (streamHost) {
     try {
-      return await fetchHlsFromEdgeHttp(device.streamHost, filename);
+      return await fetchHlsFromEdgeHttp(streamHost, filename);
     } catch (error: any) {
       console.warn(`[Stream Proxy] HTTP fetch failed for ${deviceId}/${filename}, falling back to WS: ${error.message}`);
     }
@@ -238,24 +254,24 @@ registerOnStreamFileRequest(async (deviceId, filename) => {
 /**
  * Upload to Gemini, fetch summary, generate vector embeddings, and save to MongoDB + Qdrant
  */
-async function processVideoClipInBackground(filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number = 10.0) {
-  const device = await prisma.edgeDevice.findUnique({
-    where: { deviceId }
+async function processVideoClipInBackground(filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number = 10.0, streamId: string) {
+  const stream = await prisma.cameraStream.findUnique({
+    where: { streamId }
   });
-  const cameraName = device ? device.name : 'Unknown Camera';
+  const cameraName = stream ? stream.name : 'Unknown Camera';
 
-  await prisma.edgeDevice.update({
-    where: { deviceId },
+  await prisma.cameraStream.update({
+    where: { streamId },
     data: { status: 'Processing' }
   });
 
-  broadcastToSubscribedUIs(deviceId, { type: 'status', status: 'Processing Video' });
-  broadcastLogToSubscribedUIs(deviceId, `Processing video clip: ${filename} via Gemini...`);
+  broadcastToSubscribedUIs(deviceId, { type: 'status', streamId, status: 'Processing' });
+  broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Processing video clip: ${filename} via Gemini...`);
 
   try {
     // 1. Send to Gemini for summarization
     const summary = await summarizeVideo(filepath, cameraName);
-    broadcastLogToSubscribedUIs(deviceId, `Gemini summary generated successfully.`);
+    broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Gemini summary generated successfully.`);
 
     // 2. Save metadata to MongoDB via Prisma
     const clipDb = await prisma.videoClip.create({
@@ -267,9 +283,10 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
         duration: Number.isFinite(duration) && duration > 0 ? duration : 10.0,
         camera: cameraName,
         deviceId: deviceId,
+        streamId: streamId,
       }
     });
-    broadcastLogToSubscribedUIs(deviceId, `Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
+    broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
 
     // 3. Generate embedding vector of the summary
     const vector = await generateTextEmbedding(summary);
@@ -282,9 +299,10 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
       summary,
       camera: cameraName,
       deviceId: deviceId,
+      streamId: streamId,
     });
 
-    broadcastLogToSubscribedUIs(deviceId, `Successfully indexed clip in Qdrant.`);
+    broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Successfully indexed clip in Qdrant.`);
     
     // Notify subscribed UI clients of the new clip
     broadcastToSubscribedUIs(deviceId, {
@@ -306,18 +324,19 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
       }
     }
 
-    // Restore device status
-    const refreshedDevice = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    // Restore stream status
+    const refreshedStream = await prisma.cameraStream.findUnique({ where: { streamId } });
     const isOnline = activeDevices.has(deviceId);
-    const finalStatus = isOnline ? (refreshedDevice?.trackingEnabled ? 'Monitoring' : 'Idle') : 'Offline';
+    const finalStatus = isOnline ? (refreshedStream?.trackingEnabled ? 'Monitoring' : 'Idle') : 'Offline';
     
-    await prisma.edgeDevice.update({
-      where: { deviceId },
+    await prisma.cameraStream.update({
+      where: { streamId },
       data: { status: finalStatus }
     });
 
     broadcastToSubscribedUIs(deviceId, { 
       type: 'status', 
+      streamId,
       status: finalStatus 
     });
   }
@@ -340,23 +359,30 @@ wss.on('connection', async (ws: WebSocket, req) => {
     activeDevices.set(deviceId, ws);
     console.log(`[WS] Edge device connected: ${deviceId}. Online count: ${activeDevices.size}`);
 
-    // Fetch device and set its status
-    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    const currentStatus = device?.trackingEnabled ? 'Monitoring' : 'Idle';
-
+    // Update device status and set all its streams to Idle/Monitoring initially
     await prisma.edgeDevice.update({
       where: { deviceId },
-      data: { status: currentStatus, lastHeartbeat: new Date() }
+      data: { status: 'Online', lastHeartbeat: new Date() }
     });
 
-    // Notify UI subscribers
-    broadcastToSubscribedUIs(deviceId, { type: 'status', status: currentStatus, cameraConfig: device });
+    const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
+    for (const stream of streams) {
+      const streamStatus = stream.trackingEnabled ? 'Monitoring' : 'Idle';
+      await prisma.cameraStream.update({
+        where: { streamId: stream.streamId },
+        data: { status: streamStatus }
+      });
+      broadcastToSubscribedUIs(deviceId, { type: 'status', streamId: stream.streamId, status: streamStatus, cameraConfig: stream });
+    }
+
     broadcastLogToSubscribedUIs(deviceId, `Edge device connected.`);
 
-    // If there is already a UI client subscribed, toggle camera stream on the edge
-    const hasSubscribers = Array.from(uiSubscriptions.values()).includes(deviceId);
-    if (hasSubscribers) {
-      ws.send(JSON.stringify({ type: 'toggle_stream', stream: true }));
+    // If there is already a UI client subscribed to any of the device's streams, toggle streaming for them
+    for (const stream of streams) {
+      const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(stream.streamId);
+      if (hasSubscribers) {
+        ws.send(JSON.stringify({ type: 'toggle_stream', streamId: stream.streamId, stream: true }));
+      }
     }
 
     ws.on('message', async (messageData: string) => {
@@ -368,28 +394,37 @@ wss.on('connection', async (ws: WebSocket, req) => {
               where: { deviceId },
               data: {
                 lastHeartbeat: new Date(),
-                ...(data.streamHost ? { streamHost: String(data.streamHost) } : {}),
+                status: 'Online',
               }
             });
+            if (data.streamHost) {
+              await prisma.cameraStream.updateMany({
+                where: { deviceId },
+                data: { streamHost: String(data.streamHost) }
+              });
+            }
             break;
           case 'stream_announce':
             if (data.streamHost) {
-              await prisma.edgeDevice.update({
+              await prisma.cameraStream.updateMany({
                 where: { deviceId },
                 data: { streamHost: String(data.streamHost) }
               });
             }
             break;
           case 'status_change':
-            await prisma.edgeDevice.update({
-              where: { deviceId },
-              data: { status: data.status }
-            });
-            broadcastToSubscribedUIs(deviceId, { type: 'status', status: data.status });
+            if (data.streamId) {
+              await prisma.cameraStream.update({
+                where: { streamId: data.streamId },
+                data: { status: data.status }
+              });
+              broadcastToSubscribedUIs(deviceId, { type: 'status', streamId: data.streamId, status: data.status });
+            }
             break;
           case 'frame':
             broadcastToSubscribedUIs(deviceId, {
               type: 'frame',
+              streamId: data.streamId,
               image: data.image
             });
             break;
@@ -429,7 +464,16 @@ wss.on('connection', async (ws: WebSocket, req) => {
         data: { status: 'Offline' }
       });
 
-      broadcastToSubscribedUIs(deviceId, { type: 'status', status: 'Offline' });
+      await prisma.cameraStream.updateMany({
+        where: { deviceId },
+        data: { status: 'Offline' }
+      });
+
+      const deviceStreams = await prisma.cameraStream.findMany({ where: { deviceId } });
+      for (const stream of deviceStreams) {
+        broadcastToSubscribedUIs(deviceId, { type: 'status', streamId: stream.streamId, status: 'Offline' });
+      }
+
       broadcastLogToSubscribedUIs(deviceId, `Edge device disconnected.`);
     });
 
@@ -446,34 +490,59 @@ wss.on('connection', async (ws: WebSocket, req) => {
           uiSubscriptions.set(ws, targetDeviceId);
           console.log(`[WS] UI client subscribed to device: ${targetDeviceId}`);
 
-          // Send current status of the subscribed device
-          const device = await prisma.edgeDevice.findUnique({ where: { deviceId: targetDeviceId } });
+          // Send current status of all streams belonging to this device
+          const streams = await prisma.cameraStream.findMany({ where: { deviceId: targetDeviceId } });
           const isOnline = activeDevices.has(targetDeviceId);
-          const currentStatus = isOnline ? (device?.status || 'Idle') : 'Offline';
 
-          ws.send(JSON.stringify({
-            type: 'status',
-            status: currentStatus,
-            cameraConfig: device
-          }));
-
-          // Notify the edge device to start sending frames since a UI client is listening
-          const deviceSocket = activeDevices.get(targetDeviceId);
-          if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-            deviceSocket.send(JSON.stringify({ type: 'toggle_stream', stream: true }));
+          for (const stream of streams) {
+            const currentStatus = isOnline ? (stream.status || 'Idle') : 'Offline';
+            ws.send(JSON.stringify({
+              type: 'status',
+              streamId: stream.streamId,
+              status: currentStatus,
+              cameraConfig: stream
+            }));
           }
         } else if (data.type === 'unsubscribe_device') {
-          const prevDeviceId = uiSubscriptions.get(ws);
           uiSubscriptions.delete(ws);
+        } else if (data.type === 'subscribe_stream') {
+          const targetStreamId = data.streamId;
+          uiStreamSubscriptions.set(ws, targetStreamId);
+          console.log(`[WS] UI client subscribed to stream: ${targetStreamId}`);
 
-          if (prevDeviceId) {
-            console.log(`[WS] UI client unsubscribed from device: ${prevDeviceId}`);
-            // Stop streaming from device if no more UI subscribers are active
-            const hasOtherSubscribers = Array.from(uiSubscriptions.values()).includes(prevDeviceId);
+          const stream = await prisma.cameraStream.findUnique({ where: { streamId: targetStreamId } });
+          if (stream) {
+            const isOnline = activeDevices.has(stream.deviceId);
+            const currentStatus = isOnline ? (stream.status || 'Idle') : 'Offline';
+
+            ws.send(JSON.stringify({
+              type: 'status',
+              streamId: targetStreamId,
+              status: currentStatus,
+              cameraConfig: stream
+            }));
+
+            // Notify edge device to start streaming this specific stream
+            const deviceSocket = activeDevices.get(stream.deviceId);
+            if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+              deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId: targetStreamId, stream: true }));
+            }
+          }
+        } else if (data.type === 'unsubscribe_stream') {
+          const prevStreamId = uiStreamSubscriptions.get(ws);
+          uiStreamSubscriptions.delete(ws);
+
+          if (prevStreamId) {
+            console.log(`[WS] UI client unsubscribed from stream: ${prevStreamId}`);
+            // Stop streaming if no other UI client is subscribed to this stream
+            const hasOtherSubscribers = Array.from(uiStreamSubscriptions.values()).includes(prevStreamId);
             if (!hasOtherSubscribers) {
-              const deviceSocket = activeDevices.get(prevDeviceId);
-              if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-                deviceSocket.send(JSON.stringify({ type: 'toggle_stream', stream: false }));
+              const stream = await prisma.cameraStream.findUnique({ where: { streamId: prevStreamId } });
+              if (stream) {
+                const deviceSocket = activeDevices.get(stream.deviceId);
+                if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+                  deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId: prevStreamId, stream: false }));
+                }
               }
             }
           }
@@ -484,17 +553,22 @@ wss.on('connection', async (ws: WebSocket, req) => {
     });
 
     ws.on('close', () => {
-      const prevDeviceId = uiSubscriptions.get(ws);
       uiSubscriptions.delete(ws);
+      const prevStreamId = uiStreamSubscriptions.get(ws);
+      uiStreamSubscriptions.delete(ws);
       console.log('[WS] UI client disconnected');
 
-      if (prevDeviceId) {
-        const hasOtherSubscribers = Array.from(uiSubscriptions.values()).includes(prevDeviceId);
+      if (prevStreamId) {
+        const hasOtherSubscribers = Array.from(uiStreamSubscriptions.values()).includes(prevStreamId);
         if (!hasOtherSubscribers) {
-          const deviceSocket = activeDevices.get(prevDeviceId);
-          if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-            deviceSocket.send(JSON.stringify({ type: 'toggle_stream', stream: false }));
-          }
+          prisma.cameraStream.findUnique({ where: { streamId: prevStreamId } }).then((stream) => {
+            if (stream) {
+              const deviceSocket = activeDevices.get(stream.deviceId);
+              if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+                deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId: prevStreamId, stream: false }));
+              }
+            }
+          }).catch(err => console.error('Error on close stream cleanup:', err));
         }
       }
     });
@@ -578,8 +652,11 @@ server.listen(PORT, async () => {
     console.error('Failed to start ReID worker:', err);
   }
   
-  // Set all devices to Offline initially (until they connect and send WS link)
+  // Set all devices and streams to Offline initially
   await prisma.edgeDevice.updateMany({
+    data: { status: 'Offline' }
+  });
+  await prisma.cameraStream.updateMany({
     data: { status: 'Offline' }
   });
 
@@ -603,6 +680,11 @@ server.listen(PORT, async () => {
           data: { status: 'Offline' }
         });
 
+        await prisma.cameraStream.updateMany({
+          where: { deviceId: device.deviceId },
+          data: { status: 'Offline' }
+        });
+
         // Clean up socket if exists in activeDevices
         const ws = activeDevices.get(device.deviceId);
         if (ws) {
@@ -612,7 +694,10 @@ server.listen(PORT, async () => {
           activeDevices.delete(device.deviceId);
         }
 
-        broadcastToSubscribedUIs(device.deviceId, { type: 'status', status: 'Offline' });
+        const streams = await prisma.cameraStream.findMany({ where: { deviceId: device.deviceId } });
+        for (const stream of streams) {
+          broadcastToSubscribedUIs(device.deviceId, { type: 'status', streamId: stream.streamId, status: 'Offline' });
+        }
         broadcastLogToSubscribedUIs(device.deviceId, `Edge device heartbeat timed out. Marked Offline.`);
       }
     } catch (error) {

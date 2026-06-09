@@ -25,6 +25,7 @@ export function registerOnReidCropUploaded(cb: ReidCropUploadedCallback) {
  */
 export async function handleCropUpload(req: Request, res: Response) {
   const { deviceId } = req.params;
+  const streamId = req.headers['x-stream-id'] as string || `${deviceId}_default`;
   const trackId = parseInt(req.headers['x-track-id'] as string || '0', 10);
   const confidence = parseFloat(req.headers['x-confidence'] as string || '0');
   const bbox = req.headers['x-bbox'] as string || '0,0,0,0';
@@ -60,6 +61,7 @@ export async function handleCropUpload(req: Request, res: Response) {
         data: {
           deviceId,
           cameraName,
+          streamId,
           trackId,
           timestamp,
           filename,
@@ -72,6 +74,7 @@ export async function handleCropUpload(req: Request, res: Response) {
       await upsertReidVector(detection.id, vector, {
         deviceId,
         cameraName,
+        streamId,
         trackId,
         timestamp: timestamp.toISOString(),
         filename,
@@ -156,19 +159,23 @@ router.get('/topology', async (req: Request, res: Response) => {
  * Create or update a topology route
  */
 router.post('/topology', async (req: Request, res: Response) => {
-  const { fromCamera, toCamera, minTimeSeconds, maxTimeSeconds, topologyScore } = req.body;
+  const { fromCamera, toCamera, fromStreamId, toStreamId, minTimeSeconds, maxTimeSeconds, topologyScore } = req.body;
 
   if (!fromCamera || !toCamera) {
     return res.status(400).json({ error: 'fromCamera and toCamera are required' });
   }
 
   try {
-    // Check if route exists between these two cameras (bi-directional check)
+    // Check if route exists between these two cameras/streams (bi-directional check)
     const existing = await prisma.topologyRoute.findFirst({
       where: {
         OR: [
           { fromCamera, toCamera },
           { fromCamera: toCamera, toCamera: fromCamera },
+          ...(fromStreamId && toStreamId ? [
+            { fromStreamId, toStreamId },
+            { fromStreamId: toStreamId, toStreamId: fromStreamId }
+          ] : [])
         ]
       }
     });
@@ -178,6 +185,10 @@ router.post('/topology', async (req: Request, res: Response) => {
       route = await prisma.topologyRoute.update({
         where: { id: existing.id },
         data: {
+          fromCamera,
+          toCamera,
+          fromStreamId: fromStreamId || null,
+          toStreamId: toStreamId || null,
           minTimeSeconds: parseFloat(minTimeSeconds),
           maxTimeSeconds: parseFloat(maxTimeSeconds),
           topologyScore: parseFloat(topologyScore || '1.0'),
@@ -188,6 +199,8 @@ router.post('/topology', async (req: Request, res: Response) => {
         data: {
           fromCamera,
           toCamera,
+          fromStreamId: fromStreamId || null,
+          toStreamId: toStreamId || null,
           minTimeSeconds: parseFloat(minTimeSeconds),
           maxTimeSeconds: parseFloat(maxTimeSeconds),
           topologyScore: parseFloat(topologyScore || '1.0'),
@@ -243,6 +256,7 @@ router.post('/track', async (req: Request, res: Response) => {
 
     const tq = new Date(queryDetection.timestamp).getTime();
     const Cq = queryDetection.cameraName;
+    const Sq = queryDetection.streamId;
 
     const scoredMatches = [];
 
@@ -254,14 +268,16 @@ router.post('/track', async (req: Request, res: Response) => {
 
       const tc = new Date(payload.timestamp).getTime();
       const Cc = payload.cameraName;
+      const Sc = payload.streamId;
       const deltaTime = Math.abs(tq - tc) / 1000; // time diff in seconds
 
       let timeScore = 0.5; // default moderate score
       let topologyScore = 0.5; // default moderate score
       let isValidTransition = true;
 
-      // Find route config bi-directionally
+      // Find route config bi-directionally by streamId first, then by cameraName
       const route = topologyRoutes.find(r => 
+        (Sq && Sc && ((r.fromStreamId === Sq && r.toStreamId === Sc) || (r.fromStreamId === Sc && r.toStreamId === Sq))) ||
         (r.fromCamera === Cq && r.toCamera === Cc) || 
         (r.fromCamera === Cc && r.toCamera === Cq)
       );
@@ -284,8 +300,9 @@ router.post('/track', async (req: Request, res: Response) => {
           timeScore = 0.2 * Math.exp(-(deltaTime - route.maxTimeSeconds) / 600);
         }
       } else {
-        // No topology route configured between these cameras
-        if (Cq === Cc) {
+        // No topology route configured between these cameras/streams
+        const isSameCamera = Sq && Sc ? Sq === Sc : Cq === Cc;
+        if (isSameCamera) {
           // Same camera: higher topology default, decay over time
           topologyScore = 0.8;
           timeScore = Math.exp(-deltaTime / 300); // decays over 5 mins
@@ -311,6 +328,7 @@ router.post('/track', async (req: Request, res: Response) => {
           id: payload.mongoId,
           deviceId: payload.deviceId,
           cameraName: payload.cameraName,
+          streamId: payload.streamId,
           trackId: payload.trackId,
           timestamp: payload.timestamp,
           filename: payload.filename,

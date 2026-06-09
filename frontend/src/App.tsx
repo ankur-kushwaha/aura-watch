@@ -19,7 +19,9 @@ import {
   LogOut,
   Fingerprint,
   Network,
-  Map
+  Map,
+  Plus,
+  X
 } from 'lucide-react';
 
 interface VideoClip {
@@ -37,6 +39,15 @@ interface EdgeDevice {
   id: string;
   deviceId: string;
   name: string;
+  status: string;
+  lastHeartbeat: string;
+}
+
+interface CameraStream {
+  id: string;
+  streamId: string;
+  deviceId: string;
+  name: string;
   cameraType: 'webcam' | 'rtsp';
   streamUrl: string;
   trackingEnabled: boolean;
@@ -46,6 +57,7 @@ interface EdgeDevice {
   pixelChangeThreshold: number;
   detectPerson: boolean;
   detectVehicle: boolean;
+  streamHost: string;
 }
 
 interface CameraConfig {
@@ -73,6 +85,7 @@ interface ReidDetection {
   id: string;
   deviceId: string;
   cameraName: string;
+  streamId?: string;
   trackId: number;
   timestamp: string;
   filename: string;
@@ -84,6 +97,8 @@ interface ReidRoute {
   id?: string;
   fromCamera: string;
   toCamera: string;
+  fromStreamId?: string;
+  toStreamId?: string;
   minTimeSeconds: number;
   maxTimeSeconds: number;
   topologyScore: number;
@@ -99,7 +114,12 @@ interface AppProps {
 function App({ onLogout }: AppProps) {
   // App States
   const [devices, setDevices] = useState<EdgeDevice[]>([]);
+  const [streams, setStreams] = useState<CameraStream[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [selectedStreamId, setSelectedStreamId] = useState<string>('');
+  const [showConfigDialog, setShowConfigDialog] = useState<boolean>(false);
+  // When non-null, the dialog is in "add" mode and this is the target deviceId
+  const [addingStreamForDeviceId, setAddingStreamForDeviceId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'events' | 'reid'>('events');
   
   // ReID States
@@ -118,11 +138,11 @@ function App({ onLogout }: AppProps) {
     maxTimeSeconds: 60,
     topologyScore: 1.0,
   });
-  const selectedDeviceIdRef = useRef(selectedDeviceId);
+  const selectedStreamIdRef = useRef(selectedStreamId);
 
   useEffect(() => {
-    selectedDeviceIdRef.current = selectedDeviceId;
-  }, [selectedDeviceId]);
+    selectedStreamIdRef.current = selectedStreamId;
+  }, [selectedStreamId]);
 
   const [config, setConfig] = useState<CameraConfig>({
     name: 'Macbook Air Camera',
@@ -149,7 +169,7 @@ function App({ onLogout }: AppProps) {
   const [isAsking, setIsAsking] = useState<boolean>(false);
   const [filterStartTime, setFilterStartTime] = useState<string>('');
   const [filterEndTime, setFilterEndTime] = useState<string>('');
-  const [filterDeviceId, setFilterDeviceId] = useState<string>('');
+  const [filterStreamId, setFilterStreamId] = useState<string>('');
   const [showFilters, setShowFilters] = useState<boolean>(false);
 
   // Live Camera Feed Video States
@@ -171,16 +191,21 @@ function App({ onLogout }: AppProps) {
       const res = await fetch(`${API_BASE}/devices`);
       const data = await res.json();
       setDevices(data);
-      if (data.length > 0) {
-        setSelectedDeviceId((prevId) => {
+
+      const streamsRes = await fetch(`${API_BASE}/streams`);
+      const streamsData = await streamsRes.json();
+      setStreams(streamsData);
+
+      if (streamsData.length > 0) {
+        setSelectedStreamId((prevId) => {
           if (selectFirst || !prevId) {
-            return data[0].deviceId;
+            return streamsData[0].streamId;
           }
           return prevId;
         });
       }
     } catch (err) {
-      console.error('Failed to fetch devices', err);
+      console.error('Failed to fetch devices/streams', err);
     }
   }, []);
 
@@ -218,10 +243,10 @@ function App({ onLogout }: AppProps) {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log('WebSocket open. Subscribing to selected device...');
-      const currentId = selectedDeviceIdRef.current;
-      if (currentId) {
-        ws.send(JSON.stringify({ type: 'subscribe_device', deviceId: currentId }));
+      console.log('WebSocket open. Subscribing to selected stream...');
+      const currentStreamId = selectedStreamIdRef.current;
+      if (currentStreamId) {
+        ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: currentStreamId }));
       }
     };
 
@@ -230,27 +255,45 @@ function App({ onLogout }: AppProps) {
 
       switch (data.type) {
         case 'status':
-          setStatus(data.status);
-          if (data.cameraConfig) {
-            const cfg = data.cameraConfig;
-            setConfig({
-              name: cfg.name,
-              type: cfg.cameraType,
-              streamUrl: cfg.streamUrl,
-              trackingEnabled: cfg.trackingEnabled,
-              motionThreshold: cfg.motionThreshold,
-              pixelChangeThreshold: cfg.pixelChangeThreshold,
-              detectPerson: cfg.detectPerson ?? true,
-              detectVehicle: cfg.detectVehicle ?? true,
-            });
-            // Update device list status locally
-            setDevices((prev) =>
-              prev.map((d) =>
-                d.deviceId === cfg.deviceId
-                  ? { ...d, status: data.status, name: cfg.name, cameraType: cfg.cameraType, streamUrl: cfg.streamUrl, trackingEnabled: cfg.trackingEnabled, motionThreshold: cfg.motionThreshold, pixelChangeThreshold: cfg.pixelChangeThreshold, detectPerson: cfg.detectPerson ?? true, detectVehicle: cfg.detectVehicle ?? true }
-                  : d
+          if (data.streamId) {
+            setStreams((prev) =>
+              prev.map((s) =>
+                s.streamId === data.streamId
+                  ? {
+                      ...s,
+                      status: data.status,
+                      ...(data.cameraConfig ? {
+                        name: data.cameraConfig.name,
+                        cameraType: data.cameraConfig.cameraType,
+                        streamUrl: data.cameraConfig.streamUrl,
+                        trackingEnabled: data.cameraConfig.trackingEnabled,
+                        motionThreshold: data.cameraConfig.motionThreshold,
+                        pixelChangeThreshold: data.cameraConfig.pixelChangeThreshold,
+                        detectPerson: data.cameraConfig.detectPerson ?? true,
+                        detectVehicle: data.cameraConfig.detectVehicle ?? true,
+                        streamHost: data.cameraConfig.streamHost,
+                      } : {})
+                    }
+                  : s
               )
             );
+            
+            if (data.streamId === selectedStreamIdRef.current) {
+              setStatus(data.status);
+              if (data.cameraConfig) {
+                const cfg = data.cameraConfig;
+                setConfig({
+                  name: cfg.name,
+                  type: cfg.cameraType,
+                  streamUrl: cfg.streamUrl,
+                  trackingEnabled: cfg.trackingEnabled,
+                  motionThreshold: cfg.motionThreshold,
+                  pixelChangeThreshold: cfg.pixelChangeThreshold,
+                  detectPerson: cfg.detectPerson ?? true,
+                  detectVehicle: cfg.detectVehicle ?? true,
+                });
+              }
+            }
           }
           break;
         case 'motion_state':
@@ -280,7 +323,7 @@ function App({ onLogout }: AppProps) {
           }
           break;
         case 'frame':
-          if (data.image) {
+          if (data.image && data.streamId === selectedStreamIdRef.current) {
             setLiveFrame(`data:image/jpeg;base64,${data.image}`);
             lastFrameAtRef.current = Date.now();
             setUseHlsFallback(false);
@@ -316,30 +359,31 @@ function App({ onLogout }: AppProps) {
     });
   }, [fetchDevices, fetchClips]);
 
-  // Sync selected device details when selectedDeviceId or devices list changes
+  // Sync selected stream details when selectedStreamId or streams list changes
   useEffect(() => {
-    if (!selectedDeviceId) return;
-    const dev = devices.find((d) => d.deviceId === selectedDeviceId);
-    if (dev) {
+    if (!selectedStreamId) return;
+    const stream = streams.find((s) => s.streamId === selectedStreamId);
+    if (stream) {
       Promise.resolve().then(() => {
         setConfig({
-          name: dev.name,
-          type: dev.cameraType,
-          streamUrl: dev.streamUrl,
-          trackingEnabled: dev.trackingEnabled,
-          motionThreshold: dev.motionThreshold,
-          pixelChangeThreshold: dev.pixelChangeThreshold,
-          detectPerson: dev.detectPerson ?? true,
-          detectVehicle: dev.detectVehicle ?? true,
+          name: stream.name,
+          type: stream.cameraType,
+          streamUrl: stream.streamUrl,
+          trackingEnabled: stream.trackingEnabled,
+          motionThreshold: stream.motionThreshold,
+          pixelChangeThreshold: stream.pixelChangeThreshold,
+          detectPerson: stream.detectPerson ?? true,
+          detectVehicle: stream.detectVehicle ?? true,
         });
-        setStatus(dev.status);
+        setStatus(stream.status);
+        setSelectedDeviceId(stream.deviceId);
       });
     }
-  }, [selectedDeviceId, devices]);
+  }, [selectedStreamId, streams]);
 
-  // Sync WS subscription when device changes
+  // Sync WS subscription when stream changes
   useEffect(() => {
-    if (!selectedDeviceId) return;
+    if (!selectedStreamId) return;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Clear logs for new stream
@@ -347,9 +391,9 @@ function App({ onLogout }: AppProps) {
       setMotionActive(false);
       setMotionRatio(0);
 
-      wsRef.current.send(JSON.stringify({ type: 'subscribe_device', deviceId: selectedDeviceId }));
+      wsRef.current.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
     }
-  }, [selectedDeviceId]);
+  }, [selectedStreamId]);
 
   // Establish initial WebSocket connection
   useEffect(() => {
@@ -429,10 +473,19 @@ function App({ onLogout }: AppProps) {
       return;
     }
     try {
+      // Find streamIds for topology linking
+      const fromStream = streams.find(s => s.name === newRoute.fromCamera);
+      const toStream = streams.find(s => s.name === newRoute.toCamera);
+      const payload = {
+        ...newRoute,
+        fromStreamId: fromStream?.streamId,
+        toStreamId: toStream?.streamId,
+      };
+
       const res = await fetch(`${API_BASE}/reid/topology`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRoute),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         fetchTopology();
@@ -477,7 +530,7 @@ function App({ onLogout }: AppProps) {
   //   }
   // }, [chatHistory]);
 
-  // Reset stream loading only when switching devices (not on Recording/Processing status)
+  // Reset stream loading only when switching streams (not on Recording/Processing status)
   useEffect(() => {
     Promise.resolve().then(() => {
       setStreamLoading(true);
@@ -485,11 +538,11 @@ function App({ onLogout }: AppProps) {
       setUseHlsFallback(false);
       lastFrameAtRef.current = 0;
     });
-  }, [selectedDeviceId]);
+  }, [selectedStreamId]);
 
   // Fall back to HLS if WebSocket preview frames never arrive or stop
   useEffect(() => {
-    if (!selectedDeviceId || status === 'Offline') return;
+    if (!selectedStreamId || status === 'Offline') return;
 
     const startupTimeout = setTimeout(() => {
       if (!lastFrameAtRef.current) {
@@ -510,20 +563,20 @@ function App({ onLogout }: AppProps) {
       clearTimeout(startupTimeout);
       clearInterval(interval);
     };
-  }, [selectedDeviceId, status]);
+  }, [selectedStreamId, status]);
 
-  const isDeviceOffline = status === 'Offline';
+  const isStreamOffline = status === 'Offline';
 
   // Initialize HLS player as fallback when WebSocket preview is unavailable
   useEffect(() => {
-    if (!selectedDeviceId || isDeviceOffline || !useHlsFallback) {
+    if (!selectedStreamId || isStreamOffline || !useHlsFallback) {
       return;
     }
 
     const video = videoRef.current;
     if (!video) return;
 
-    const streamUrl = `${API_BASE}/devices/${selectedDeviceId}/stream/index.m3u8`;
+    const streamUrl = `${API_BASE}/streams/${selectedStreamId}/stream/index.m3u8`;
     let hls: Hls | null = null;
 
     const startPlaying = () => {
@@ -582,18 +635,18 @@ function App({ onLogout }: AppProps) {
       video.src = '';
       video.onplaying = null;
     };
-  }, [selectedDeviceId, isDeviceOffline, useHlsFallback]);
+  }, [selectedStreamId, isStreamOffline, useHlsFallback]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDeviceId) return;
+    if (!selectedStreamId) return;
     if (!config.detectPerson && !config.detectVehicle) {
       alert('Select at least one detection target: Person or Vehicle.');
       return;
     }
 
     try {
-      const res = await fetch(`${API_BASE}/devices/${selectedDeviceId}/config`, {
+      const res = await fetch(`${API_BASE}/streams/${selectedStreamId}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -624,12 +677,12 @@ function App({ onLogout }: AppProps) {
     }
   };
 
-  const handleToggleDeviceMonitoring = async (deviceId: string, currentTrackingEnabled: boolean) => {
-    const dev = devices.find(d => d.deviceId === deviceId);
-    if (!dev || dev.status === 'Offline') return;
+  const handleToggleStreamMonitoring = async (streamId: string, currentTrackingEnabled: boolean) => {
+    const stream = streams.find(s => s.streamId === streamId);
+    if (!stream || stream.status === 'Offline') return;
 
     try {
-      const res = await fetch(`${API_BASE}/devices/${deviceId}/config`, {
+      const res = await fetch(`${API_BASE}/streams/${streamId}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -638,7 +691,7 @@ function App({ onLogout }: AppProps) {
       });
       const data = await res.json();
 
-      if (deviceId === selectedDeviceId) {
+      if (streamId === selectedStreamId) {
         setConfig((prev) => ({
           ...prev,
           trackingEnabled: data.config.trackingEnabled,
@@ -648,6 +701,46 @@ function App({ onLogout }: AppProps) {
       fetchDevices();
     } catch (err) {
       console.error('Failed to toggle monitoring', err);
+    }
+  };
+
+  const handleAddStream = (deviceId: string) => {
+    // Just open the dialog with defaults — stream is created only on form submit
+    setSelectedDeviceId(deviceId);
+    setSelectedStreamId('');
+    setConfig({
+      name: 'New Camera Stream',
+      type: 'webcam',
+      streamUrl: '0',
+      trackingEnabled: false,
+      motionThreshold: 25,
+      pixelChangeThreshold: 0.02,
+      detectPerson: true,
+      detectVehicle: true,
+    });
+    setAddingStreamForDeviceId(deviceId);
+    setShowConfigDialog(true);
+  };
+
+  const handleDeleteStream = async (streamId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this camera stream?')) return;
+    try {
+      const res = await fetch(`${API_BASE}/streams/${streamId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        await fetchDevices();
+        setSelectedStreamId((prevId) => {
+          if (prevId === streamId) {
+            const remaining = streams.filter(s => s.streamId !== streamId);
+            return remaining.length > 0 ? remaining[0].streamId : '';
+          }
+          return prevId;
+        });
+      }
+    } catch (err) {
+      console.error('Failed to delete stream', err);
     }
   };
 
@@ -704,7 +797,7 @@ function App({ onLogout }: AppProps) {
           history: chatHistory.map(h => ({ role: h.role, content: h.content })),
           startTime: filterStartTime ? new Date(filterStartTime).toISOString() : undefined,
           endTime: filterEndTime ? new Date(filterEndTime).toISOString() : undefined,
-          deviceId: filterDeviceId || undefined,
+          streamId: filterStreamId || undefined,
         }),
       });
 
@@ -818,59 +911,169 @@ function App({ onLogout }: AppProps) {
                 No edge devices registered. Run the edge agent script on a device to register.
               </div>
             ) : (
-              <div className="flex flex-col gap-2.5">
-                <div className="flex gap-2.5 flex-wrap">
-                  {devices.map((dev) => {
-                    const isSelected = dev.deviceId === selectedDeviceId;
-                    const isOnline = dev.status !== 'Offline';
-                    const statusColor =
-                      dev.status === 'Monitoring' ? 'var(--color-success)' :
-                        dev.status === 'Recording' ? 'var(--color-danger)' :
-                          dev.status === 'Processing Video' || dev.status === 'Processing' ? 'var(--color-primary)' :
-                            dev.status === 'Idle' ? 'var(--color-secondary)' : 'var(--color-text-muted)';
+              <div className="flex flex-col gap-4">
+                {devices.map((dev) => {
+                  const isDeviceOnline = dev.status !== 'Offline';
+                  const deviceStreams = streams.filter((s) => s.deviceId === dev.deviceId);
 
-                    return (
-                      <div
-                        key={dev.deviceId}
-                        onClick={() => setSelectedDeviceId(dev.deviceId)}
-                        className={`glass-panel interactive ${isSelected ? 'active border-primary bg-[rgba(124,58,237,0.1)]' : 'border-border-glass bg-[rgba(255,255,255,0.02)]'} py-2.5 px-3.5 flex items-center justify-between gap-3 cursor-pointer rounded-[10px] text-left flex-auto w-full sm:w-[calc(50%-10px)] min-w-[220px]`}
-                      >
-                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                          <span
-                            className="w-2 h-2 rounded-full inline-block flex-shrink-0"
-                            style={{
-                              background: statusColor,
-                              boxShadow: isOnline && dev.status !== 'Idle' ? `0 0 8px ${statusColor}` : 'none'
-                            }}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[0.85rem] font-semibold text-text-primary overflow-hidden text-ellipsis whitespace-nowrap">{dev.name}</div>
-                            <div className="text-[0.7rem] text-text-muted overflow-hidden text-ellipsis whitespace-nowrap">ID: {dev.deviceId} • {dev.status}</div>
+                  return (
+                    <div
+                      key={dev.deviceId}
+                      className="border border-border-glass rounded-xl bg-[rgba(255,255,255,0.015)] p-3.5 flex flex-col gap-3"
+                    >
+                      {/* Device Header */}
+                      <div className="flex justify-between items-center border-b border-[rgba(255,255,255,0.05)] pb-2.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-2 h-2 rounded-full inline-block flex-shrink-0 ${
+                                isDeviceOnline ? 'bg-emerald-400' : 'bg-text-muted'
+                              }`}
+                              style={{
+                                boxShadow: isDeviceOnline
+                                  ? '0 0 8px var(--color-success)'
+                                  : 'none',
+                              }}
+                            />
+                            <h3 className="text-[0.9rem] font-bold text-text-primary truncate">
+                              {dev.name}
+                            </h3>
                           </div>
+                          <p className="text-[0.7rem] text-text-muted mt-0.5 truncate">
+                            ID: {dev.deviceId} • Device: {dev.status}
+                          </p>
                         </div>
-
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleToggleDeviceMonitoring(dev.deviceId, dev.trackingEnabled);
+                            handleAddStream(dev.deviceId);
                           }}
-                          className={`btn ${dev.trackingEnabled && isOnline ? 'btn-primary' : 'btn-secondary'} py-1 px-2 text-[0.7rem] rounded-md h-[28px] shrink-0 flex items-center gap-1 font-semibold`}
-                          disabled={!isOnline}
+                          className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md flex items-center gap-1 hover:border-primary/50 hover:text-primary transition-all duration-200"
                         >
-                          {dev.trackingEnabled && isOnline ? (
-                            <>
-                              <Activity size={12} /> Disable
-                            </>
-                          ) : (
-                            <>
-                              <Camera size={12} /> Enable
-                            </>
-                          )}
+                          <Plus size={12} /> Add Stream
                         </button>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      {/* Nested Streams List */}
+                      <div className="flex flex-col gap-2">
+                        {deviceStreams.length === 0 ? (
+                          <p className="text-text-muted text-[0.75rem] text-center py-2 italic">
+                            No streams configured. Click 'Add Stream' above.
+                          </p>
+                        ) : (
+                          deviceStreams.map((stream) => {
+                            const isSelected = stream.streamId === selectedStreamId;
+                            const isStreamOnline = stream.status !== 'Offline';
+                            const streamStatusColor =
+                              stream.status === 'Monitoring'
+                                ? 'var(--color-success)'
+                                : stream.status === 'Recording'
+                                ? 'var(--color-danger)'
+                                : stream.status === 'Processing Video' ||
+                                  stream.status === 'Processing'
+                                ? 'var(--color-primary)'
+                                : stream.status === 'Idle'
+                                ? 'var(--color-secondary)'
+                                : 'var(--color-text-muted)';
+
+                            return (
+                              <div
+                                key={stream.streamId}
+                                onClick={() => {
+                                  setSelectedStreamId(stream.streamId);
+                                  setSelectedDeviceId(dev.deviceId);
+                                }}
+                                className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${
+                                  isSelected
+                                    ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
+                                    : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <span
+                                    className="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
+                                    style={{
+                                      background: streamStatusColor,
+                                      boxShadow:
+                                        isStreamOnline && stream.status !== 'Idle'
+                                          ? `0 0 6px ${streamStatusColor}`
+                                          : 'none',
+                                    }}
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-[0.8rem] font-semibold text-text-primary truncate">
+                                      {stream.name}
+                                    </div>
+                                    <div className="text-[0.65rem] text-text-secondary truncate mt-0.5">
+                                      {stream.cameraType === 'webcam'
+                                        ? 'Webcam'
+                                        : `RTSP: ${stream.streamUrl}`}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  {/* Toggle Monitoring Button */}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleStreamMonitoring(
+                                        stream.streamId,
+                                        stream.trackingEnabled
+                                      );
+                                    }}
+                                    className={`btn ${
+                                      stream.trackingEnabled && isStreamOnline
+                                        ? 'btn-primary'
+                                        : 'btn-secondary'
+                                    } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
+                                    disabled={!isStreamOnline}
+                                  >
+                                    {stream.trackingEnabled && isStreamOnline ? (
+                                      <>
+                                        <Activity size={10} /> Disable
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Camera size={10} /> Enable
+                                      </>
+                                    )}
+                                  </button>
+
+                                  {/* Settings Button */}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedStreamId(stream.streamId);
+                                      setSelectedDeviceId(dev.deviceId);
+                                      setShowConfigDialog(true);
+                                    }}
+                                    className="btn p-1 bg-transparent text-text-muted hover:text-primary border-none shrink-0 transition-colors duration-200"
+                                    title="Configure Stream"
+                                  >
+                                    <Settings size={12} />
+                                  </button>
+
+                                  {/* Delete Button */}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteStream(stream.streamId, e);
+                                    }}
+                                    className="btn p-1 bg-transparent text-text-muted hover:text-danger border-none shrink-0"
+                                    title="Delete Stream"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -906,7 +1109,7 @@ function App({ onLogout }: AppProps) {
             {/* Video Feed Wrapper */}
             <div className="bg-[#090d16] rounded-xl w-full relative overflow-hidden border border-[rgba(255,255,255,0.05)] min-h-[200px]">
 
-              {selectedDeviceId && status !== 'Offline' ? (
+              {selectedStreamId && status !== 'Offline' ? (
                 <div className="w-full relative">
                   {liveFrame && !useHlsFallback ? (
                     <img
@@ -942,12 +1145,20 @@ function App({ onLogout }: AppProps) {
                     </div>
                   )}
                 </div>
+              ) : selectedStreamId ? (
+                <div className="text-center text-text-muted min-h-[200px] flex flex-col justify-center items-center py-8">
+                  <Camera size={36} className="text-text-muted mb-3 mx-auto" />
+                  <p className="text-[0.9rem]">Camera Stream Offline</p>
+                  <p className="text-[0.75rem] mt-1">
+                    Start the edge agent to connect
+                  </p>
+                </div>
               ) : (
                 <div className="text-center text-text-muted min-h-[200px] flex flex-col justify-center items-center py-8">
                   <Camera size={36} className="text-text-muted mb-3 mx-auto" />
-                  <p className="text-[0.9rem]">Device Offline</p>
+                  <p className="text-[0.9rem]">No Camera Stream Selected</p>
                   <p className="text-[0.75rem] mt-1">
-                    Start the edge agent to connect
+                    Select or create a camera stream to view live feed
                   </p>
                 </div>
               )}
@@ -959,89 +1170,7 @@ function App({ onLogout }: AppProps) {
             </div>
           </div>
 
-          {/* STREAM CONFIGURATION */}
-          <div className="glass-panel p-5">
-            <h2 className="text-[1.1rem] flex items-center gap-2 mb-4">
-              <Settings size={18} color="var(--color-secondary)" /> Configure Selected Edge Agent
-            </h2>
-            <form onSubmit={handleConfigSubmit} className="flex flex-col gap-3.5">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[0.8rem] text-text-secondary">Camera Name</label>
-                  <input
-                    type="text"
-                    value={config.name}
-                    onChange={(e) => setConfig({ ...config, name: e.target.value })}
-                    placeholder="E.g., Office Entry"
-                    required
-                    disabled={!selectedDeviceId}
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[0.8rem] text-text-secondary">Source Type</label>
-                  <select
-                    value={config.type}
-                    onChange={(e) => setConfig({ ...config, type: e.target.value as 'webcam' | 'rtsp' })}
-                    disabled={!selectedDeviceId}
-                  >
-                    <option value="webcam">Local Device Camera / Webcam</option>
-                    <option value="rtsp">RTSP Network Stream</option>
-                  </select>
-                </div>
-              </div>
 
-              {config.type === 'rtsp' && (
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[0.8rem] text-text-secondary">RTSP Stream URL</label>
-                  <input
-                    type="text"
-                    value={config.streamUrl}
-                    onChange={(e) => setConfig({ ...config, streamUrl: e.target.value })}
-                    placeholder="rtsp://username:password@ip:port/h264"
-                    required
-                    disabled={!selectedDeviceId}
-                  />
-                </div>
-              )}
-
-              <div className="flex flex-col gap-2">
-                <label className="text-[0.8rem] text-text-secondary">Detect Objects</label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={config.detectPerson}
-                      onChange={(e) => setConfig({ ...config, detectPerson: e.target.checked })}
-                      disabled={!selectedDeviceId}
-                      className="w-4 h-4 accent-[#a78bfa]"
-                    />
-                    Person
-                  </label>
-                  <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={config.detectVehicle}
-                      onChange={(e) => setConfig({ ...config, detectVehicle: e.target.checked })}
-                      disabled={!selectedDeviceId}
-                      className="w-4 h-4 accent-[#a78bfa]"
-                    />
-                    Vehicle
-                  </label>
-                </div>
-                <p className="text-[0.75rem] text-text-muted">
-                  Vehicle includes cars, trucks, buses, motorcycles, and bicycles.
-                </p>
-              </div>
-
-              <button
-                type="submit"
-                className="btn btn-secondary w-fit self-end text-[0.85rem]"
-                disabled={!selectedDeviceId}
-              >
-                Apply Configuration
-              </button>
-            </form>
-          </div>
 
           {/* LIVE TERMINAL LOGS */}
           <div className="glass-panel p-5">
@@ -1051,7 +1180,7 @@ function App({ onLogout }: AppProps) {
             <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3.5 text-[0.85rem] leading-[1.4] text-[#38bdf8] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]" ref={terminalContainerRef}>
               {logs.length === 0 ? (
                 <div className="text-text-muted text-[0.8rem]">
-                  {selectedDeviceId ? 'Waiting for device events...' : 'Select a device to view logs.'}
+                  {selectedStreamId ? 'Waiting for stream events...' : 'Select a camera stream to view logs.'}
                 </div>
               ) : (
                 logs.map((log, index) => (
@@ -1185,14 +1314,14 @@ function App({ onLogout }: AppProps) {
                     type="button"
                     onClick={() => setShowFilters(!showFilters)}
                     className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
-                      showFilters || filterStartTime || filterEndTime || filterDeviceId
+                      showFilters || filterStartTime || filterEndTime || filterStreamId
                         ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
                         : ''
                     }`}
                   >
                     <SlidersHorizontal size={12} />
                     Search Filters
-                    {(filterStartTime || filterEndTime || filterDeviceId) && (
+                    {(filterStartTime || filterEndTime || filterStreamId) && (
                       <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
                     )}
                   </button>
@@ -1203,16 +1332,16 @@ function App({ onLogout }: AppProps) {
                   <div className="glass-panel p-3.5 mb-3.5 bg-[rgba(255,255,255,0.01)] border-[rgba(255,255,255,0.08)] rounded-[10px] flex flex-col gap-3">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="flex flex-col gap-1">
-                        <label className="text-[0.7rem] text-text-secondary">Target Camera</label>
+                        <label className="text-[0.7rem] text-text-secondary">Target Camera Stream</label>
                         <select
-                          value={filterDeviceId}
-                          onChange={(e) => setFilterDeviceId(e.target.value)}
+                          value={filterStreamId}
+                          onChange={(e) => setFilterStreamId(e.target.value)}
                           className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
                         >
-                          <option value="">All Cameras</option>
-                          {devices.map((d) => (
-                            <option key={d.deviceId} value={d.deviceId}>
-                              {d.name}
+                          <option value="">All Streams</option>
+                          {streams.map((s) => (
+                            <option key={s.streamId} value={s.streamId}>
+                              {s.name}
                             </option>
                           ))}
                         </select>
@@ -1236,13 +1365,13 @@ function App({ onLogout }: AppProps) {
                         />
                       </div>
                     </div>
-                    {(filterStartTime || filterEndTime || filterDeviceId) && (
+                    {(filterStartTime || filterEndTime || filterStreamId) && (
                       <button
                         type="button"
                         onClick={() => {
                           setFilterStartTime('');
                           setFilterEndTime('');
-                          setFilterDeviceId('');
+                          setFilterStreamId('');
                         }}
                         className="btn btn-secondary py-1 px-2 text-[0.7rem] self-end rounded flex items-center gap-1 hover:text-danger hover:border-danger bg-transparent font-semibold border-none"
                       >
@@ -1543,31 +1672,31 @@ function App({ onLogout }: AppProps) {
                     {/* Left: Form */}
                     <form onSubmit={handleAddTopology} className="flex flex-col gap-2.5 md:w-[220px] shrink-0">
                       <div className="flex flex-col gap-1">
-                        <label className="text-[0.7rem] text-text-secondary">Source Camera</label>
+                        <label className="text-[0.7rem] text-text-secondary">Source Camera Stream</label>
                         <select
                           value={newRoute.fromCamera}
                           onChange={(e) => setNewRoute({ ...newRoute, fromCamera: e.target.value })}
                           required
                           className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
                         >
-                          <option value="">Select Camera</option>
-                          {devices.map((d) => (
-                            <option key={d.deviceId} value={d.name}>{d.name}</option>
+                          <option value="">Select Stream</option>
+                          {streams.map((s) => (
+                            <option key={s.streamId} value={s.name}>{s.name}</option>
                           ))}
                         </select>
                       </div>
 
                       <div className="flex flex-col gap-1">
-                        <label className="text-[0.7rem] text-text-secondary">Target Camera</label>
+                        <label className="text-[0.7rem] text-text-secondary">Target Camera Stream</label>
                         <select
                           value={newRoute.toCamera}
                           onChange={(e) => setNewRoute({ ...newRoute, toCamera: e.target.value })}
                           required
                           className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
                         >
-                          <option value="">Select Camera</option>
-                          {devices.map((d) => (
-                            <option key={d.deviceId} value={d.name}>{d.name}</option>
+                          <option value="">Select Stream</option>
+                          {streams.map((s) => (
+                            <option key={s.streamId} value={s.name}>{s.name}</option>
                           ))}
                         </select>
                       </div>
@@ -1650,6 +1779,181 @@ function App({ onLogout }: AppProps) {
 
 
       </div>
+
+      {/* STREAM CONFIG DIALOG MODAL */}
+      {/* STREAM CONFIG DIALOG MODAL — handles both Add and Edit modes */}
+      {showConfigDialog && (() => {
+        const isAddMode = !!addingStreamForDeviceId;
+        const configStream = !isAddMode ? streams.find(s => s.streamId === selectedStreamId) : null;
+
+        const closeDialog = () => {
+          setShowConfigDialog(false);
+          setAddingStreamForDeviceId(null);
+        };
+
+        const handleSubmit = async (e: React.FormEvent) => {
+          e.preventDefault();
+          if (!config.detectPerson && !config.detectVehicle) {
+            alert('Select at least one detection target: Person or Vehicle.');
+            return;
+          }
+          if (isAddMode) {
+            // CREATE new stream
+            try {
+              const res = await fetch(`${API_BASE}/streams`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  deviceId: addingStreamForDeviceId,
+                  name: config.name,
+                  cameraType: config.type,
+                  streamUrl: config.streamUrl,
+                  trackingEnabled: config.trackingEnabled,
+                  motionThreshold: config.motionThreshold ?? 25,
+                  pixelChangeThreshold: config.pixelChangeThreshold ?? 0.02,
+                  detectPerson: config.detectPerson,
+                  detectVehicle: config.detectVehicle,
+                }),
+              });
+              if (res.ok) {
+                const newStream = await res.json();
+                await fetchDevices();
+                setSelectedStreamId(newStream.streamId);
+                closeDialog();
+              }
+            } catch (err) {
+              console.error('Failed to create stream', err);
+            }
+          } else {
+            // UPDATE existing stream
+            await handleConfigSubmit(e);
+            closeDialog();
+          }
+        };
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
+            onClick={closeDialog}
+          >
+            <div
+              className="glass-panel w-full max-w-[480px] p-6 flex flex-col gap-5 relative animate-[slideUp_0.22s_ease-out]"
+              style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
+                    {isAddMode ? <Plus size={18} color="var(--color-primary)" /> : <Settings size={18} color="var(--color-primary)" />}
+                  </div>
+                  <div>
+                    <h2 className="text-[1.05rem] font-bold text-text-primary">
+                      {isAddMode ? 'Add Camera Stream' : 'Configure Stream'}
+                    </h2>
+                    {configStream && (
+                      <p className="text-[0.72rem] text-text-muted mt-0.5">{configStream.name}</p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={closeDialog}
+                  className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Divider */}
+              <div className="h-px bg-[rgba(255,255,255,0.07)]" />
+
+              {/* Config Form */}
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[0.78rem] text-text-secondary font-medium">Camera Name</label>
+                    <input
+                      type="text"
+                      value={config.name}
+                      onChange={(e) => setConfig({ ...config, name: e.target.value })}
+                      placeholder="E.g., Office Entry"
+                      required
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[0.78rem] text-text-secondary font-medium">Source Type</label>
+                    <select
+                      value={config.type}
+                      onChange={(e) => setConfig({ ...config, type: e.target.value as 'webcam' | 'rtsp' })}
+                    >
+                      <option value="webcam">Local Camera / Webcam</option>
+                      <option value="rtsp">RTSP Network Stream</option>
+                    </select>
+                  </div>
+                </div>
+
+                {config.type === 'rtsp' && (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[0.78rem] text-text-secondary font-medium">RTSP Stream URL</label>
+                    <input
+                      type="text"
+                      value={config.streamUrl}
+                      onChange={(e) => setConfig({ ...config, streamUrl: e.target.value })}
+                      placeholder="rtsp://username:password@ip:port/h264"
+                      required
+                    />
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <label className="text-[0.78rem] text-text-secondary font-medium">Detect Objects</label>
+                  <div className="flex gap-5">
+                    <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={config.detectPerson}
+                        onChange={(e) => setConfig({ ...config, detectPerson: e.target.checked })}
+                        className="w-4 h-4 accent-[#a78bfa]"
+                      />
+                      Person
+                    </label>
+                    <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={config.detectVehicle}
+                        onChange={(e) => setConfig({ ...config, detectVehicle: e.target.checked })}
+                        className="w-4 h-4 accent-[#a78bfa]"
+                      />
+                      Vehicle
+                    </label>
+                  </div>
+                  <p className="text-[0.72rem] text-text-muted leading-relaxed">
+                    Vehicle includes cars, trucks, buses, motorcycles, and bicycles.
+                  </p>
+                </div>
+
+                {/* Footer Actions */}
+                <div className="flex gap-2.5 justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={closeDialog}
+                    className="btn btn-secondary py-2 px-4 text-[0.85rem]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary py-2 px-5 text-[0.85rem]"
+                  >
+                    {isAddMode ? 'Create Stream' : 'Apply Configuration'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

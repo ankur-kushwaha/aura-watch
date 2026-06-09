@@ -9,14 +9,14 @@ const router = Router();
  * Perform a vector search on video summaries and answer the user's question with citations.
  */
 router.post('/query', async (req: Request, res: Response) => {
-  const { question, history = [], startTime, endTime, deviceId } = req.body;
+  const { question, history = [], startTime, endTime, deviceId, streamId } = req.body;
 
   if (!question || typeof question !== 'string') {
     return res.status(400).json({ error: 'A valid question string is required.' });
   }
 
   try {
-    console.log(`[RAG] Received query: "${question}" with history size: ${history.length}, filters:`, { startTime, endTime, deviceId });
+    console.log(`[RAG] Received query: "${question}" with history size: ${history.length}, filters:`, { startTime, endTime, deviceId, streamId });
 
     // Call AI service with tools
     const { answer, clips } = await answerWithTools(
@@ -30,14 +30,16 @@ router.post('/query', async (req: Request, res: Response) => {
         console.log(`[RAG Router callback] Executing Qdrant search tool for: "${queryText}"`, {
           finalStartTime,
           finalEndTime,
-          deviceId
+          deviceId,
+          streamId
         });
 
         const queryEmbedding = await generateTextEmbedding(queryText);
         let searchResults = await searchClipVectors(queryEmbedding, 5, { 
           startTime: finalStartTime, 
           endTime: finalEndTime, 
-          deviceId 
+          deviceId,
+          streamId
         });
 
         if (searchResults.length === 0) {
@@ -45,7 +47,8 @@ router.post('/query', async (req: Request, res: Response) => {
           searchResults = await fallbackSearchClips(queryText, 5, { 
             startTime: finalStartTime, 
             endTime: finalEndTime, 
-            deviceId 
+            deviceId,
+            streamId
           });
         }
 

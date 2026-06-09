@@ -40,7 +40,6 @@ CLOUD_URL = os.getenv("CLOUD_URL", "https://aura-watch.adboardtools.com")
 CLOUD_WS_URL = os.getenv("CLOUD_WS_URL", "wss://aura-watch.adboardtools.com")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Office Edge Device")
 LOCAL_VIDEO_DIR = os.getenv("LOCAL_VIDEO_DIR", os.path.join(BASE_DIR, "storage", "temp_clips"))
-HLS_DIR = os.path.join(BASE_DIR, "storage", "hls")
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
 DEBUG_LOGS = os.getenv("DEBUG_LOGS", "true").lower() != "false"
 YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
@@ -77,7 +76,6 @@ class EdgeConfig:
 class EdgeAgent:
     def __init__(self):
         self.device_id = self._load_or_create_device_id()
-        self.config = EdgeConfig()
         self.ws: Optional[websocket.WebSocketApp] = None
         self.ws_thread: Optional[threading.Thread] = None
         self.heartbeat_timer: Optional[threading.Timer] = None
@@ -85,23 +83,15 @@ class EdgeAgent:
         self.ws_lock = threading.Lock()
         self.shutdown_event = threading.Event()
 
-        self.pipeline_thread: Optional[threading.Thread] = None
-        self.pipeline_stop = threading.Event()
-        self.is_pipeline_running = False
-        self.is_recording = False
-        self._recording_lock = threading.Lock()
-        self._detection_lock = threading.Lock()
-        self._last_detection_at = 0.0
-        self._recording_cooldown_until = 0.0
-        self._recording_thread: Optional[threading.Thread] = None
-        self._active_tracker: Optional[YoloByteTracker] = None
-        self.stream_frames = False
+        # Multi-stream configurations and pipelines
+        self.streams_config: dict[str, EdgeConfig] = {}
+        self.pipelines: dict[str, dict[str, Any]] = {}
 
-        self.hls_server = HlsStreamServer(HLS_DIR, EDGE_HTTP_PORT)
+        self.hls_server = HlsStreamServer(os.path.join(BASE_DIR, "storage"), EDGE_HTTP_PORT)
         self.stream_host = self.hls_server.stream_host
 
         os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
-        os.makedirs(HLS_DIR, exist_ok=True)
+        os.makedirs(os.path.join(BASE_DIR, "storage"), exist_ok=True)
 
     def _load_or_create_device_id(self) -> str:
         if os.path.exists(DEVICE_ID_FILE):
@@ -122,8 +112,8 @@ class EdgeAgent:
         print(f"[Edge Log] {message}")
         self._ws_send({"type": "log", "message": message})
 
-    def send_status(self, status: str):
-        self._ws_send({"type": "status_change", "status": status})
+    def send_status(self, stream_id: str, status: str):
+        self._ws_send({"type": "status_change", "streamId": stream_id, "status": status})
 
     def _announce_stream_host(self):
         self._ws_send(
@@ -144,14 +134,15 @@ class EdgeAgent:
 
     def register_device(self) -> dict[str, Any]:
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/register"
+        # Backwards compatible parameters if hub expects single-stream fields
         payload = {
             "deviceId": self.device_id,
             "name": DEVICE_NAME,
-            "cameraType": self.config.camera_type,
-            "streamUrl": self.config.stream_url,
-            "trackingEnabled": self.config.tracking_enabled,
-            "motionThreshold": self.config.motion_threshold,
-            "pixelChangeThreshold": self.config.pixel_change_threshold,
+            "cameraType": "webcam",
+            "streamUrl": "0",
+            "trackingEnabled": False,
+            "motionThreshold": 25,
+            "pixelChangeThreshold": 0.02,
             "streamHost": self.stream_host,
             "status": "Idle",
         }
@@ -159,99 +150,166 @@ class EdgeAgent:
         response.raise_for_status()
         return response.json()
 
-    def prepare_hls_directory(self):
-        os.makedirs(HLS_DIR, exist_ok=True)
-        clear_directory(HLS_DIR)
+    def update_streams_config(self, streams_data: list[dict[str, Any]]):
+        active_ids = set()
+        for s in streams_data:
+            stream_id = s.get("streamId")
+            active_ids.add(stream_id)
 
-    def stop_pipeline(self, update_status: bool = True):
-        self.pipeline_stop.set()
-        if self.pipeline_thread and self.pipeline_thread.is_alive():
-            self.pipeline_thread.join(timeout=10)
-        self.pipeline_thread = None
-        self.is_pipeline_running = False
-        if update_status:
-            self.send_status("Idle")
+            config = EdgeConfig(
+                name=s.get("name", "Unnamed Stream"),
+                camera_type=s.get("cameraType", "webcam"),
+                stream_url=s.get("streamUrl", "0"),
+                tracking_enabled=bool(s.get("trackingEnabled", False)),
+                motion_threshold=int(s.get("motionThreshold", 25)),
+                pixel_change_threshold=float(s.get("pixelChangeThreshold", 0.02)),
+                detect_person=bool(s.get("detectPerson", True)),
+                detect_vehicle=bool(s.get("detectVehicle", True)),
+            )
 
-    def start_pipeline(self):
-        self.stop_pipeline()
-        kill_ffmpeg_for_dir(HLS_DIR)
-        self.prepare_hls_directory()
-        self.pipeline_stop.clear()
+            existing = self.streams_config.get(stream_id)
+            if not existing or (
+                existing.camera_type != config.camera_type
+                or existing.stream_url != config.stream_url
+                or existing.tracking_enabled != config.tracking_enabled
+                or existing.detect_person != config.detect_person
+                or existing.detect_vehicle != config.detect_vehicle
+                or existing.motion_threshold != config.motion_threshold
+                or existing.pixel_change_threshold != config.pixel_change_threshold
+            ):
+                self.streams_config[stream_id] = config
+                self.restart_stream_pipeline(stream_id)
+            else:
+                self.streams_config[stream_id] = config
 
-        if not self.hls_server._httpd:
-            self.hls_server.start()
-            self.stream_host = self.hls_server.stream_host
-            print(f"[Edge] HLS HTTP server listening at {self.stream_host}")
+        # Stop streams no longer present
+        for stream_id in list(self.streams_config.keys()):
+            if stream_id not in active_ids:
+                self.stop_stream_pipeline(stream_id)
+                self.streams_config.pop(stream_id)
 
-        self.pipeline_thread = threading.Thread(
-            target=self._pipeline_loop,
-            name="vision-pipeline",
+    def start_stream_pipeline(self, stream_id: str):
+        self.stop_stream_pipeline(stream_id)
+
+        config = self.streams_config.get(stream_id)
+        if not config:
+            return
+
+        hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
+        os.makedirs(hls_dir, exist_ok=True)
+        clear_directory(hls_dir)
+        kill_ffmpeg_for_dir(hls_dir)
+
+        stop_event = threading.Event()
+        pipeline_data = {
+            "stop_event": stop_event,
+            "is_recording": False,
+            "recording_thread": None,
+            "recording_cooldown_until": 0.0,
+            "last_detection_at": 0.0,
+            "recording_lock": threading.Lock(),
+            "detection_lock": threading.Lock(),
+            "stream_frames": False,
+        }
+        self.pipelines[stream_id] = pipeline_data
+
+        thread = threading.Thread(
+            target=self._stream_pipeline_loop,
+            args=(stream_id, stop_event),
+            name=f"pipeline-{stream_id}",
             daemon=True,
         )
-        self.pipeline_thread.start()
-        self.is_pipeline_running = True
-        self.send_status("Monitoring" if self.config.tracking_enabled else "Idle")
+        pipeline_data["thread"] = thread
+        thread.start()
 
-    def update_camera_state(self, force_restart: bool = False):
-        if force_restart:
-            self.send_log("Restarting camera pipeline to apply new configuration.")
-            self.stop_pipeline()
+        self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
-        if not self.is_pipeline_running:
-            self.start_pipeline()
-        else:
-            self.send_status("Monitoring" if self.config.tracking_enabled else "Idle")
+    def stop_stream_pipeline(self, stream_id: str):
+        pipeline_data = self.pipelines.pop(stream_id, None)
+        if not pipeline_data:
+            return
 
-    def _pipeline_loop(self):
+        pipeline_data["stop_event"].set()
+        thread = pipeline_data.get("thread")
+        if thread and thread.is_alive():
+            thread.join(timeout=10)
+
+        hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
+        kill_ffmpeg_for_dir(hls_dir)
+        clear_directory(hls_dir)
+        self.send_status(stream_id, "Offline")
+
+    def restart_stream_pipeline(self, stream_id: str):
+        config = self.streams_config.get(stream_id)
+        name = config.name if config else stream_id
+        self.send_log(f"Restarting stream pipeline to apply new configuration for: {name}")
+        self.stop_stream_pipeline(stream_id)
+        self.start_stream_pipeline(stream_id)
+
+    def _stream_pipeline_loop(self, stream_id: str, stop_event: threading.Event):
         retry_delay = 10.0
         consecutive_failures = 0
 
-        while not self.pipeline_stop.is_set() and not self.shutdown_event.is_set():
+        while not stop_event.is_set() and not self.shutdown_event.is_set():
+            config = self.streams_config.get(stream_id)
+            if not config:
+                break
+
             camera = CameraCapture(
-                camera_type=self.config.camera_type,
-                stream_url=self.config.stream_url,
+                camera_type=config.camera_type,
+                stream_url=config.stream_url,
             )
             if not camera.open():
                 consecutive_failures += 1
                 detail = camera.last_error or "unknown error"
                 self.send_log(
-                    f"[Detector Error] Failed to open camera ({detail}). "
+                    f"[{config.name}] Failed to open camera ({detail}). "
                     f"Retrying in {int(retry_delay)}s..."
                 )
-                self.send_status("Idle")
-                if self._wait(retry_delay):
+                self.send_status(stream_id, "Idle")
+                if self._wait_stream(stop_event, retry_delay):
                     break
                 retry_delay = min(retry_delay * 1.5, 60.0)
                 continue
 
             retry_delay = 10.0
             consecutive_failures = 0
-            detection_classes = self.config.detection_classes()
+            detection_classes = config.detection_classes()
             tracker = YoloByteTracker(
                 confidence=YOLO_CONFIDENCE,
                 device=YOLO_DEVICE,
                 class_names=detection_classes,
                 imgsz=YOLO_IMGSZ,
             )
-            self._active_tracker = tracker
+
+            pipeline_data = self.pipelines.get(stream_id)
+            if not pipeline_data:
+                camera.release()
+                break
+
+            pipeline_data["camera"] = camera
+            pipeline_data["tracker"] = tracker
+
             self.send_log(
-                f"Detection targets: {', '.join(detection_classes)} | "
+                f"[{config.name}] Detection targets: {', '.join(detection_classes)} | "
                 f"device={YOLO_DEVICE} imgsz={YOLO_IMGSZ} interval={YOLO_DETECT_INTERVAL}"
             )
+
+            hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
             encoder = HlsEncoder(
-                HLS_DIR,
+                hls_dir,
                 camera.width,
                 camera.height,
                 fps=30,
                 segment_sec=HLS_SEGMENT_SEC,
             )
+            pipeline_data["encoder"] = encoder
             encoder.start()
 
             self.send_log(
-                f"Started YOLO+ByteTrack pipeline ({camera.width}x{camera.height}) "
-                f"for: {self.config.name}"
+                f"[{config.name}] Started YOLO+ByteTrack pipeline ({camera.width}x{camera.height})"
             )
-            self.send_status("Monitoring" if self.config.tracking_enabled else "Idle")
+            self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
             settings = PipelineSettings(
                 detect_interval=YOLO_DETECT_INTERVAL,
@@ -259,29 +317,34 @@ class EdgeAgent:
                 stream_fps=FRAME_STREAM_FPS,
                 jpeg_quality=PREVIEW_JPEG_QUALITY,
                 hls_segment_sec=HLS_SEGMENT_SEC,
-                tracking_enabled=self.config.tracking_enabled,
+                tracking_enabled=config.tracking_enabled,
             )
+            pipeline_data["settings"] = settings
 
             def on_preview(frame):
-                if self.stream_frames:
-                    self._send_annotated_frame(frame, settings.jpeg_quality)
+                p_data = self.pipelines.get(stream_id)
+                if p_data and p_data.get("stream_frames", False):
+                    self._send_annotated_frame(stream_id, frame, settings.jpeg_quality)
 
             def on_reid(crop_jpeg, track_id, confidence, bbox):
                 threading.Thread(
                     target=self._upload_reid_crop,
-                    args=(crop_jpeg, track_id, confidence, bbox),
+                    args=(stream_id, crop_jpeg, track_id, confidence, bbox),
                     daemon=True,
                 ).start()
 
             def on_detections(detections, new_detection):
-                with self._detection_lock:
+                p_data = self.pipelines.get(stream_id)
+                if not p_data:
+                    return
+                with p_data["detection_lock"]:
                     if detections:
-                        self._last_detection_at = time.monotonic()
-                if new_detection and self.config.tracking_enabled:
+                        p_data["last_detection_at"] = time.monotonic()
+                if new_detection and config.tracking_enabled:
                     names = ", ".join(sorted({d.class_name for d in detections}))
-                    if not self._try_start_clip_recording(names):
-                        with self._recording_lock:
-                            in_cooldown = time.monotonic() < self._recording_cooldown_until
+                    if not self._try_start_clip_recording(stream_id, names):
+                        with p_data["recording_lock"]:
+                            in_cooldown = time.monotonic() < p_data["recording_cooldown_until"]
                         if in_cooldown:
                             tracker.reset_detection_edge()
 
@@ -293,48 +356,43 @@ class EdgeAgent:
                 on_preview_frame=on_preview,
                 on_detections=on_detections,
                 on_reid_crop=on_reid,
-                should_stop=lambda: self.pipeline_stop.is_set() or self.shutdown_event.is_set(),
+                should_stop=lambda: stop_event.is_set() or self.shutdown_event.is_set(),
             )
 
             try:
                 pipeline.start_capture()
                 pipeline.run()
             except Exception as exc:
-                self.send_log(f"[Detector Error] {exc}. Reconnecting...")
+                self.send_log(f"[{config.name}] [Detector Error] {exc}. Reconnecting...")
             finally:
                 pipeline.join_capture()
                 encoder.stop()
                 camera.release()
                 tracker.reset()
-                if self._active_tracker is tracker:
-                    self._active_tracker = None
 
-            if self.pipeline_stop.is_set() or self.shutdown_event.is_set():
+            if stop_event.is_set() or self.shutdown_event.is_set():
                 break
 
-            self.send_status("Idle")
-            if self._wait(retry_delay):
+            self.send_status(stream_id, "Idle")
+            if self._wait_stream(stop_event, retry_delay):
                 break
 
-        self.is_pipeline_running = False
-
-    def _wait(self, seconds: float) -> bool:
-        """Wait up to `seconds`, returning True if shutdown was requested."""
+    def _wait_stream(self, stop_event: threading.Event, seconds: float) -> bool:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            if self.pipeline_stop.is_set() or self.shutdown_event.is_set():
+            if stop_event.is_set() or self.shutdown_event.is_set():
                 return True
             time.sleep(0.25)
         return False
 
-    def _send_annotated_frame(self, frame, quality: int = PREVIEW_JPEG_QUALITY):
+    def _send_annotated_frame(self, stream_id: str, frame, quality: int):
         jpeg = encode_preview_jpeg(frame, quality)
         if not jpeg:
             return
         encoded = base64.b64encode(jpeg).decode("ascii")
-        self._ws_send({"type": "frame", "image": encoded})
+        self._ws_send({"type": "frame", "streamId": stream_id, "image": encoded})
 
-    def _upload_reid_crop(self, crop_jpeg: bytes, track_id: int, confidence: float, bbox: tuple[int, int, int, int]):
+    def _upload_reid_crop(self, stream_id: str, crop_jpeg: bytes, track_id: int, confidence: float, bbox: tuple[int, int, int, int]):
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/{self.device_id}/reid/crop"
         bbox_str = ",".join(map(str, bbox))
         headers = {
@@ -344,83 +402,100 @@ class EdgeAgent:
             "x-bbox": bbox_str,
             "x-timestamp": str(int(time.time() * 1000)),
             "x-class-name": "person",
+            "x-stream-id": stream_id,
         }
         try:
             response = requests.post(url, data=crop_jpeg, headers=headers, timeout=15)
             if response.status_code >= 200 and response.status_code < 300:
-                self.send_log(f"Successfully uploaded ReID crop for track {track_id}")
+                self.send_log(f"Successfully uploaded ReID crop for track {track_id} on stream {stream_id}")
             else:
                 self.send_log(f"[ReID Error] Upload failed ({response.status_code}): {response.text}")
         except Exception as exc:
             self.send_log(f"[ReID Error] Upload exception: {exc}")
 
-    def _try_start_clip_recording(self, detection_names: str) -> bool:
-        with self._recording_lock:
-            if self.is_recording:
-                return False
-            if self._recording_thread and self._recording_thread.is_alive():
-                return False
-            if time.monotonic() < self._recording_cooldown_until:
-                return False
-            self.is_recording = True
-            self._last_detection_at = time.monotonic()
+    def _try_start_clip_recording(self, stream_id: str, detection_names: str) -> bool:
+        p_data = self.pipelines.get(stream_id)
+        if not p_data:
+            return False
 
-        self.send_log(f"Objects detected: {detection_names}. Starting clip capture...")
-        self._recording_thread = threading.Thread(
+        with p_data["recording_lock"]:
+            if p_data["is_recording"]:
+                return False
+            if p_data["recording_thread"] and p_data["recording_thread"].is_alive():
+                return False
+            if time.monotonic() < p_data["recording_cooldown_until"]:
+                return False
+            p_data["is_recording"] = True
+            p_data["last_detection_at"] = time.monotonic()
+
+        config = self.streams_config.get(stream_id)
+        name = config.name if config else stream_id
+        self.send_log(f"[{name}] Objects detected: {detection_names}. Starting clip capture...")
+
+        thread = threading.Thread(
             target=self._run_clip_recording,
-            args=(detection_names,),
+            args=(stream_id, detection_names),
             daemon=True,
         )
-        self._recording_thread.start()
+        p_data["recording_thread"] = thread
+        thread.start()
         return True
 
-    def _run_clip_recording(self, _detection_names: str):
-        self.send_status("Recording")
+    def _run_clip_recording(self, stream_id: str, _detection_names: str):
+        self.send_status(stream_id, "Recording")
+        p_data = self.pipelines.get(stream_id)
+        if not p_data:
+            return
+
+        config = self.streams_config.get(stream_id)
+        name = config.name if config else stream_id
 
         timestamp_ms = int(time.time() * 1000)
-        filename = f"clip_{timestamp_ms}_{self.device_id}.mp4"
+        filename = f"clip_{timestamp_ms}_{stream_id}.mp4"
         output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
-        staging_dir = os.path.join(LOCAL_VIDEO_DIR, f"staging_{timestamp_ms}_{self.device_id}")
+        staging_dir = os.path.join(LOCAL_VIDEO_DIR, f"staging_{timestamp_ms}_{stream_id}")
         copied_segments: set[str] = set()
         recording_start = time.monotonic()
 
         self.send_log(
-            f"Recording while objects are detected (max {int(RECORDING_MAX_SEC)}s, stream continues)..."
+            f"[{name}] Recording while objects are detected (max {int(RECORDING_MAX_SEC)}s, stream continues)..."
         )
 
+        hls_dir = os.path.join(BASE_DIR, "storage", f"hls_{stream_id}")
+
         try:
-            while not self.pipeline_stop.is_set() and not self.shutdown_event.is_set():
-                copy_new_hls_segments(HLS_DIR, staging_dir, copied_segments)
+            while not p_data["stop_event"].is_set() and not self.shutdown_event.is_set():
+                copy_new_hls_segments(hls_dir, staging_dir, copied_segments)
                 elapsed = time.monotonic() - recording_start
 
-                with self._detection_lock:
-                    last_detection_at = self._last_detection_at
+                with p_data["detection_lock"]:
+                    last_detection_at = p_data["last_detection_at"]
 
                 if elapsed >= RECORDING_MAX_SEC:
-                    self.send_log(f"Max clip length ({int(RECORDING_MAX_SEC)}s) reached.")
+                    self.send_log(f"[{name}] Max clip length ({int(RECORDING_MAX_SEC)}s) reached.")
                     break
 
                 if (
                     elapsed >= RECORDING_END_GRACE_SEC
                     and time.monotonic() - last_detection_at >= RECORDING_END_GRACE_SEC
                 ):
-                    self.send_log("Objects left frame — finalizing clip.")
+                    self.send_log(f"[{name}] Objects left frame — finalizing clip.")
                     break
 
                 time.sleep(0.4)
 
-            copy_new_hls_segments(HLS_DIR, staging_dir, copied_segments)
+            copy_new_hls_segments(hls_dir, staging_dir, copied_segments)
 
             if not copied_segments:
                 raise RuntimeError("No HLS segments captured during recording")
 
             duration = len(copied_segments) * HLS_SEGMENT_SEC
             self.send_log(
-                f"Compiling ~{duration}s of footage ({len(copied_segments)} segments) into {filename}..."
+                f"[{name}] Compiling ~{duration}s of footage ({len(copied_segments)} segments) into {filename}..."
             )
             concat_hls_segments(staging_dir, output_path)
             actual_duration = get_video_duration_seconds(output_path) or duration
-            self.send_log(f"Clip compiled successfully: {filename} ({actual_duration:.1f}s)")
+            self.send_log(f"[{name}] Clip compiled successfully: {filename} ({actual_duration:.1f}s)")
 
             upload_path = output_path
             temp_gemini_path = ""
@@ -428,10 +503,10 @@ class EdgeAgent:
             if os.getenv("GEMINI_OPTIMIZE", "true").lower() == "true":
                 temp_gemini_path = os.path.join(
                     LOCAL_VIDEO_DIR,
-                    f"temp_gemini_{timestamp_ms}_{self.device_id}.mp4",
+                    f"temp_gemini_{timestamp_ms}_{stream_id}.mp4",
                 )
                 try:
-                    self.send_log("Optimizing clip for Gemini...")
+                    self.send_log(f"[{name}] Optimizing clip for Gemini...")
                     transcode_for_gemini(
                         output_path,
                         temp_gemini_path,
@@ -442,40 +517,46 @@ class EdgeAgent:
                     if os.path.exists(temp_gemini_path):
                         upload_path = temp_gemini_path
                 except Exception as exc:
-                    self.send_log(f"[Transcode Warning] {exc}. Using original clip.")
+                    self.send_log(f"[{name}] [Transcode Warning] {exc}. Using original clip.")
 
-            self.send_log(f"Uploading clip to Cloud: {filename}...")
+            self.send_log(f"[{name}] Uploading clip to Cloud: {filename}...")
             upload_clip(
                 CLOUD_URL,
                 self.device_id,
                 upload_path,
                 filename,
                 duration=actual_duration,
+                stream_id=stream_id,
             )
-            self.send_log(f"Successfully uploaded clip to Cloud: {filename}")
+            self.send_log(f"[{name}] Successfully uploaded clip to Cloud: {filename}")
 
             if temp_gemini_path and os.path.exists(temp_gemini_path):
                 os.unlink(temp_gemini_path)
         except Exception as exc:
-            self.send_log(f"Clip generation failed: {exc}")
+            self.send_log(f"[{name}] Clip generation failed: {exc}")
         finally:
             remove_directory(staging_dir)
-            with self._recording_lock:
-                self.is_recording = False
-                self._recording_cooldown_until = time.monotonic() + RECORDING_COOLDOWN_SEC
+            with p_data["recording_lock"]:
+                p_data["is_recording"] = False
+                p_data["recording_cooldown_until"] = time.monotonic() + RECORDING_COOLDOWN_SEC
             if RECORDING_COOLDOWN_SEC > 0:
                 self.send_log(
-                    f"Clip cooldown started ({int(RECORDING_COOLDOWN_SEC)}s before next clip can begin)."
+                    f"[{name}] Clip cooldown started ({int(RECORDING_COOLDOWN_SEC)}s before next clip can begin)."
                 )
-            if self._active_tracker:
-                self._active_tracker.reset_detection_edge()
-            if self.is_pipeline_running:
-                self.send_status("Monitoring" if self.config.tracking_enabled else "Idle")
+            tracker = p_data.get("tracker")
+            if tracker:
+                tracker.reset_detection_edge()
+
+            p_data_curr = self.pipelines.get(stream_id)
+            if p_data_curr and not p_data_curr["stop_event"].is_set():
+                self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
 
     def _handle_stream_file_request(self, request_id: str, filename: str):
         is_clip = filename.startswith("clip_") and filename.endswith(".mp4")
-        base_dir = LOCAL_VIDEO_DIR if is_clip else HLS_DIR
-        file_path = os.path.join(base_dir, filename)
+        if is_clip:
+            file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+        else:
+            file_path = os.path.join(BASE_DIR, "storage", filename)
 
         if not os.path.exists(file_path):
             self._ws_send(
@@ -529,26 +610,18 @@ class EdgeAgent:
             msg_type = data.get("type")
 
             if msg_type == "configure":
-                cfg = data.get("config", {})
-                self.send_log(f"Applying new configuration: {cfg.get('name', self.config.name)}")
-                self.config = EdgeConfig(
-                    name=cfg.get("name", self.config.name),
-                    camera_type=cfg.get("cameraType", self.config.camera_type),
-                    stream_url=cfg.get("streamUrl", self.config.stream_url),
-                    tracking_enabled=bool(cfg.get("trackingEnabled", self.config.tracking_enabled)),
-                    motion_threshold=int(cfg.get("motionThreshold", self.config.motion_threshold)),
-                    pixel_change_threshold=float(
-                        cfg.get("pixelChangeThreshold", self.config.pixel_change_threshold)
-                    ),
-                    detect_person=bool(cfg.get("detectPerson", self.config.detect_person)),
-                    detect_vehicle=bool(cfg.get("detectVehicle", self.config.detect_vehicle)),
-                )
-                self.update_camera_state(force_restart=True)
+                streams_data = data.get("streams", [])
+                self.send_log(f"Applying updated configuration with {len(streams_data)} stream(s).")
+                self.update_streams_config(streams_data)
 
             elif msg_type == "toggle_stream":
-                self.stream_frames = bool(data.get("stream", False))
-                state = "enabled" if self.stream_frames else "disabled"
-                self.send_log(f"Low-latency preview streaming {state}.")
+                stream_id = data.get("streamId")
+                stream_state = bool(data.get("stream", False))
+                p_data = self.pipelines.get(stream_id)
+                if p_data:
+                    p_data["stream_frames"] = stream_state
+                    state = "enabled" if stream_state else "disabled"
+                    self.send_log(f"Low-latency preview streaming {state} for stream {stream_id}.")
 
             elif msg_type == "request_stream_file":
                 self._handle_stream_file_request(data["requestId"], data["filename"])
@@ -578,13 +651,16 @@ class EdgeAgent:
         self._schedule_heartbeat()
         self._announce_stream_host()
 
-        if self.is_recording:
-            status = "Recording"
-        elif self.is_pipeline_running:
-            status = "Monitoring" if self.config.tracking_enabled else "Idle"
-        else:
-            status = "Idle"
-        self.send_status(status)
+        # Update and notify status for all active streams
+        for stream_id, p_data in self.pipelines.items():
+            config = self.streams_config.get(stream_id)
+            if p_data["is_recording"]:
+                status = "Recording"
+            elif p_data.get("camera") and p_data["camera"].is_opened():
+                status = "Monitoring" if (config and config.tracking_enabled) else "Idle"
+            else:
+                status = "Idle"
+            self.send_status(stream_id, status)
 
     def _on_ws_close(self, _ws, _status_code, _msg):
         print("[Edge WS] Connection closed. Retrying in 5 seconds...")
@@ -603,7 +679,7 @@ class EdgeAgent:
             return
 
         ws_url = f"{CLOUD_WS_URL}?role=device&deviceId={self.device_id}"
-        print(f"[Edge WS] Connecting to {CLOUD_WS_URL}...")
+        print(f"[Edge WS] Connecting to {ws_url}...")
 
         self.ws = websocket.WebSocketApp(
             ws_url,
@@ -630,10 +706,19 @@ class EdgeAgent:
         if self.reconnect_timer:
             self.reconnect_timer.cancel()
 
-        self.stop_pipeline()
+        for stream_id in list(self.pipelines.keys()):
+            self.stop_stream_pipeline(stream_id)
+
         self.hls_server.stop()
-        kill_ffmpeg_for_dir(HLS_DIR)
-        clear_directory(HLS_DIR)
+
+        # Clean up all HLS folders
+        storage_dir = os.path.join(BASE_DIR, "storage")
+        if os.path.isdir(storage_dir):
+            for name in os.listdir(storage_dir):
+                if name.startswith("hls_"):
+                    path = os.path.join(storage_dir, name)
+                    kill_ffmpeg_for_dir(path)
+                    clear_directory(path)
 
         if self.ws:
             try:
@@ -645,29 +730,19 @@ class EdgeAgent:
 
     def bootstrap(self):
         try:
-            self.hls_server.start()
-            self.stream_host = self.hls_server.stream_host
-            print(f"[Edge] HLS HTTP server listening at {self.stream_host}")
+            if not self.hls_server._httpd:
+                self.hls_server.start()
+                self.stream_host = self.hls_server.stream_host
+                print(f"[Edge] HLS HTTP server listening at {self.stream_host}")
 
             print("[Edge] Registering device with Cloud Hub...")
             registered = self.register_device()
-            print("[Edge] Registration successful. Applied config:", registered)
-
-            self.config = EdgeConfig(
-                name=registered.get("name", self.config.name),
-                camera_type=registered.get("cameraType", self.config.camera_type),
-                stream_url=registered.get("streamUrl", self.config.stream_url),
-                tracking_enabled=bool(registered.get("trackingEnabled", self.config.tracking_enabled)),
-                motion_threshold=int(registered.get("motionThreshold", self.config.motion_threshold)),
-                pixel_change_threshold=float(
-                    registered.get("pixelChangeThreshold", self.config.pixel_change_threshold)
-                ),
-                detect_person=bool(registered.get("detectPerson", True)),
-                detect_vehicle=bool(registered.get("detectVehicle", True)),
-            )
+            # Expecting response structure: {"device": ..., "streams": [...]}
+            streams_list = registered.get("streams", [])
+            print(f"[Edge] Registration successful. Applied {len(streams_list)} stream(s) config.")
 
             self.connect_ws()
-            self.update_camera_state()
+            self.update_streams_config(streams_list)
 
             while not self.shutdown_event.is_set():
                 time.sleep(1)

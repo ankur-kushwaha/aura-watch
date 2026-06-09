@@ -308,6 +308,7 @@ def upload_clip(
     filepath: str,
     filename: str,
     duration: Optional[float] = None,
+    stream_id: Optional[str] = None,
 ):
     url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/upload"
     size = os.path.getsize(filepath)
@@ -318,6 +319,8 @@ def upload_clip(
     }
     if duration is not None and duration > 0:
         headers["x-duration"] = f"{duration:.2f}"
+    if stream_id:
+        headers["x-stream-id"] = stream_id
 
     with open(filepath, "rb") as handle:
         response = requests.post(url, data=handle, headers=headers, timeout=120)

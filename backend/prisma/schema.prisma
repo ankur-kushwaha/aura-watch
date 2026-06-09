@@ -8,49 +8,73 @@ generator client {
 }
 
 model VideoClip {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  id        String        @id @default(auto()) @map("_id") @db.ObjectId
   filepath  String
   filename  String
-  timestamp DateTime @default(now())
+  timestamp DateTime      @default(now())
   summary   String
-  duration  Float    @default(10.0)
+  duration  Float         @default(10.0)
   camera    String
   deviceId  String?
+  streamId  String?
+  stream    CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
 }
 
 model EdgeDevice {
-  id                   String   @id @default(auto()) @map("_id") @db.ObjectId
-  deviceId             String   @unique
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  deviceId      String         @unique
+  name          String
+  status        String         @default("Offline") // "Offline", "Online"
+  lastHeartbeat DateTime       @default(now())
+  streams       CameraStream[]
+}
+
+model CameraStream {
+  id                   String          @id @default(auto()) @map("_id") @db.ObjectId
+  streamId             String          @unique
+  deviceId             String
+  device               EdgeDevice      @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
   name                 String
-  cameraType           String   @default("webcam") // "webcam" or "rtsp"
-  streamUrl            String   @default("0")
-  trackingEnabled      Boolean  @default(false)
-  status               String   @default("Offline") // "Offline", "Idle", "Monitoring", "Recording", "Processing"
-  lastHeartbeat        DateTime @default(now())
-  motionThreshold      Int      @default(25)
-  pixelChangeThreshold Float    @default(0.02)
-  detectPerson         Boolean  @default(true)
-  detectVehicle        Boolean  @default(true)
-  streamHost           String   @default("")
+  cameraType           String          @default("webcam") // "webcam" or "rtsp"
+  streamUrl            String          @default("0")
+  trackingEnabled      Boolean         @default(false)
+  status               String          @default("Offline") // "Offline", "Idle", "Monitoring", "Recording", "Processing"
+  motionThreshold      Int             @default(25)
+  pixelChangeThreshold Float           @default(0.02)
+  detectPerson         Boolean         @default(true)
+  detectVehicle        Boolean         @default(true)
+  streamHost           String          @default("")
+  lastHeartbeat        DateTime        @default(now())
+  clips                VideoClip[]
+  detections           ReidDetection[]
+  fromRoutes           TopologyRoute[] @relation("FromRoute")
+  toRoutes             TopologyRoute[] @relation("ToRoute")
 }
 
 model ReidDetection {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  id         String        @id @default(auto()) @map("_id") @db.ObjectId
   deviceId   String
   cameraName String
+  streamId   String?
+  stream     CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
   trackId    Int
-  timestamp  DateTime @default(now())
+  timestamp  DateTime      @default(now())
   filename   String
-  bbox       String   // "x1,y1,x2,y2"
+  bbox       String        // "x1,y1,x2,y2"
   className  String
 }
 
 model TopologyRoute {
-  id               String @id @default(auto()) @map("_id") @db.ObjectId
-  fromCamera       String
-  toCamera         String
-  minTimeSeconds   Float
-  maxTimeSeconds   Float
-  topologyScore    Float  @default(1.0)
+  id             String        @id @default(auto()) @map("_id") @db.ObjectId
+  fromCamera     String
+  toCamera       String
+  fromStreamId   String?
+  toStreamId     String?
+  fromStream     CameraStream? @relation("FromRoute", fields: [fromStreamId], references: [streamId], onDelete: SetNull)
+  toStream       CameraStream? @relation("ToRoute", fields: [toStreamId], references: [streamId], onDelete: SetNull)
+  minTimeSeconds Float
+  maxTimeSeconds Float
+  topologyScore  Float         @default(1.0)
 }
+
 
