@@ -47,6 +47,18 @@ sudo sed -e "s|__USER__|${USER_NAME}|g" \
          -e "s|__PYTHON__|${PYTHON_PATH}|g" \
          "$SERVICE_TEMPLATE" | sudo tee "$SERVICE_OUT" > /dev/null
 
+echo "Configuring passwordless reboot for cloud dashboard (sudoers)..."
+SUDOERS_FILE="/etc/sudoers.d/aura-watch-edge-${USER_NAME}"
+sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
+# Aura Watch — allow edge agent user to reboot from cloud dashboard (no password)
+${USER_NAME} ALL=(ALL) NOPASSWD: /usr/sbin/reboot, /sbin/reboot, /bin/systemctl reboot
+EOF
+sudo chmod 440 "$SUDOERS_FILE"
+if ! sudo visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1; then
+    echo "Warning: sudoers validation failed. Reboot from dashboard may require a password."
+    sudo rm -f "$SUDOERS_FILE"
+fi
+
 echo "Registering systemd daemon..."
 sudo systemctl daemon-reload
 sudo systemctl enable aura-watch-edge.service

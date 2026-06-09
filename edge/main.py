@@ -581,6 +581,15 @@ class EdgeAgent:
             if p_data_curr and not p_data_curr["stop_event"].is_set():
                 self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
 
+    def _schedule_service_restart(self, delay: float = 0.5):
+        """Exit with failure so systemd Restart=on-failure restarts the service (no sudo)."""
+
+        def do_restart():
+            self.shutdown()
+            os._exit(1)
+
+        threading.Timer(delay, do_restart).start()
+
     def _find_repo_root(self) -> str:
         parent = os.path.abspath(os.path.join(BASE_DIR, ".."))
         if os.path.isdir(os.path.join(parent, ".git")):
@@ -666,13 +675,7 @@ class EdgeAgent:
                 "Update complete. Restarting aura-watch-edge service...",
                 output="\n".join(output_parts),
             )
-            threading.Timer(
-                0.5,
-                lambda: subprocess.run(
-                    ["sudo", "systemctl", "restart", "aura-watch-edge.service"],
-                    check=False,
-                ),
-            ).start()
+            self._schedule_service_restart()
         except subprocess.TimeoutExpired:
             respond(False, error="Update timed out.")
         except FileNotFoundError as exc:
@@ -714,13 +717,7 @@ class EdgeAgent:
         if command == "restart_service":
             self.send_log("aura-watch-edge service restart requested from cloud dashboard.")
             respond(True, "aura-watch-edge.service restart initiated.")
-            threading.Timer(
-                0.5,
-                lambda: subprocess.run(
-                    ["sudo", "systemctl", "restart", "aura-watch-edge.service"],
-                    check=False,
-                ),
-            ).start()
+            self._schedule_service_restart()
             return
 
         if command == "fetch_logs":
