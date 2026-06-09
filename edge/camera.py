@@ -156,6 +156,23 @@ class CameraCapture:
 
     def _open_webcam(self):
         errors: list[str] = []
+        force_rpicam = self.stream_url.lower() in ("libcamera", "rpicam", "csi")
+        rpicam_tried = False
+
+        # Pi CSI cameras work via libcamera (rpicam-vid), not V4L2 on /dev/video0
+        if force_rpicam or self._should_prefer_rpicam():
+            rpicam_tried = True
+            if self._try_open_rpicam("libcamera"):
+                print(
+                    f"[Camera] Opened libcamera via rpicam ({self.width}x{self.height})",
+                    flush=True,
+                )
+                return True
+            errors.append(f"rpicam: {self._last_error}")
+            if force_rpicam:
+                self._last_error = " | ".join(errors)
+                return False
+
         for source in self._webcam_candidates():
             if self._try_open_webcam_source(source):
                 print(
@@ -173,18 +190,18 @@ class CameraCapture:
                 return True
             errors.append(f"ffmpeg {source!r}: {self._last_error}")
 
-            if self._try_open_rpicam(source):
+            if not rpicam_tried and self._try_open_rpicam(source):
                 print(
                     f"[Camera] Opened libcamera via rpicam ({self.width}x{self.height})",
                     flush=True,
                 )
                 return True
-            errors.append(f"rpicam {source!r}: {self._last_error}")
+            if not rpicam_tried:
+                errors.append(f"rpicam {source!r}: {self._last_error}")
 
         hint = (
-            "Pi CSI camera is usually at /dev/video0 (unicam). "
-            "Run: v4l2-ctl --list-devices && rpicam-hello. "
-            "Set stream URL to /dev/video0 in the dashboard."
+            "Pi CSI camera needs libcamera (rpicam-vid), not V4L2. "
+            "Set stream URL to libcamera or 0. Run: scripts/test-camera.py"
         )
         if platform.system() == "Linux":
             self._last_error = f"{' | '.join(errors[-3:])}. {hint}"
@@ -262,9 +279,16 @@ class CameraCapture:
             return f"/dev/video{source}"
         return str(source)
 
-    def _is_primary_pi_camera(self, source: Union[int, str]) -> bool:
-        normalized = self._normalize_video_device(source)
-        return normalized in ("/dev/video0",) or str(source) in ("0", "")
+    def _should_prefer_rpicam(self) -> bool:
+        if platform.system() != "Linux":
+            return False
+        if not (shutil.which("rpicam-vid") or shutil.which("libcamera-vid")):
+            return False
+        if self.stream_url.lower() in ("libcamera", "rpicam", "csi"):
+            return True
+        if self.stream_url.startswith("/dev/video"):
+            return self.stream_url == "/dev/video0"
+        return self.stream_url in ("0", "")
 
     def _try_open_v4l2_ffmpeg(self, source: Union[int, str]) -> bool:
         device = self._normalize_video_device(source)
@@ -283,10 +307,6 @@ class CameraCapture:
         return False
 
     def _try_open_rpicam(self, source: Union[int, str]) -> bool:
-        if not self._is_primary_pi_camera(source):
-            self._last_error = "rpicam only used for primary CSI camera"
-            return False
-
         for cmd in ("rpicam-vid", "libcamera-vid"):
             if not shutil.which(cmd):
                 continue
@@ -453,17 +473,21 @@ class _FfmpegV4l2FrameReader(_FfmpegRawPipeReader):
         return False
 
 
-class _RpicamFrameReader(_FfmpegRawPipeReader):
-    """Capture from Pi libcamera via rpicam-vid piped through FFmpeg."""
+class _RpicamFrameReader:
+    """Capture from Pi libcamera via rpicam-vid raw YUV420 (no V4L2)."""
 
     def __init__(self, command: str, width: int, height: int, fps: int):
-        super().__init__(width, height)
         self.command = command
-        self.fps = fps
-        self._rpicam: Optional[subprocess.Popen] = None
+        self.width = width
+        self.height = height
+        self.fps = max(fps, 1)
+        self.process: Optional[subprocess.Popen] = None
+        self.last_error = ""
+        self._yuv_size = width * height * 3 // 2
+        self._stderr_lines: list[str] = []
 
     def start(self, connect_timeout: float = 15.0) -> bool:
-        rpicam_args = [
+        args = [
             self.command,
             "-t",
             "0",
@@ -471,65 +495,28 @@ class _RpicamFrameReader(_FfmpegRawPipeReader):
             str(self.width),
             "--height",
             str(self.height),
+            "--framerate",
+            str(self.fps),
             "--codec",
-            "mjpeg",
+            "yuv420",
             "--nopreview",
             "-n",
             "-o",
             "-",
         ]
         try:
-            self._rpicam = subprocess.Popen(
-                rpicam_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError as exc:
-            self.last_error = str(exc)
-            return False
-
-        loglevel = ffmpeg_loglevel()
-        ffmpeg_args = [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            loglevel,
-            "-f",
-            "mjpeg",
-            "-framerate",
-            str(self.fps),
-            "-i",
-            "pipe:0",
-            "-pix_fmt",
-            "bgr24",
-            "-f",
-            "rawvideo",
-            "pipe:1",
-        ]
-        try:
             self.process = subprocess.Popen(
-                ffmpeg_args,
-                stdin=self._rpicam.stdout,
+                args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
         except OSError as exc:
             self.last_error = str(exc)
-            self.stop()
             return False
-        finally:
-            if self._rpicam and self._rpicam.stdout:
-                try:
-                    self._rpicam.stdout.close()
-                except OSError:
-                    pass
 
-        if loglevel in ("quiet", "panic", "fatal", "error"):
-            threading.Thread(target=self._drain_stderr, daemon=True).start()
-        else:
+        if os.getenv("DEBUG_LOGS", "true").lower() != "false":
             threading.Thread(
-                target=_log_ffmpeg_stderr,
-                args=(self.process, f"{self.command} -> FFmpeg"),
+                target=self._drain_stderr,
                 daemon=True,
             ).start()
 
@@ -538,9 +525,8 @@ class _RpicamFrameReader(_FfmpegRawPipeReader):
             if self.process.poll() is not None:
                 self.last_error = (
                     self._format_stderr()
-                    or f"FFmpeg exited with code {self.process.returncode}"
+                    or f"{self.command} exited with code {self.process.returncode}"
                 )
-                self.stop()
                 return False
             if self._read_frame(blocking=False) is not None:
                 return True
@@ -550,15 +536,65 @@ class _RpicamFrameReader(_FfmpegRawPipeReader):
         self.stop()
         return False
 
+    def read(self) -> Optional[np.ndarray]:
+        if not self.process or self.process.poll() is not None:
+            if self.process and self.process.poll() is not None:
+                self.last_error = (
+                    self._format_stderr()
+                    or f"{self.command} exited with code {self.process.returncode}"
+                )
+            return None
+        return self._read_frame(blocking=True)
+
     def stop(self):
-        super().stop()
-        if self._rpicam:
+        if not self.process:
+            return
+        if self.process.stdout:
             try:
-                self._rpicam.kill()
-                self._rpicam.wait(timeout=2)
-            except Exception:
+                self.process.stdout.close()
+            except OSError:
                 pass
-            self._rpicam = None
+        try:
+            self.process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=2)
+        self.process = None
+
+    def _read_frame(self, blocking: bool) -> Optional[np.ndarray]:
+        if not self.process or not self.process.stdout:
+            return None
+
+        if not blocking:
+            import select
+
+            fd = self.process.stdout.fileno()
+            ready, _, _ = select.select([fd], [], [], 0.2)
+            if not ready:
+                return None
+
+        raw = self.process.stdout.read(self._yuv_size)
+        if not raw or len(raw) != self._yuv_size:
+            return None
+
+        yuv = np.frombuffer(raw, dtype=np.uint8).reshape(
+            (self.height * 3 // 2, self.width)
+        )
+        return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
+
+    def _drain_stderr(self):
+        if not self.process or not self.process.stderr:
+            return
+        for line in self.process.stderr:
+            text = line.decode("utf-8", errors="replace").strip()
+            if text:
+                self._stderr_lines.append(text)
+                print(f"[{self.command}] {text}", flush=True)
+
+    def _format_stderr(self) -> str:
+        if not self._stderr_lines:
+            return ""
+        return " | ".join(self._stderr_lines[-3:])
 
 
 class _FfmpegFrameReader:

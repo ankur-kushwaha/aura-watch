@@ -256,16 +256,15 @@ unicam (platform:fe801000.csi):
     /dev/video0
 ```
 
-Set the stream URL in the dashboard to **`/dev/video0`** (not just `0`).
+Set the stream URL in the dashboard to **`libcamera`** (or **`0`** for auto-detect). Do **not** use `/dev/video0` for CSI cameras — that node exists but does not work with OpenCV/FFmpeg V4L2 on Bookworm.
 
 Quick test on the Pi:
 
 ```bash
-rpicam-hello --timeout 2000
-ffmpeg -f v4l2 -input_format yuyv422 -video_size 640x480 -i /dev/video0 -frames:v 3 -f null -
+rpicam-vid -t 2000 --width 640 --height 480 --codec yuv420 --nopreview -n -o /dev/null
 ```
 
-The agent tries OpenCV, then **FFmpeg V4L2**, then **rpicam-vid** automatically.
+The agent uses **rpicam-vid** (raw YUV420) first on Pi when `rpicam-vid` is installed, then falls back to OpenCV / FFmpeg V4L2 for USB cameras.
 
 Run the diagnostic script on the Pi:
 
