@@ -110,8 +110,11 @@ interface ReidRoute {
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+const HUB_HTTP = import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
 
-const INSTALL_CMD = `sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
+function buildInstallCmd() {
+  return `CLOUD_URL='${HUB_HTTP}' CLOUD_WS_URL='${WS_BASE}' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
+}
 
 function DeviceInstallTooltip() {
   const [open, setOpen] = useState(false);
@@ -129,8 +132,10 @@ function DeviceInstallTooltip() {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
+  const installCmd = buildInstallCmd();
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(INSTALL_CMD).then(() => {
+    navigator.clipboard.writeText(installCmd).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -213,7 +218,7 @@ function DeviceInstallTooltip() {
               wordBreak: 'break-all',
               lineHeight: 1.6,
             }}>
-              {INSTALL_CMD}
+              {installCmd}
             </code>
             <button
               type="button"
@@ -237,7 +242,7 @@ function DeviceInstallTooltip() {
           </div>
 
           <p style={{ fontSize: '0.67rem', color: 'var(--color-text-muted)', marginTop: '8px', lineHeight: 1.4 }}>
-            The agent will auto-register with this dashboard and appear in the list above.
+            Installs, starts the agent, and registers it with this dashboard automatically. The device list refreshes every few seconds.
           </p>
         </div>
       )}
@@ -496,6 +501,14 @@ function App({ onLogout }: AppProps) {
       fetchClips();
     });
   }, [fetchDevices, fetchClips]);
+
+  // Poll for newly registered edge devices
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchDevices();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [fetchDevices]);
 
   // Sync selected stream details when selectedStreamId or streams list changes
   useEffect(() => {

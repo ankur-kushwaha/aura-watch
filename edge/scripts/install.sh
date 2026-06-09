@@ -3,12 +3,7 @@
 # Single-line installer for Aura Watch AI - Edge Agent
 set -e
 
-# Clear screen and print banner
-clear
-echo "========================================================================="
-echo " 👁️  Aura Watch AI - Edge Agent Interactive Installer"
-echo "========================================================================="
-echo ""
+AGENT_STARTED=false
 
 # Helper function to check command existence
 check_command() {
@@ -17,6 +12,49 @@ check_command() {
     fi
     return 0
 }
+
+resolve_python() {
+    if check_command python3; then
+        echo "python3"
+    elif check_command python; then
+        echo "python"
+    else
+        return 1
+    fi
+}
+
+derive_ws_url() {
+    local http_url="$1"
+    case "$http_url" in
+        https://*) echo "${http_url/https:\/\//wss://}" ;;
+        http://*)  echo "${http_url/http:\/\//ws://}" ;;
+        *)         echo "ws://localhost:5000" ;;
+    esac
+}
+
+start_agent_background() {
+    local edge_dir="$1"
+    local python_cmd="$2"
+    cd "$edge_dir"
+    nohup "$python_cmd" main.py >> agent.log 2>&1 &
+    echo $! > agent.pid
+    AGENT_STARTED=true
+    echo "   ✅ Edge Agent started in background (PID $(cat agent.pid))"
+    echo "      Logs: $edge_dir/agent.log"
+}
+
+# Non-interactive when CLOUD_URL is passed (e.g. from dashboard copy command)
+NONINTERACTIVE=false
+if [ -n "${CLOUD_URL:-}" ]; then
+    NONINTERACTIVE=true
+fi
+
+# Clear screen and print banner
+clear
+echo "========================================================================="
+echo " 👁️  Aura Watch AI - Edge Agent Interactive Installer"
+echo "========================================================================="
+echo ""
 
 # 1. Prerequisites Check
 echo "🔍 Checking system prerequisites..."
@@ -36,6 +74,21 @@ if check_command npm; then
     echo "  ✅ npm: Installed ($NPM_VERSION)"
 else
     echo "  ❌ npm: Not installed."
+    exit 1
+fi
+
+# Python 3
+PYTHON_CMD=""
+if PYTHON_CMD=$(resolve_python); then
+    PYTHON_VERSION=$("$PYTHON_CMD" --version 2>&1)
+    echo "  ✅ Python 3: Installed ($PYTHON_VERSION via $PYTHON_CMD)"
+else
+    echo "  ❌ Python 3: Not installed. Please install Python 3.10+ first."
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "     sudo apt install python3 python3-pip"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "     brew install python3"
+    fi
     exit 1
 fi
 
@@ -61,10 +114,15 @@ fi
 echo ""
 
 # 2. Target Directory Selection
-DEFAULT_INSTALL_DIR="$HOME/aura-watch-edge"
-echo "📂 Where would you like to install the Edge Agent?"
-read -p "Install directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR </dev/tty
-INSTALL_DIR=${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}
+DEFAULT_INSTALL_DIR="${INSTALL_DIR:-$HOME/aura-watch-edge}"
+if [ "$NONINTERACTIVE" = true ]; then
+    INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+    echo "📂 Install directory: $INSTALL_DIR"
+else
+    echo "📂 Where would you like to install the Edge Agent?"
+    read -p "Install directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR </dev/tty
+    INSTALL_DIR=${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}
+fi
 
 # Resolve directory path
 INSTALL_DIR=$(eval echo "$INSTALL_DIR")
@@ -87,17 +145,35 @@ echo ""
 echo "⚙️  Configuring your Edge Agent..."
 echo "----------------------------------"
 
-DEFAULT_CLOUD_URL="http://localhost:5000"
-read -p "Cloud Hub HTTP URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL </dev/tty
-CLOUD_URL=${CLOUD_URL:-$DEFAULT_CLOUD_URL}
+DEFAULT_CLOUD_URL="${CLOUD_URL:-http://localhost:5000}"
+if [ "$NONINTERACTIVE" = true ]; then
+    CLOUD_URL="$DEFAULT_CLOUD_URL"
+    echo "   Cloud Hub HTTP URL: $CLOUD_URL"
+else
+    read -p "Cloud Hub HTTP URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL_INPUT </dev/tty
+    CLOUD_URL=${CLOUD_URL_INPUT:-$DEFAULT_CLOUD_URL}
+fi
 
-DEFAULT_CLOUD_WS_URL="ws://localhost:5000"
-read -p "Cloud Hub WebSocket URL [$DEFAULT_CLOUD_WS_URL]: " CLOUD_WS_URL </dev/tty
-CLOUD_WS_URL=${CLOUD_WS_URL:-$DEFAULT_CLOUD_WS_URL}
+if [ -n "${CLOUD_WS_URL:-}" ]; then
+    :
+elif [ "$NONINTERACTIVE" = true ]; then
+    CLOUD_WS_URL=$(derive_ws_url "$CLOUD_URL")
+else
+    DEFAULT_CLOUD_WS_URL=$(derive_ws_url "$CLOUD_URL")
+    read -p "Cloud Hub WebSocket URL [$DEFAULT_CLOUD_WS_URL]: " CLOUD_WS_URL_INPUT </dev/tty
+    CLOUD_WS_URL=${CLOUD_WS_URL_INPUT:-$DEFAULT_CLOUD_WS_URL}
+fi
+echo "   Cloud Hub WebSocket URL: $CLOUD_WS_URL"
 
-DEFAULT_DEVICE_NAME="Office Edge Pi"
-read -p "Device Name [$DEFAULT_DEVICE_NAME]: " DEVICE_NAME </dev/tty
-DEVICE_NAME=${DEVICE_NAME:-$DEFAULT_DEVICE_NAME}
+HOST_LABEL=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo "Edge Device")
+DEFAULT_DEVICE_NAME="${DEVICE_NAME:-$HOST_LABEL}"
+if [ "$NONINTERACTIVE" = true ]; then
+    DEVICE_NAME="$DEFAULT_DEVICE_NAME"
+    echo "   Device Name: $DEVICE_NAME"
+else
+    read -p "Device Name [$DEFAULT_DEVICE_NAME]: " DEVICE_NAME_INPUT </dev/tty
+    DEVICE_NAME=${DEVICE_NAME_INPUT:-$DEFAULT_DEVICE_NAME}
+fi
 
 # Create .env config file
 cat <<EOT > .env
@@ -166,25 +242,48 @@ echo "   ✅ Saved Device ID to $INSTALL_DIR/edge/.device-id"
 echo ""
 
 # 5. Build and Installation
-echo "📦 Installing npm dependencies & building client..."
-npm install
-npm run build
-echo "   ✅ Build complete."
+echo "📦 Installing npm dependencies..."
+npm install --omit=dev
+echo "   ✅ npm dependencies installed."
 echo ""
 
-# 6. Service Daemon (Systemd for Linux)
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+echo "🐍 Installing Python dependencies..."
+"$PYTHON_CMD" -m pip install -r requirements.txt
+echo "   ✅ Python dependencies installed."
+echo ""
+
+# 6. Start Edge Agent
+EDGE_DIR="$INSTALL_DIR/edge"
+
+if [ "$NONINTERACTIVE" = true ]; then
+    echo "🚀 Starting Edge Agent (non-interactive mode)..."
+    start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     echo "📋 Linux system detected."
     read -p "Would you like to install the Edge Agent as a systemd background service? (y/n) [y]: " REGISTER_SERVICE </dev/tty
     REGISTER_SERVICE=${REGISTER_SERVICE:-y}
-    
+
     if [[ "$REGISTER_SERVICE" =~ ^[Yy]$ ]]; then
         echo "⚙️  Running daemon registration..."
         chmod +x scripts/setup-service.sh
-        ./scripts/setup-service.sh
+        if ./scripts/setup-service.sh; then
+            AGENT_STARTED=true
+            echo "   ✅ Edge Agent registered as systemd service and started."
+        else
+            echo "   ⚠️  Systemd setup failed. You can start the agent manually."
+        fi
     fi
 else
     echo "ℹ️  Systemd service registration is only supported on Linux (Raspberry Pi/Jetson)."
+fi
+
+if [ "$AGENT_STARTED" = false ]; then
+    read -p "Start the Edge Agent now in the background? (y/n) [y]: " START_NOW </dev/tty
+    START_NOW=${START_NOW:-y}
+    if [[ "$START_NOW" =~ ^[Yy]$ ]]; then
+        echo "🚀 Starting Edge Agent..."
+        start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
+    fi
 fi
 
 echo ""
@@ -192,13 +291,25 @@ echo "========================================================================="
 echo " 🎉 Aura Watch AI - Edge Agent Installed Successfully!"
 echo "========================================================================="
 echo ""
+if [ "$AGENT_STARTED" = true ]; then
+    echo "The agent is running and will register with your Cloud Hub at:"
+    echo "   $CLOUD_URL"
+    echo "It should appear in your dashboard within a few seconds."
+    echo ""
+fi
 echo "To run the agent manually in the foreground:"
-echo "   cd $INSTALL_DIR/edge"
-echo "   npm run dev"
+echo "   cd $EDGE_DIR"
+echo "   $PYTHON_CMD main.py"
 echo ""
+if [ -f "$EDGE_DIR/agent.pid" ]; then
+    echo "To stop the background agent:"
+    echo "   kill \$(cat $EDGE_DIR/agent.pid)"
+    echo ""
+fi
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    echo "To manage the background service:"
+    echo "To manage the systemd background service (if installed):"
     echo "   sudo systemctl status aura-watch-edge.service"
     echo "   sudo systemctl restart aura-watch-edge.service"
+    echo ""
 fi
 echo "========================================================================="

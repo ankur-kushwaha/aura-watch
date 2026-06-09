@@ -15,7 +15,12 @@ Ensure the following are installed on your edge device:
 ## Installation
 
 ### Method A: Single-Line Interactive Installer (Recommended)
-You can download, configure, and optionally install the agent as a background daemon (systemd service on Linux) in a single command:
+You can download, configure, start, and register the agent in a single command. When copied from the dashboard UI, the Cloud Hub URL is pre-filled automatically:
+```bash
+CLOUD_URL='https://your-hub.example.com' CLOUD_WS_URL='wss://your-hub.example.com' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
+```
+
+Or run interactively (you will be prompted for the Cloud Hub URL):
 ```bash
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"
 ```

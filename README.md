@@ -107,12 +107,13 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/
 ```
 
 This interactive script will:
-1. Verify system prerequisites (`Node.js`, `npm`, `git`, `FFmpeg`).
+1. Verify system prerequisites (`Node.js`, `npm`, `Python 3`, `git`, `FFmpeg`).
 2. Clone the repository to your chosen directory.
-3. Prompt you for the Cloud Hub URLs and Device Name.
-4. Automatically write the `.env` configuration file.
-5. Install packages and compile the TypeScript project.
-6. Option to install and start the background daemon systemd service (Linux only).
+3. Prompt you for the Cloud Hub URLs and Device Name (or use env vars when copied from the dashboard).
+4. Automatically write the `.env` configuration file and generate a persistent device ID.
+5. Install npm and Python dependencies for the edge agent.
+6. Start the agent in the background and register it with the Cloud Hub.
+7. Option to install as a systemd background service on Linux (interactive mode).
 
 ---
 
