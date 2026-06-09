@@ -13,7 +13,7 @@ import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from './routes/devices';
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
-import reidRouter, { registerOnReidCropUploaded } from './routes/reid';
+import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import prisma from './services/db';
@@ -25,7 +25,6 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 5000;
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../storage/videos');
-const CROPS_DIR = path.join(__dirname, '../storage/crops');
 
 // Ensure storage directories exist
 if (!fs.existsSync(VIDEO_DIR)) {
@@ -95,7 +94,6 @@ app.use('/api/rag', ragRouter);
 app.use('/api/devices', devicesRouter);
 app.use('/api/streams', streamsRouter);
 app.use('/api/reid', reidRouter);
-app.use('/api/crops', express.static(CROPS_DIR));
 
 // Serve static frontend files
 const FRONTEND_DIR = path.join(__dirname, '../../frontend/dist');
@@ -226,6 +224,17 @@ registerOnReidCropUploaded((detection) => {
   });
 });
 
+registerOnReidCropDeleted((deviceId, filename) => {
+  const deviceSocket = activeDevices.get(deviceId);
+  if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+    console.log(`[WS Hub] Requesting edge device ${deviceId} to delete crop: ${filename}`);
+    deviceSocket.send(JSON.stringify({
+      type: 'delete_clip_file',
+      filename,
+    }));
+  }
+});
+
 interface PendingStreamRequest {
   resolve: (value: { contentType: string; data: Buffer | string }) => void;
   reject: (reason: any) => void;
@@ -234,6 +243,59 @@ interface PendingStreamRequest {
 
 const pendingStreamRequests = new Map<string, PendingStreamRequest>();
 let nextStreamRequestId = 0;
+
+function fetchFileFromEdge(deviceId: string, filename: string): Promise<{ contentType: string; data: Buffer | string }> {
+  const deviceSocket = activeDevices.get(deviceId);
+  if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) {
+    return Promise.reject(new Error(`Edge device ${deviceId} is offline`));
+  }
+
+  const requestId = `req_${Date.now()}_${nextStreamRequestId++}`;
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingStreamRequests.delete(requestId);
+      reject(new Error(`Timeout waiting for file ${filename} from device`));
+    }, 15000);
+
+    pendingStreamRequests.set(requestId, { resolve, reject, timeout });
+
+    deviceSocket.send(JSON.stringify({
+      type: 'request_stream_file',
+      requestId,
+      filename,
+    }));
+  });
+}
+
+app.get('/api/crops/:filename', async (req, res) => {
+  const { filename } = req.params;
+
+  if (!filename.startsWith('crop_') || !filename.endsWith('.jpg')) {
+    return res.status(400).json({ error: 'Invalid crop filename' });
+  }
+
+  try {
+    const localPath = path.join(CROPS_DIR, filename);
+    if (fs.existsSync(localPath)) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      return res.sendFile(localPath);
+    }
+
+    const detection = await prisma.reidDetection.findFirst({ where: { filename } });
+    if (!detection?.deviceId) {
+      return res.status(404).json({ error: `Crop metadata not found for ${filename}` });
+    }
+
+    const result = await fetchFileFromEdge(detection.deviceId, filename);
+    res.setHeader('Content-Type', result.contentType || 'image/jpeg');
+    res.send(result.data);
+  } catch (error: any) {
+    console.error(`[Crop Proxy] Error fetching crop ${filename}:`, error);
+    const status = error.message?.includes('offline') ? 503 : 500;
+    res.status(status).json({ error: error.message });
+  }
+});
 
 /**
  * Upload to Gemini, fetch summary, generate vector embeddings, and save to MongoDB + Qdrant

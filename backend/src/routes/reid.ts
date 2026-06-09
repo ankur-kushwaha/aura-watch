@@ -6,7 +6,7 @@ import reidWorker from '../services/reidWorker';
 import { upsertReidVector, searchReidVectors, deleteReidVector } from '../services/qdrant';
 
 const router = Router();
-const CROPS_DIR = path.join(__dirname, '../../storage/crops');
+export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
 
 if (!fs.existsSync(CROPS_DIR)) {
   fs.mkdirSync(CROPS_DIR, { recursive: true });
@@ -17,6 +17,13 @@ let onReidCropUploadedCallback: ReidCropUploadedCallback | null = null;
 
 export function registerOnReidCropUploaded(cb: ReidCropUploadedCallback) {
   onReidCropUploadedCallback = cb;
+}
+
+export type ReidCropDeletedCallback = (deviceId: string, filename: string) => void;
+let onReidCropDeletedCallback: ReidCropDeletedCallback | null = null;
+
+export function registerOnReidCropDeleted(cb: ReidCropDeletedCallback) {
+  onReidCropDeletedCallback = cb;
 }
 
 /**
@@ -48,9 +55,8 @@ export async function handleCropUpload(req: Request, res: Response) {
       fs.writeFileSync(filepath, buffer);
       console.log(`[ReID Router] Saved crop file to ${filepath}`);
 
-      // Get device info to get cameraName
-      const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-      const cameraName = device ? device.name : 'Unknown Camera';
+      const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
+      const cameraName = stream?.name ?? 'Unknown Camera';
 
       // 1. Generate OSNet 512-d Embedding
       console.log(`[ReID Router] Running OSNet embedding extraction for ${filename}...`);
@@ -134,6 +140,10 @@ router.delete('/detections/:id', async (req: Request, res: Response) => {
 
     await deleteReidVector(id);
     await prisma.reidDetection.delete({ where: { id } });
+
+    if (onReidCropDeletedCallback) {
+      onReidCropDeletedCallback(detection.deviceId, detection.filename);
+    }
 
     res.json({ success: true, message: 'Detection deleted successfully' });
   } catch (err: any) {

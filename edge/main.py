@@ -46,6 +46,7 @@ CLOUD_URL = os.getenv("CLOUD_URL", "https://aura-watch.adboardtools.com").rstrip
 CLOUD_WS_URL = derive_ws_url(CLOUD_URL)
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Office Edge Device")
 LOCAL_VIDEO_DIR = os.getenv("LOCAL_VIDEO_DIR", os.path.join(BASE_DIR, "storage", "temp_clips"))
+LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage", "crops"))
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
 DEBUG_LOGS = os.getenv("DEBUG_LOGS", "true").lower() != "false"
 YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
@@ -96,6 +97,7 @@ class EdgeAgent:
         self.pipelines: dict[str, dict[str, Any]] = {}
 
         os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
+        os.makedirs(LOCAL_CROPS_DIR, exist_ok=True)
         os.makedirs(os.path.join(BASE_DIR, "storage"), exist_ok=True)
 
     def _load_or_create_device_id(self) -> str:
@@ -459,12 +461,21 @@ class EdgeAgent:
     def _upload_reid_crop(self, stream_id: str, crop_jpeg: bytes, track_id: int, confidence: float, bbox: tuple[int, int, int, int]):
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/{self.device_id}/reid/crop"
         bbox_str = ",".join(map(str, bbox))
+        timestamp_ms = int(time.time() * 1000)
+        filename = f"crop_{timestamp_ms}_{self.device_id}_{track_id}.jpg"
+        local_path = os.path.join(LOCAL_CROPS_DIR, filename)
+        try:
+            with open(local_path, "wb") as handle:
+                handle.write(crop_jpeg)
+        except Exception as exc:
+            self.send_log(f"[ReID Error] Failed to save local crop {filename}: {exc}")
+
         headers = {
             "Content-Type": "image/jpeg",
             "x-track-id": str(track_id),
             "x-confidence": f"{confidence:.4f}",
             "x-bbox": bbox_str,
-            "x-timestamp": str(int(time.time() * 1000)),
+            "x-timestamp": str(timestamp_ms),
             "x-class-name": "person",
             "x-stream-id": stream_id,
         }
@@ -839,8 +850,14 @@ class EdgeAgent:
 
         respond(False, error=f"Unknown device command: {command}")
 
-    def _handle_clip_file_request(self, request_id: str, filename: str):
-        if not (filename.startswith("clip_") and filename.endswith(".mp4")):
+    def _handle_stream_file_request(self, request_id: str, filename: str):
+        if filename.startswith("clip_") and filename.endswith(".mp4"):
+            file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+            content_type = "video/mp4"
+        elif filename.startswith("crop_") and filename.endswith(".jpg"):
+            file_path = os.path.join(LOCAL_CROPS_DIR, filename)
+            content_type = "image/jpeg"
+        else:
             self._ws_send(
                 {
                     "type": "response_stream_file",
@@ -851,7 +868,6 @@ class EdgeAgent:
             )
             return
 
-        file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
         if not os.path.exists(file_path):
             self._ws_send(
                 {
@@ -872,7 +888,7 @@ class EdgeAgent:
                     "type": "response_stream_file",
                     "requestId": request_id,
                     "success": True,
-                    "contentType": "video/mp4",
+                    "contentType": content_type,
                     "data": data,
                 }
             )
@@ -908,14 +924,17 @@ class EdgeAgent:
                     self.send_log(f"Low-latency preview streaming {state} for stream {stream_id}.")
 
             elif msg_type == "request_stream_file":
-                self._handle_clip_file_request(data["requestId"], data["filename"])
+                self._handle_stream_file_request(data["requestId"], data["filename"])
 
             elif msg_type == "delete_clip_file":
                 filename = data.get("filename", "")
-                file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+                if filename.startswith("crop_") and filename.endswith(".jpg"):
+                    file_path = os.path.join(LOCAL_CROPS_DIR, filename)
+                else:
+                    file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
                 if os.path.exists(file_path):
                     os.unlink(file_path)
-                    self.send_log(f"Deleted clip file on edge: {filename}")
+                    self.send_log(f"Deleted file on edge: {filename}")
 
             elif msg_type == "device_command":
                 self._handle_device_command(
