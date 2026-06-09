@@ -81,9 +81,25 @@ def resolve_model_path(model_path: Optional[str] = None) -> str:
         return custom
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    coreml = os.path.join(base_dir, "yolov8n.mlpackage")
-    if platform.system() == "Darwin" and os.path.isdir(coreml):
-        return coreml
+    machine = platform.machine().lower()
+
+    # Prefer platform-optimized exports when present (see scripts/export_model.py)
+    candidates: list[str] = []
+
+    if os.getenv("YOLO_USE_TENSORRT", "").lower() == "true":
+        candidates.append(os.path.join(base_dir, "yolov8n.engine"))
+    if os.getenv("YOLO_USE_OPENVINO", "").lower() == "true":
+        candidates.append(os.path.join(base_dir, "yolov8n_openvino_model"))
+
+    if platform.system() == "Darwin":
+        candidates.append(os.path.join(base_dir, "yolov8n.mlpackage"))
+
+    if machine in ("aarch64", "arm64", "armv7l", "armv8"):
+        candidates.append(os.path.join(base_dir, "yolov8n.onnx"))
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
 
     return os.path.join(base_dir, "yolov8n.pt")
 

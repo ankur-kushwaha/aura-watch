@@ -30,7 +30,8 @@ if [ ! -x "$VENV_SCRIPT" ]; then
 fi
 
 echo "Installing Python dependencies into virtual environment..."
-PYTHON_PATH=$(sh "$VENV_SCRIPT" "$DIR" python3)
+sh "$VENV_SCRIPT" "$DIR" python3
+PYTHON_PATH="$DIR/.venv/bin/python"
 
 echo "Generating systemd service file..."
 SERVICE_TEMPLATE="$DIR/scripts/aura-watch-edge.service.template"

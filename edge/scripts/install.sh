@@ -351,8 +351,8 @@ echo ""
 echo "🐍 Setting up Python virtual environment..."
 EDGE_DIR="$INSTALL_DIR/edge"
 chmod +x scripts/setup-venv.sh
-AGENT_PYTHON=$(sh scripts/setup-venv.sh "$EDGE_DIR" "$PYTHON_CMD")
-PYTHON_CMD="$AGENT_PYTHON"
+sh scripts/setup-venv.sh "$EDGE_DIR" "$PYTHON_CMD"
+PYTHON_CMD="$EDGE_DIR/.venv/bin/python"
 echo "   ✅ Python dependencies installed in $EDGE_DIR/.venv"
 echo ""
 

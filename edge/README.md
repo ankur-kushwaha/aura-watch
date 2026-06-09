@@ -57,6 +57,35 @@ Set the following options in your `.env`:
 * `CLOUD_URL`: The HTTP URL of your Cloud Hub backend (e.g. `https://aura-watch.adboardtools.com` or `http://192.168.1.100:5000`). WebSocket URL is derived automatically (`https` → `wss`, `http` → `ws`).
 * `DEVICE_NAME`: A descriptive name for this specific edge camera device (e.g., "Front Door", "Warehouse Jetson").
 
+## Performance optimization
+
+PyTorch `.pt` models are fine for development but slower on edge hardware. Export once, then the agent auto-loads the optimized format when the file exists.
+
+| Hardware | Format | Export command | Typical FPS gain |
+|----------|--------|----------------|------------------|
+| **Raspberry Pi** (ARM CPU) | ONNX | `.venv/bin/python scripts/export_model.py onnx` | ~1.5–2× |
+| **Apple Silicon Mac** | CoreML | `.venv/bin/python scripts/export_model.py coreml` | ~2–3× |
+| **NVIDIA Jetson** | TensorRT | `.venv/bin/python scripts/export_model.py engine` | ~2×+ |
+| **Intel NUC / x86** | OpenVINO | `.venv/bin/python scripts/export_model.py openvino` | ~1.5–2× |
+
+**Quick tuning in `.env` (no export needed):**
+
+```bash
+CAMERA_WIDTH=640
+CAMERA_HEIGHT=480
+YOLO_IMGSZ=320          # smaller = faster (try 320 on Pi)
+YOLO_DETECT_INTERVAL=3    # run YOLO every 3rd frame
+FRAME_STREAM_FPS=8        # lower preview bandwidth
+```
+
+On Raspberry Pi, export ONNX on the Pi after install (or on a dev machine with the same `YOLO_IMGSZ`):
+
+```bash
+cd edge
+.venv/bin/python scripts/export_model.py onnx
+# yolov8n.onnx is auto-detected on ARM — no .env change needed
+```
+
 ## Running the Agent
 
 ### macOS + RTSP cameras (important)
