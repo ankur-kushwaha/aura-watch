@@ -24,7 +24,10 @@ import {
   X,
   Info,
   Copy,
-  Check
+  Check,
+  Power,
+  RotateCcw,
+  ScrollText
 } from 'lucide-react';
 
 interface VideoClip {
@@ -262,6 +265,11 @@ function App({ onLogout }: AppProps) {
   const [showConfigDialog, setShowConfigDialog] = useState<boolean>(false);
   // When non-null, the dialog is in "add" mode and this is the target deviceId
   const [addingStreamForDeviceId, setAddingStreamForDeviceId] = useState<string | null>(null);
+  const [deviceLogsModal, setDeviceLogsModal] = useState<{ deviceId: string; name: string } | null>(null);
+  const [deviceLogs, setDeviceLogs] = useState<{ message: string; timestamp: string }[]>([]);
+  const [journalLogs, setJournalLogs] = useState<string>('');
+  const [loadingJournalLogs, setLoadingJournalLogs] = useState<boolean>(false);
+  const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'events' | 'reid'>('events');
 
   // ReID States
@@ -281,10 +289,16 @@ function App({ onLogout }: AppProps) {
     topologyScore: 1.0,
   });
   const selectedStreamIdRef = useRef(selectedStreamId);
+  const deviceLogsModalRef = useRef(deviceLogsModal);
+  const deviceLogsContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     selectedStreamIdRef.current = selectedStreamId;
   }, [selectedStreamId]);
+
+  useEffect(() => {
+    deviceLogsModalRef.current = deviceLogsModal;
+  }, [deviceLogsModal]);
 
   const [config, setConfig] = useState<CameraConfig>({
     name: 'Macbook Air Camera',
@@ -439,15 +453,26 @@ function App({ onLogout }: AppProps) {
           setMotionActive(data.active);
           setMotionRatio(data.ratio);
           break;
-        case 'log':
+        case 'log': {
+          const logEntry = { message: data.message, timestamp: data.timestamp };
           setLogs((prev) => {
             const last = prev[prev.length - 1];
             if (last && last.message === data.message && last.timestamp === data.timestamp) {
               return prev;
             }
-            return [...prev, { message: data.message, timestamp: data.timestamp }];
+            return [...prev, logEntry];
           });
+          if (deviceLogsModalRef.current) {
+            setDeviceLogs((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.message === data.message && last.timestamp === data.timestamp) {
+                return prev;
+              }
+              return [...prev, logEntry];
+            });
+          }
           break;
+        }
         case 'new_clip':
           setClips((prev) => [data.clip, ...prev]);
           setSelectedClip(data.clip);
@@ -763,6 +788,89 @@ function App({ onLogout }: AppProps) {
     setShowConfigDialog(true);
   };
 
+  const handleDeviceReboot = async (deviceId: string, deviceName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Reboot device "${deviceName}"? The device will disconnect briefly.`)) return;
+
+    setDeviceCommandPending(`${deviceId}:reboot`);
+    try {
+      const res = await fetch(`${API_BASE}/devices/${deviceId}/command/reboot`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to reboot device');
+      }
+    } catch (err) {
+      console.error('Failed to reboot device', err);
+      alert('Failed to reboot device');
+    } finally {
+      setDeviceCommandPending(null);
+    }
+  };
+
+  const handleRestartService = async (deviceId: string, deviceName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Restart aura-watch-edge service on "${deviceName}"?`)) return;
+
+    setDeviceCommandPending(`${deviceId}:restart`);
+    try {
+      const res = await fetch(`${API_BASE}/devices/${deviceId}/command/restart-service`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to restart service');
+      }
+    } catch (err) {
+      console.error('Failed to restart service', err);
+      alert('Failed to restart service');
+    } finally {
+      setDeviceCommandPending(null);
+    }
+  };
+
+  const fetchJournalLogs = useCallback(async (deviceId: string) => {
+    setLoadingJournalLogs(true);
+    try {
+      const res = await fetch(`${API_BASE}/devices/${deviceId}/logs?lines=200`);
+      const data = await res.json();
+      if (res.ok) {
+        setJournalLogs(data.logs || '');
+      } else {
+        setJournalLogs(data.error || 'Failed to fetch journal logs');
+      }
+    } catch (err) {
+      console.error('Failed to fetch journal logs', err);
+      setJournalLogs('Failed to fetch journal logs');
+    } finally {
+      setLoadingJournalLogs(false);
+    }
+  }, []);
+
+  const openDeviceLogsModal = (deviceId: string, name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeviceLogs([]);
+    setJournalLogs('');
+    setDeviceLogsModal({ deviceId, name });
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'subscribe_device', deviceId }));
+    }
+    fetchJournalLogs(deviceId);
+  };
+
+  const closeDeviceLogsModal = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'unsubscribe_device' }));
+    }
+    setDeviceLogsModal(null);
+    setDeviceLogs([]);
+    setJournalLogs('');
+  };
+
+  useEffect(() => {
+    if (deviceLogsContainerRef.current) {
+      deviceLogsContainerRef.current.scrollTop = deviceLogsContainerRef.current.scrollHeight;
+    }
+  }, [deviceLogs]);
+
   const handleDeleteDevice = async (deviceId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this edge device and all its streams?')) return;
@@ -1025,6 +1133,35 @@ function App({ onLogout }: AppProps) {
                             <Trash2 size={13} />
                           </button>
                         </div>
+                      </div>
+
+                      {/* Device Actions */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          onClick={(e) => handleDeviceReboot(dev.deviceId, dev.name, e)}
+                          disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:reboot`}
+                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
+                          title="Reboot Device"
+                        >
+                          <Power size={11} />
+                          {deviceCommandPending === `${dev.deviceId}:reboot` ? 'Rebooting...' : 'Reboot'}
+                        </button>
+                        <button
+                          onClick={(e) => handleRestartService(dev.deviceId, dev.name, e)}
+                          disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:restart`}
+                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
+                          title="Restart aura-watch-edge Service"
+                        >
+                          <RotateCcw size={11} />
+                          {deviceCommandPending === `${dev.deviceId}:restart` ? 'Restarting...' : 'Restart Service'}
+                        </button>
+                        <button
+                          onClick={(e) => openDeviceLogsModal(dev.deviceId, dev.name, e)}
+                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1"
+                          title="View Device Logs"
+                        >
+                          <ScrollText size={11} /> Logs
+                        </button>
                       </div>
 
                       {/* Nested Streams List */}
@@ -1889,6 +2026,87 @@ function App({ onLogout }: AppProps) {
 
 
       </div>
+
+      {/* DEVICE LOGS MODAL */}
+      {deviceLogsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
+          onClick={closeDeviceLogsModal}
+        >
+          <div
+            className="glass-panel w-full max-w-[720px] p-6 flex flex-col gap-4 relative animate-[slideUp_0.22s_ease-out] max-h-[85vh]"
+            style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
+                  <ScrollText size={18} color="var(--color-primary)" />
+                </div>
+                <div>
+                  <h2 className="text-[1.05rem] font-bold text-text-primary">
+                    Device Logs — {deviceLogsModal.name}
+                  </h2>
+                  <p className="text-[0.72rem] text-text-muted mt-0.5">{deviceLogsModal.deviceId}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => fetchJournalLogs(deviceLogsModal.deviceId)}
+                  disabled={loadingJournalLogs}
+                  className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
+                >
+                  <RefreshCw size={12} className={loadingJournalLogs ? 'animate-spin' : ''} />
+                  Refresh Journal
+                </button>
+                <button
+                  onClick={closeDeviceLogsModal}
+                  className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="h-px bg-[rgba(255,255,255,0.07)]" />
+
+            <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
+              <div>
+                <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Service Journal (aura-watch-edge)</h3>
+                <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
+                  {loadingJournalLogs ? (
+                    <span className="text-text-muted">Loading journal logs...</span>
+                  ) : journalLogs ? (
+                    journalLogs
+                  ) : (
+                    <span className="text-text-muted">No journal logs available.</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 flex flex-col">
+                <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Live Agent Logs</h3>
+                <div
+                  ref={deviceLogsContainerRef}
+                  className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#38bdf8] flex-1 min-h-[140px] max-h-[220px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+                >
+                  {deviceLogs.length === 0 ? (
+                    <span className="text-text-muted">Waiting for live log events from device...</span>
+                  ) : (
+                    deviceLogs.map((log, index) => (
+                      <div key={index} className="mb-1">
+                        <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                        <span>{log.message}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* STREAM CONFIG DIALOG MODAL */}
       {/* STREAM CONFIG DIALOG MODAL — handles both Add and Edit modes */}

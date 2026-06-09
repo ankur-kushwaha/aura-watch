@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -580,6 +581,71 @@ class EdgeAgent:
             if p_data_curr and not p_data_curr["stop_event"].is_set():
                 self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
 
+    def _handle_device_command(self, request_id: str, command: str, params: dict[str, Any]):
+        def respond(success: bool, message: str = "", **extra: Any):
+            self._ws_send(
+                {
+                    "type": "response_device_command",
+                    "requestId": request_id,
+                    "success": success,
+                    "message": message,
+                    **extra,
+                }
+            )
+
+        if command == "reboot":
+            self.send_log("Device reboot requested from cloud dashboard.")
+            respond(True, "Device reboot initiated.")
+            threading.Timer(
+                1.0,
+                lambda: subprocess.run(["sudo", "reboot"], check=False),
+            ).start()
+            return
+
+        if command == "restart_service":
+            self.send_log("aura-watch-edge service restart requested from cloud dashboard.")
+            respond(True, "aura-watch-edge.service restart initiated.")
+            threading.Timer(
+                0.5,
+                lambda: subprocess.run(
+                    ["sudo", "systemctl", "restart", "aura-watch-edge.service"],
+                    check=False,
+                ),
+            ).start()
+            return
+
+        if command == "fetch_logs":
+            lines = int(params.get("lines", 200))
+            lines = max(10, min(lines, 2000))
+            try:
+                result = subprocess.run(
+                    [
+                        "journalctl",
+                        "-u",
+                        "aura-watch-edge.service",
+                        "-n",
+                        str(lines),
+                        "--no-pager",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                logs = result.stdout.strip() or result.stderr.strip()
+                if not logs:
+                    logs = "No journal logs available for aura-watch-edge.service."
+                respond(True, logs=logs)
+            except FileNotFoundError:
+                respond(
+                    False,
+                    error="journalctl not found on this device.",
+                )
+            except Exception as exc:
+                respond(False, error=f"Failed to fetch logs: {exc}")
+            return
+
+        respond(False, error=f"Unknown device command: {command}")
+
     def _handle_clip_file_request(self, request_id: str, filename: str):
         if not (filename.startswith("clip_") and filename.endswith(".mp4")):
             self._ws_send(
@@ -655,6 +721,13 @@ class EdgeAgent:
                 if os.path.exists(file_path):
                     os.unlink(file_path)
                     self.send_log(f"Deleted clip file on edge: {filename}")
+
+            elif msg_type == "device_command":
+                self._handle_device_command(
+                    data.get("requestId", ""),
+                    data.get("command", ""),
+                    data,
+                )
 
         except Exception as exc:
             print(f"[Edge WS] Error processing message: {exc}")

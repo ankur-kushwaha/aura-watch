@@ -17,6 +17,7 @@ import reidRouter, { registerOnReidCropUploaded } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import prisma from './services/db';
+import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
 
 const app = express();
 const server = http.createServer(app);
@@ -125,6 +126,8 @@ const uiSubscriptions = new Map<WebSocket, string>();
 const uiStreamSubscriptions = new Map<WebSocket, string>();
 // Maps streamId -> deviceId for routing device-level logs to stream subscribers
 const streamDeviceCache = new Map<string, string>();
+
+initDeviceCommands((deviceId) => activeDevices.get(deviceId));
 
 function broadcastDevicesChanged() {
   const message = JSON.stringify({ type: 'devices_changed' });
@@ -417,6 +420,9 @@ wss.on('connection', async (ws: WebSocket, req) => {
           }
           case 'log':
             broadcastLogToSubscribedUIs(deviceId, data.message);
+            break;
+          case 'response_device_command':
+            resolveDeviceCommandResponse(data.requestId, data.success, data);
             break;
         }
       } catch (err) {

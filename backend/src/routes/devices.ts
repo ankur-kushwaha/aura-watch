@@ -3,6 +3,7 @@ import prisma from '../services/db';
 import * as fs from 'fs';
 import * as path from 'path';
 import { handleCropUpload } from './reid';
+import { sendDeviceCommand } from '../services/deviceCommands';
 
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
@@ -222,6 +223,68 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
  * Edge device uploads a cropped person JPEG frame
  */
 router.post('/:deviceId/reid/crop', handleCropUpload);
+
+/**
+ * POST /api/devices/:deviceId/command/reboot
+ * Reboot the edge device (Raspberry Pi / host OS)
+ */
+router.post('/:deviceId/command/reboot', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  try {
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const result = await sendDeviceCommand(deviceId, 'reboot');
+    res.json({ message: result.message || 'Reboot initiated', ...result });
+  } catch (error: any) {
+    const status = error.message === 'Device is offline' ? 503 : 500;
+    res.status(status).json({ error: error.message || 'Failed to reboot device' });
+  }
+});
+
+/**
+ * POST /api/devices/:deviceId/command/restart-service
+ * Restart the aura-watch-edge systemd service on the device
+ */
+router.post('/:deviceId/command/restart-service', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  try {
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const result = await sendDeviceCommand(deviceId, 'restart_service');
+    res.json({ message: result.message || 'Service restart initiated', ...result });
+  } catch (error: any) {
+    const status = error.message === 'Device is offline' ? 503 : 500;
+    res.status(status).json({ error: error.message || 'Failed to restart service' });
+  }
+});
+
+/**
+ * GET /api/devices/:deviceId/logs
+ * Fetch recent journalctl logs from the edge device's aura-watch-edge service
+ */
+router.get('/:deviceId/logs', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const lines = Math.min(Math.max(parseInt(String(req.query.lines || '200'), 10) || 200, 10), 2000);
+
+  try {
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const result = await sendDeviceCommand(deviceId, 'fetch_logs', { lines }, 45000);
+    res.json({ logs: result.logs || '', message: result.message });
+  } catch (error: any) {
+    const status = error.message === 'Device is offline' ? 503 : 500;
+    res.status(status).json({ error: error.message || 'Failed to fetch device logs' });
+  }
+});
 
 
 
