@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import * as fs from 'fs';
 import * as path from 'path';
+import { handleCropUpload } from './reid';
 
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
@@ -233,6 +234,13 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to process file upload' });
   }
 });
+
+/**
+ * POST /api/devices/:deviceId/reid/crop
+ * Edge device uploads a cropped person JPEG frame
+ */
+router.post('/:deviceId/reid/crop', handleCropUpload);
+
 
 export type StreamFileRequestHandler = (deviceId: string, filename: string) => Promise<{ contentType: string, data: Buffer | string }>;
 let onStreamFileRequestCallback: StreamFileRequestHandler | null = null;
