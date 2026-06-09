@@ -391,6 +391,18 @@ wss.on('connection', async (ws: WebSocket, req) => {
                 data: { status: data.status }
               });
               broadcastToSubscribedUIs(deviceId, { type: 'status', streamId: data.streamId, status: data.status });
+
+              // Pipeline restarts reset preview on the edge; re-enable if the UI is still watching.
+              const previewStatuses = ['Idle', 'Monitoring', 'Recording'];
+              if (previewStatuses.includes(data.status)) {
+                const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(data.streamId);
+                if (hasSubscribers) {
+                  const deviceSocket = activeDevices.get(deviceId);
+                  if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
+                    deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId: data.streamId, stream: true }));
+                  }
+                }
+              }
             }
             break;
           case 'frame':
@@ -399,6 +411,16 @@ wss.on('connection', async (ws: WebSocket, req) => {
               streamId: data.streamId,
               image: data.image
             });
+            break;
+          case 'preview_stall':
+          case 'preview_resumed':
+            if (data.streamId) {
+              broadcastToSubscribedUIs(deviceId, {
+                type: data.type,
+                streamId: data.streamId,
+                stalledForSec: data.stalledForSec,
+              });
+            }
             break;
           case 'response_stream_file': {
             const { requestId, success, contentType, data: fileData, error } = data;

@@ -28,8 +28,11 @@ import {
   Power,
   RotateCcw,
   ScrollText,
-  Download
+  Download,
+  AlertTriangle
 } from 'lucide-react';
+
+const PREVIEW_STALL_MS = 5000;
 
 interface VideoClip {
   id: string;
@@ -332,6 +335,8 @@ function App({ onLogout }: AppProps) {
   // Live Camera Feed Video States
   const [streamLoading, setStreamLoading] = useState<boolean>(true);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
+  const [previewFrozen, setPreviewFrozen] = useState<boolean>(false);
+  const lastFrameAtRef = useRef<number>(0);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -489,8 +494,20 @@ function App({ onLogout }: AppProps) {
           break;
         case 'frame':
           if (data.image && data.streamId === selectedStreamIdRef.current) {
+            lastFrameAtRef.current = Date.now();
             setLiveFrame(`data:image/jpeg;base64,${data.image}`);
             setStreamLoading(false);
+            setPreviewFrozen(false);
+          }
+          break;
+        case 'preview_stall':
+          if (data.streamId === selectedStreamIdRef.current) {
+            setPreviewFrozen(true);
+          }
+          break;
+        case 'preview_resumed':
+          if (data.streamId === selectedStreamIdRef.current) {
+            setPreviewFrozen(false);
           }
           break;
         case 'devices_changed':
@@ -701,8 +718,26 @@ function App({ onLogout }: AppProps) {
     Promise.resolve().then(() => {
       setStreamLoading(true);
       setLiveFrame(null);
+      setPreviewFrozen(false);
+      lastFrameAtRef.current = 0;
     });
   }, [selectedStreamId]);
+
+  // Detect frozen preview when WS frames stop arriving
+  useEffect(() => {
+    if (!selectedStreamId || status === 'Offline') {
+      setPreviewFrozen(false);
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const lastFrameAt = lastFrameAtRef.current;
+      if (!lastFrameAt) return;
+      setPreviewFrozen(Date.now() - lastFrameAt > PREVIEW_STALL_MS);
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [selectedStreamId, status]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1368,11 +1403,22 @@ function App({ onLogout }: AppProps) {
                     />
                   )}
 
-                  {liveFrame && (
+                  {liveFrame && !previewFrozen && (
                     <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(16,185,129,0.2)] text-emerald-400 border border-[rgba(16,185,129,0.35)]">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
                       LIVE
                     </div>
+                  )}
+
+                  {liveFrame && previewFrozen && (
+                    <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(245,158,11,0.2)] text-amber-400 border border-[rgba(245,158,11,0.35)]">
+                      <AlertTriangle size={10} />
+                      FROZEN
+                    </div>
+                  )}
+
+                  {previewFrozen && (
+                    <div className="absolute inset-0 border-2 border-amber-500/60 pointer-events-none rounded-xl z-10" />
                   )}
 
                   {streamLoading && (

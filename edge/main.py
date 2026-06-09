@@ -59,6 +59,7 @@ PREVIEW_JPEG_QUALITY = int(os.getenv("PREVIEW_JPEG_QUALITY", "70"))
 RECORDING_COOLDOWN_SEC = float(os.getenv("RECORDING_COOLDOWN_SEC", "45"))
 RECORDING_MAX_SEC = float(os.getenv("RECORDING_MAX_SEC", "60"))
 RECORDING_END_GRACE_SEC = float(os.getenv("RECORDING_END_GRACE_SEC", "2"))
+PREVIEW_STALL_TIMEOUT_SEC = float(os.getenv("PREVIEW_STALL_TIMEOUT_SEC", "5"))
 
 
 @dataclass
@@ -85,6 +86,7 @@ class EdgeAgent:
         self.ws: Optional[websocket.WebSocketApp] = None
         self.ws_thread: Optional[threading.Thread] = None
         self.heartbeat_timer: Optional[threading.Timer] = None
+        self.preview_stall_timer: Optional[threading.Timer] = None
         self.reconnect_timer: Optional[threading.Timer] = None
         self.ws_lock = threading.Lock()
         self.shutdown_event = threading.Event()
@@ -211,6 +213,8 @@ class EdgeAgent:
             "frame_width": 0,
             "frame_height": 0,
             "stream_frames": False,
+            "last_preview_sent_at": 0.0,
+            "preview_stalled": False,
         }
         self.pipelines[stream_id] = pipeline_data
 
@@ -242,9 +246,17 @@ class EdgeAgent:
     def restart_stream_pipeline(self, stream_id: str):
         config = self.streams_config.get(stream_id)
         name = config.name if config else stream_id
+        existing = self.pipelines.get(stream_id)
+        was_streaming_preview = bool(existing and existing.get("stream_frames"))
         self.send_log(f"Restarting stream pipeline to apply new configuration for: {name}")
         self.stop_stream_pipeline(stream_id)
         self.start_stream_pipeline(stream_id)
+        if was_streaming_preview:
+            p_data = self.pipelines.get(stream_id)
+            if p_data:
+                p_data["stream_frames"] = True
+                p_data["last_preview_sent_at"] = 0.0
+                p_data["preview_stalled"] = False
 
     def _stream_pipeline_loop(self, stream_id: str, stop_event: threading.Event):
         retry_delay = 10.0
@@ -408,7 +420,41 @@ class EdgeAgent:
         if not jpeg:
             return
         encoded = base64.b64encode(jpeg).decode("ascii")
+        p_data = self.pipelines.get(stream_id)
+        if p_data:
+            p_data["last_preview_sent_at"] = time.monotonic()
+            if p_data.get("preview_stalled"):
+                p_data["preview_stalled"] = False
+                self._ws_send({"type": "preview_resumed", "streamId": stream_id})
         self._ws_send({"type": "frame", "streamId": stream_id, "image": encoded})
+
+    def _check_preview_stalls(self):
+        now = time.monotonic()
+        for stream_id, p_data in self.pipelines.items():
+            if not p_data.get("stream_frames"):
+                if p_data.get("preview_stalled"):
+                    p_data["preview_stalled"] = False
+                    self._ws_send({"type": "preview_resumed", "streamId": stream_id})
+                continue
+
+            last_sent = p_data.get("last_preview_sent_at", 0.0)
+            if last_sent <= 0.0:
+                continue
+
+            stalled_for = now - last_sent
+            if stalled_for >= PREVIEW_STALL_TIMEOUT_SEC:
+                if not p_data.get("preview_stalled"):
+                    p_data["preview_stalled"] = True
+                    self._ws_send(
+                        {
+                            "type": "preview_stall",
+                            "streamId": stream_id,
+                            "stalledForSec": round(stalled_for, 1),
+                        }
+                    )
+            elif p_data.get("preview_stalled"):
+                p_data["preview_stalled"] = False
+                self._ws_send({"type": "preview_resumed", "streamId": stream_id})
 
     def _upload_reid_crop(self, stream_id: str, crop_jpeg: bytes, track_id: int, confidence: float, bbox: tuple[int, int, int, int]):
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/{self.device_id}/reid/crop"
@@ -856,6 +902,8 @@ class EdgeAgent:
                 p_data = self.pipelines.get(stream_id)
                 if p_data:
                     p_data["stream_frames"] = stream_state
+                    p_data["last_preview_sent_at"] = 0.0
+                    p_data["preview_stalled"] = False
                     state = "enabled" if stream_state else "disabled"
                     self.send_log(f"Low-latency preview streaming {state} for stream {stream_id}.")
 
@@ -887,11 +935,22 @@ class EdgeAgent:
         self.heartbeat_timer.daemon = True
         self.heartbeat_timer.start()
 
+    def _schedule_preview_stall_check(self):
+        if self.shutdown_event.is_set():
+            return
+        self._check_preview_stalls()
+        self.preview_stall_timer = threading.Timer(2.0, self._schedule_preview_stall_check)
+        self.preview_stall_timer.daemon = True
+        self.preview_stall_timer.start()
+
     def _on_ws_open(self, _ws):
         print("[Edge WS] Connected successfully to Cloud Hub.")
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
+        if self.preview_stall_timer:
+            self.preview_stall_timer.cancel()
         self._schedule_heartbeat()
+        self._schedule_preview_stall_check()
 
         # Update and notify status for all active streams
         for stream_id, p_data in self.pipelines.items():
@@ -908,6 +967,8 @@ class EdgeAgent:
         print("[Edge WS] Connection closed. Retrying in 5 seconds...")
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
+        if self.preview_stall_timer:
+            self.preview_stall_timer.cancel()
         if not self.shutdown_event.is_set():
             self.reconnect_timer = threading.Timer(5.0, self.connect_ws)
             self.reconnect_timer.daemon = True
@@ -945,6 +1006,8 @@ class EdgeAgent:
 
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
+        if self.preview_stall_timer:
+            self.preview_stall_timer.cancel()
         if self.reconnect_timer:
             self.reconnect_timer.cancel()
 
