@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import signal
 import socket
 import subprocess
 import threading
@@ -549,17 +550,27 @@ class _RpicamFrameReader:
     def stop(self):
         if not self.process:
             return
-        if self.process.stdout:
-            try:
-                self.process.stdout.close()
-            except OSError:
-                pass
-        try:
-            self.process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=2)
+        proc = self.process
         self.process = None
+        try:
+            proc.send_signal(signal.SIGINT)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.terminate()
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2)
+        for stream in (proc.stdout, proc.stderr):
+            if stream:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
     def _read_frame(self, blocking: bool) -> Optional[np.ndarray]:
         if not self.process or not self.process.stdout:
