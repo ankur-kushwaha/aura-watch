@@ -284,6 +284,26 @@ class EdgeAgent:
                 retry_delay = min(retry_delay * 1.5, 60.0)
                 continue
 
+            frame_ok = False
+            for _ in range(30):
+                probe = camera.read()
+                if probe is not None:
+                    frame_ok = True
+                    break
+                time.sleep(0.1)
+            if not frame_ok:
+                detail = camera.last_error or "camera.read() returned None"
+                self.send_log(
+                    f"[{config.name}] Camera opened but no frames ({detail}). "
+                    f"Retrying in {int(retry_delay)}s..."
+                )
+                camera.release()
+                self.send_status(stream_id, "Idle")
+                if self._wait_stream(stop_event, retry_delay):
+                    break
+                retry_delay = min(retry_delay * 1.5, 60.0)
+                continue
+
             retry_delay = 10.0
             consecutive_failures = 0
             detection_classes = config.detection_classes()

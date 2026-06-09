@@ -154,44 +154,85 @@ class CameraCapture:
         return False
 
     def _open_webcam(self):
-        source = self._resolve_webcam_source()
+        errors: list[str] = []
+        for source in self._webcam_candidates():
+            if self._try_open_webcam_source(source):
+                print(
+                    f"[Camera] Opened source {source!r} ({self.width}x{self.height})",
+                    flush=True,
+                )
+                return True
+            errors.append(f"{source!r}: {self._last_error}")
+
+        hint = (
+            "On Raspberry Pi run: v4l2-ctl --list-devices && ls -la /dev/video* "
+            "— then set stream URL to the working device (e.g. /dev/video0 or 0)."
+        )
         if platform.system() == "Linux":
-            self._cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
+            self._last_error = f"{' | '.join(errors[-3:])}. {hint}"
         else:
-            self._cap = cv2.VideoCapture(source)
+            self._last_error = " | ".join(errors[-3:])
+        return False
 
-        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self._cap.set(cv2.CAP_PROP_FPS, self.fps)
-
-        if not self._cap.isOpened():
-            self._last_error = f"Failed to open camera source: {source}"
-            return False
-
-        self.width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH) or self.width)
-        self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or self.height)
-
-        # Warm up capture — first reads on Pi/V4L2 are often empty
-        for _ in range(10):
-            ok, _frame = self._cap.read()
-            if ok:
-                break
-            time.sleep(0.05)
-
-        return True
-
-    def _resolve_webcam_source(self):
+    def _webcam_candidates(self) -> list[int | str]:
         if self.stream_url.isdigit():
-            return int(self.stream_url)
+            return [int(self.stream_url)]
 
         if platform.system() == "Linux" and self.stream_url.startswith("/dev/"):
-            return self.stream_url
+            return [self.stream_url]
 
         if platform.system() == "Linux":
-            return "/dev/video0"
+            candidates: list[int | str] = []
+            for index in range(8):
+                path = f"/dev/video{index}"
+                if os.path.exists(path):
+                    candidates.append(path)
+                    candidates.append(index)
+            return candidates or [0, "/dev/video0"]
 
-        return 0
+        if self.stream_url not in ("0", ""):
+            return [self.stream_url]
+        return [0]
+
+    def _try_open_webcam_source(self, source: int | str) -> bool:
+        backends: list[tuple[str, int]] = [("default", cv2.CAP_ANY)]
+        if platform.system() == "Linux":
+            backends = [("v4l2", cv2.CAP_V4L2), ("default", cv2.CAP_ANY)]
+
+        for label, api in backends:
+            cap = cv2.VideoCapture(source, api) if api != cv2.CAP_ANY else cv2.VideoCapture(source)
+            if not cap.isOpened():
+                cap.release()
+                continue
+
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            cap.set(cv2.CAP_PROP_FPS, self.fps)
+
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or self.width)
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or self.height)
+
+            warmed = False
+            for _ in range(40):
+                ok, frame = cap.read()
+                if ok and frame is not None and frame.size > 0:
+                    warmed = True
+                    break
+                time.sleep(0.05)
+
+            if not warmed:
+                self._last_error = f"{label}: opened but no frames"
+                cap.release()
+                continue
+
+            self._cap = cap
+            self.width = width
+            self.height = height
+            return True
+
+        self._last_error = f"failed to open {source!r}"
+        return False
 
 
 class _FfmpegFrameReader:
