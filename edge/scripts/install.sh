@@ -130,13 +130,18 @@ print_ffmpeg_install_help() {
 }
 
 resolve_python() {
-    if check_command python3; then
-        echo "python3"
-    elif check_command python; then
-        echo "python"
-    else
-        return 1
-    fi
+    # Prefer a Python 3.10+ binary (macOS /usr/bin/python3 is often 3.9.x)
+    for candidate in \
+        python3.14 python3.13 python3.12 python3.11 python3.10 \
+        /opt/homebrew/bin/python3 /usr/local/bin/python3 \
+        python3 python
+    do
+        if check_command "$candidate" && python_meets_minimum "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 python_meets_minimum() {
@@ -178,17 +183,26 @@ echo "🔍 Checking system prerequisites..."
 PYTHON_CMD=""
 if PYTHON_CMD=$(resolve_python); then
     PYTHON_VERSION=$("$PYTHON_CMD" --version 2>&1)
-    if python_meets_minimum "$PYTHON_CMD"; then
-        echo "  ✅ Python 3: Installed ($PYTHON_VERSION via $PYTHON_CMD)"
-    else
-        echo "  ❌ Python 3: Found ($PYTHON_VERSION) but version 3.10+ is required."
-        print_python_install_help
-        exit 1
-    fi
+    echo "  ✅ Python 3: Installed ($PYTHON_VERSION via $PYTHON_CMD)"
 else
+  if check_command python3; then
+    PYTHON_VERSION=$(python3 --version 2>&1)
+    echo "  ❌ Python 3: Found ($PYTHON_VERSION) but version 3.10+ is required."
+    if [ "$(detect_os)" = "darwin" ]; then
+      echo ""
+      echo "  macOS ships python3 3.9 at /usr/bin/python3. Homebrew Python is usually newer."
+      echo "  Fix your PATH, then re-run this installer:"
+      echo "    export PATH=\"/opt/homebrew/bin:\$PATH\""
+      echo "    python3 --version   # should show 3.10+"
+      echo ""
+      echo "  Or run the installer with Homebrew Python directly:"
+      echo "    PATH=\"/opt/homebrew/bin:\$PATH\" sh -c \"\$(curl -fsSL .../install.sh)\""
+    fi
+  else
     echo "  ❌ Python 3: Not installed."
-    print_python_install_help
-    exit 1
+  fi
+  print_python_install_help
+  exit 1
 fi
 
 # Git
