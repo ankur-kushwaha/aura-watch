@@ -52,7 +52,7 @@ print_python_install_help() {
                 debian|ubuntu|raspbian|raspberrypi|linuxmint|pop)
                     echo "  Debian / Ubuntu / Raspberry Pi OS:"
                     echo "    sudo apt update"
-                    echo "    sudo apt install -y python3 python3-pip python3-venv"
+                    echo "    sudo apt install -y python3 python3-venv python3-full"
                     ;;
                 fedora)
                     echo "  Fedora:"
@@ -354,14 +354,14 @@ echo "$DEVICE_ID" > .device-id
 echo "   ✅ Saved Device ID to $INSTALL_DIR/edge/.device-id"
 echo ""
 
-# 5. Install Python dependencies
-echo "🐍 Installing Python dependencies..."
-"$PYTHON_CMD" -m pip install -r requirements.txt
-echo "   ✅ Python dependencies installed."
-echo ""
-
-# 6. Start Edge Agent
+# 5. Install Python dependencies (virtual environment avoids PEP 668 system pip restrictions)
+echo "🐍 Setting up Python virtual environment..."
 EDGE_DIR="$INSTALL_DIR/edge"
+chmod +x scripts/setup-venv.sh
+AGENT_PYTHON=$(sh scripts/setup-venv.sh "$EDGE_DIR" "$PYTHON_CMD")
+PYTHON_CMD="$AGENT_PYTHON"
+echo "   ✅ Python dependencies installed in $EDGE_DIR/.venv"
+echo ""
 
 if [ "$NONINTERACTIVE" = true ]; then
     echo "🚀 Starting Edge Agent (non-interactive mode)..."
@@ -411,7 +411,7 @@ if [ "$AGENT_STARTED" = true ]; then
 fi
 echo "To run the agent manually in the foreground:"
 echo "   cd $EDGE_DIR"
-echo "   $PYTHON_CMD main.py"
+echo "   .venv/bin/python main.py"
 echo ""
 if [ -f "$EDGE_DIR/agent.pid" ]; then
     echo "To stop the background agent:"

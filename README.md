@@ -182,7 +182,7 @@ npm run edge
 Or run directly inside the `edge/` folder:
 ```bash
 cd edge
-python3 main.py
+.venv/bin/python main.py
 ```
 
 ---

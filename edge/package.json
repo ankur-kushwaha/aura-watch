@@ -4,7 +4,7 @@
   "description": "AI Video Surveillance Edge Agent (Python)",
   "private": true,
   "scripts": {
-    "dev": "python3 main.py",
-    "start": "python3 main.py"
+    "dev": "sh -c '[ -x .venv/bin/python ] && .venv/bin/python main.py || python3 main.py'",
+    "start": "sh -c '[ -x .venv/bin/python ] && .venv/bin/python main.py || python3 main.py'"
   }
 }

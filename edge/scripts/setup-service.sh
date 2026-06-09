@@ -1,35 +1,36 @@
-#!/bin/bash
+#!/bin/sh
 
 # Setup script for Aura Watch AI Edge Service (Linux Systemd)
 set -e
 
 echo "=== Aura Watch AI Edge Agent Setup ==="
 
-# 1. Check if running on Linux
-if [[ "$OSTYPE" != "linux-gnu"* ]]; then
-    echo "Warning: This setup script is intended for Linux (Raspberry Pi/Jetson). On macOS, please run 'python3 main.py' directly."
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "Warning: This setup script is intended for Linux (Raspberry Pi/Jetson)."
+    echo "On macOS, run: .venv/bin/python main.py"
     exit 1
 fi
 
-# 2. Check for Python 3
-if ! command -v python3 &> /dev/null; then
+if ! command -v python3 >/dev/null 2>&1; then
     echo "Error: Python 3 is not installed. Please install Python 3.10+ first."
     exit 1
 fi
 
-# 3. Check for FFmpeg
-if ! command -v ffmpeg &> /dev/null; then
-    echo "Warning: FFmpeg is not installed. It is required to grab video frames and record clips. Please install it: sudo apt install ffmpeg"
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "Warning: FFmpeg is not installed. It is required to grab video frames and record clips."
+    echo "Install with: sudo apt install ffmpeg"
 fi
 
-# Get directories and user details
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-USER_NAME=$(logname || echo $USER)
-PYTHON_PATH=$(which python3)
+DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+USER_NAME=$(logname 2>/dev/null || id -un)
+VENV_SCRIPT="$DIR/scripts/setup-venv.sh"
 
-echo "Installing Python dependencies..."
-cd "$DIR"
-python3 -m pip install -r requirements.txt
+if [ ! -x "$VENV_SCRIPT" ]; then
+    chmod +x "$VENV_SCRIPT"
+fi
+
+echo "Installing Python dependencies into virtual environment..."
+PYTHON_PATH=$(sh "$VENV_SCRIPT" "$DIR" python3)
 
 echo "Generating systemd service file..."
 SERVICE_TEMPLATE="$DIR/scripts/aura-watch-edge.service.template"
@@ -40,7 +41,6 @@ if [ ! -f "$SERVICE_TEMPLATE" ]; then
     exit 1
 fi
 
-# Replace placeholders dynamically
 sudo sed -e "s|__USER__|${USER_NAME}|g" \
          -e "s|__DIR__|${DIR}|g" \
          -e "s|__PYTHON__|${PYTHON_PATH}|g" \

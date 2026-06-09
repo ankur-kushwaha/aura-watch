@@ -64,3 +64,4 @@ ehthumbs.db
 Thumbs.db
 
 edge/storage/
+edge/.venv/

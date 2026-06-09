@@ -17,7 +17,7 @@ If Python is missing, install it for your OS:
 
 | OS | Command |
 |----|---------|
-| **Raspberry Pi / Debian / Ubuntu** | `sudo apt update && sudo apt install -y python3 python3-pip python3-venv` |
+| **Raspberry Pi / Debian / Ubuntu** | `sudo apt update && sudo apt install -y python3 python3-venv python3-full` |
 | **Fedora / RHEL / Rocky** | `sudo dnf install -y python3 python3-pip` |
 | **Arch Linux** | `sudo pacman -S --needed python python-pip` |
 | **macOS** | `brew install python3` or [python.org/downloads](https://www.python.org/downloads/macos/) |
@@ -39,10 +39,12 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/
 
 ### Method B: Manual Installation
 1. Copy this `edge/` folder to your edge device.
-2. Install dependencies:
+2. Create a virtual environment and install dependencies (required on Raspberry Pi OS / Debian due to PEP 668):
    ```bash
-   python3 -m pip install -r requirements.txt
+   chmod +x scripts/setup-venv.sh
+   sh scripts/setup-venv.sh . python3
    ```
+   On Raspberry Pi, if venv creation fails, install: `sudo apt install -y python3-venv python3-full`
 
 ## Configuration
 
@@ -67,13 +69,13 @@ If VLC and `ping` work in **Terminal.app** but the edge agent fails with `No rou
 **Workaround:** Run the edge agent from an external Terminal window instead:
 
 ```bash
-cd edge && python3 main.py
+cd edge && .venv/bin/python main.py
 ```
 
 ### Development / Local Run
 To run the agent in the foreground:
 ```bash
-python3 main.py
+.venv/bin/python main.py
 ```
 
 From the monorepo root (requires Node.js only for the npm wrapper):
