@@ -46,7 +46,6 @@ else
     log "Using existing virtual environment at $VENV_DIR"
 fi
 
-PIP="$VENV_DIR/bin/python" -m pip
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 # Avoid stale/corrupt pip cache (common cause of "Cache entry deserialization failed")
 export PIP_NO_CACHE_DIR=1
