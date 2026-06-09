@@ -247,6 +247,33 @@ ls -la ~/aura-watch-edge/edge/storage/hls_<STREAM_ID>/
 
 If `index.m3u8` is missing, the camera pipeline is not producing frames (check V4L2 / device busy errors first).
 
+### Pi CSI camera (`unicam` at `/dev/video0`)
+
+`v4l2-ctl --list-devices` should show:
+
+```
+unicam (platform:fe801000.csi):
+    /dev/video0
+```
+
+Set the stream URL in the dashboard to **`/dev/video0`** (not just `0`).
+
+Quick test on the Pi:
+
+```bash
+rpicam-hello --timeout 2000
+ffmpeg -f v4l2 -input_format yuyv422 -video_size 640x480 -i /dev/video0 -frames:v 3 -f null -
+```
+
+The agent tries OpenCV, then **FFmpeg V4L2**, then **rpicam-vid** automatically.
+
+Run the diagnostic script on the Pi:
+
+```bash
+cd ~/aura-watch-edge/edge
+.venv/bin/python scripts/test-camera.py /dev/video0
+```
+
 ### `Device or resource busy` on `/dev/video0` (Pi)
 
 Another process holds the camera. Common causes: a previous agent instance, `libcamera-hello`, or a stuck FFmpeg.
