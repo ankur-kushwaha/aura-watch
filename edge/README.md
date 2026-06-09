@@ -1,6 +1,6 @@
 # Aura Watch AI — Edge Surveillance Agent
 
-Lightweight Python agent for edge devices (Raspberry Pi, NVIDIA Jetson, macOS dev machines). It runs **YOLOv8 nano + ByteTrack** for person/vehicle detection, pushes annotated preview frames to the cloud over WebSocket, records detection-triggered clips via a rolling segment buffer, uploads them to the Cloud Hub, and receives configuration updates in real time.
+Lightweight Python agent for edge devices (Raspberry Pi, NVIDIA Jetson, macOS dev machines). It runs **YOLOv8 nano + ByteTrack** for person/vehicle detection, pushes annotated preview frames to the cloud over WebSocket, encodes detection-triggered clips on demand (no 24/7 video encoding), uploads them to the Cloud Hub, and receives configuration updates in real time.
 
 **Node.js is not required on the edge device** — only Python 3.10+, Git, and FFmpeg.
 
@@ -12,7 +12,7 @@ Lightweight Python agent for edge devices (Raspberry Pi, NVIDIA Jetson, macOS de
 |-------------|--------|
 | **Python 3.10+** | Required |
 | **Git** | Required by the one-line installer |
-| **FFmpeg** | Segment encoding and clip recording |
+| **FFmpeg** | On-demand clip encoding (only while objects are detected) |
 
 ### Install Python by OS
 
@@ -202,9 +202,9 @@ sudo journalctl -u aura-watch-edge.service -f
 
 ## Troubleshooting
 
-### See FFmpeg logs (camera / encoding debugging)
+### See FFmpeg logs (camera / clip encoding debugging)
 
-FFmpeg is used for RTSP capture and segment encoding. By default the installer sets `DEBUG_LOGS=false` (errors only). Enable verbose logs in `.env`:
+FFmpeg is used for RTSP capture and on-demand clip encoding. By default the installer sets `DEBUG_LOGS=false` (errors only). Enable verbose logs in `.env`:
 
 ```bash
 DEBUG_LOGS=true
@@ -223,7 +223,7 @@ cd ~/aura-watch-edge/edge
 sudo journalctl -u aura-watch-edge.service -f
 ```
 
-You should see lines prefixed with `[FFmpeg segment]` or `[FFmpeg RTSP]`.
+You should see lines prefixed with `[FFmpeg clip]` (during recordings) or `[FFmpeg RTSP]`.
 
 **Test camera directly on the Pi:**
 
@@ -235,16 +235,10 @@ ffplay -f v4l2 -i /dev/video0
 sudo fuser -v /dev/video0
 
 # kill stale ffmpeg from a crashed agent
-pkill -f "ffmpeg.*segments_"
+pkill -f "ffmpeg.*clip_"
 ```
 
-**Check segment buffer on the Pi** (replace stream id):
-
-```bash
-ls -la ~/aura-watch-edge/edge/storage/segments_<STREAM_ID>/
-```
-
-If no `segment_*.ts` files appear, the camera pipeline is not producing frames (check V4L2 / device busy errors first).
+Clips are written to `storage/temp_clips/` only while objects are detected — there is no always-on segment buffer.
 
 ### Pi CSI camera (`unicam` at `/dev/video0`)
 
@@ -278,7 +272,7 @@ Another process holds the camera. Common causes: a previous agent instance, `lib
 
 ```bash
 sudo systemctl stop aura-watch-edge.service
-pkill -f "ffmpeg.*segments_"
+pkill -f "ffmpeg.*clip_"
 sudo fuser -v /dev/video0   # see PID, then: sudo kill <pid>
 sudo systemctl start aura-watch-edge.service
 ```
@@ -291,7 +285,7 @@ The UI uses WebSocket JPEG frames from the edge. If the feed is stuck on "Initia
 
 1. **Edge not connected** — confirm the device shows Online in the dashboard.
 2. **Preview not enabled** — the hub requests preview frames when you open a stream; check edge logs for `Low-latency preview streaming enabled`.
-3. **Camera pipeline failed** — see FFmpeg logs above and verify `segment_*.ts` files are being written.
+3. **Camera pipeline failed** — see FFmpeg logs above; trigger a detection to verify `clip_*.mp4` files appear in `storage/temp_clips/`.
 
 ### `externally-managed-environment` (Raspberry Pi OS)
 

@@ -1,14 +1,11 @@
-"""Segment encoding, clip concatenation, transcoding, and cloud upload."""
+"""On-demand clip encoding, transcoding, and cloud upload."""
 
 from __future__ import annotations
 
 import os
 import queue
-import re
-import shutil
 import subprocess
 import threading
-import time
 from typing import Optional
 
 import numpy as np
@@ -38,33 +35,22 @@ def _log_ffmpeg_stderr(process: subprocess.Popen, prefix: str) -> None:
             print(f"[{prefix}] {text}", flush=True)
 
 
-class SegmentEncoder:
-    """Pipe annotated BGR frames into FFmpeg for rolling MPEG-TS segments."""
+class ClipEncoder:
+    """Pipe annotated BGR frames into FFmpeg for a single MP4 clip file."""
 
-    def __init__(
-        self,
-        output_dir: str,
-        width: int,
-        height: int,
-        fps: int = 30,
-        segment_sec: float = 1.0,
-        max_segments: int = 4,
-    ):
-        self.output_dir = output_dir
+    def __init__(self, output_path: str, width: int, height: int, fps: int = 10):
+        self.output_path = output_path
         self.width = width
         self.height = height
-        self.fps = fps
-        self.segment_sec = segment_sec
-        self.max_segments = max(2, max_segments)
+        self.fps = max(fps, 1)
         self.process: Optional[subprocess.Popen] = None
         self._write_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
         self._writer_thread: Optional[threading.Thread] = None
         self._stop_writer = threading.Event()
-        os.makedirs(output_dir, exist_ok=True)
+        self.frames_written = 0
 
     def start(self):
-        segment_time = max(self.segment_sec, 0.5)
-        segment_pattern = os.path.join(self.output_dir, "segment_%03d.ts")
+        os.makedirs(os.path.dirname(os.path.abspath(self.output_path)), exist_ok=True)
         loglevel = ffmpeg_loglevel()
         args = [
             "ffmpeg",
@@ -92,17 +78,9 @@ class SegmentEncoder:
             "-pix_fmt",
             "yuv420p",
             "-an",
-            "-f",
-            "segment",
-            "-segment_time",
-            str(segment_time),
-            "-segment_format",
-            "mpegts",
-            "-segment_wrap",
-            str(self.max_segments),
-            "-reset_timestamps",
-            "1",
-            segment_pattern,
+            "-movflags",
+            "+faststart",
+            self.output_path,
         ]
         self.process = subprocess.Popen(
             args,
@@ -110,16 +88,17 @@ class SegmentEncoder:
             stderr=subprocess.PIPE,
         )
         self._stop_writer.clear()
+        self.frames_written = 0
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
-            name="segment-writer",
+            name="clip-writer",
             daemon=True,
         )
         self._writer_thread.start()
         if loglevel not in ("quiet", "panic", "fatal", "error"):
             threading.Thread(
                 target=_log_ffmpeg_stderr,
-                args=(self.process, "FFmpeg segment"),
+                args=(self.process, "FFmpeg clip"),
                 daemon=True,
             ).start()
 
@@ -158,6 +137,7 @@ class SegmentEncoder:
 
             try:
                 self.process.stdin.write(frame.tobytes())
+                self.frames_written += 1
             except (BrokenPipeError, OSError):
                 break
 
@@ -176,7 +156,7 @@ class SegmentEncoder:
                 pass
 
         try:
-            self.process.wait(timeout=5)
+            self.process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait(timeout=2)
@@ -185,53 +165,16 @@ class SegmentEncoder:
         self._writer_thread = None
 
 
-def clear_directory(directory: str):
-    if not os.path.isdir(directory):
-        return
-    for name in os.listdir(directory):
-        path = os.path.join(directory, name)
-        if os.path.isfile(path):
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
-
-def kill_ffmpeg_for_dir(directory: str):
+def kill_ffmpeg_for_path(path: str):
     try:
         subprocess.run(
-            ["pkill", "-9", "-f", f"ffmpeg.*{directory}"],
+            ["pkill", "-9", "-f", f"ffmpeg.*{path}"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     except OSError:
         pass
-
-
-def copy_new_segments(segment_dir: str, staging_dir: str, copied: set[str]) -> int:
-    """Copy newly written .ts segments before the rolling window overwrites them."""
-    os.makedirs(staging_dir, exist_ok=True)
-    added = 0
-    for name in os.listdir(segment_dir):
-        if not name.endswith(".ts") or name in copied:
-            continue
-        src = os.path.join(segment_dir, name)
-        if not os.path.isfile(src):
-            continue
-        dst = os.path.join(staging_dir, name)
-        try:
-            shutil.copy2(src, dst)
-            copied.add(name)
-            added += 1
-        except OSError:
-            pass
-    return added
-
-
-def remove_directory(directory: str):
-    if os.path.isdir(directory):
-        shutil.rmtree(directory, ignore_errors=True)
 
 
 def get_video_duration_seconds(path: str) -> float:
@@ -256,59 +199,6 @@ def get_video_duration_seconds(path: str) -> float:
         return float(result.stdout.strip())
     except ValueError:
         return 0.0
-
-
-def concat_segments(segment_dir: str, output_mp4: str):
-    abs_segment_dir = os.path.abspath(segment_dir)
-    abs_output = os.path.abspath(output_mp4)
-    segments: list[tuple[int, str]] = []
-
-    for name in os.listdir(abs_segment_dir):
-        if not name.endswith(".ts"):
-            continue
-        match = re.search(r"(\d+)\.ts$", name)
-        num = int(match.group(1)) if match else 0
-        segments.append((num, os.path.join(abs_segment_dir, name)))
-
-    segments.sort(key=lambda item: item[0])
-    if not segments:
-        raise RuntimeError("No segments found to concatenate")
-
-    txt_path = os.path.join(abs_segment_dir, f"concat_{int(time.time() * 1000)}.txt")
-    with open(txt_path, "w", encoding="utf-8") as handle:
-        for _, abs_path in segments:
-            if not os.path.isfile(abs_path):
-                raise RuntimeError(f"Segment missing before concat: {abs_path}")
-            escaped = abs_path.replace("'", "'\\''")
-            handle.write(f"file '{escaped}'\n")
-
-    try:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                txt_path,
-                "-c",
-                "copy",
-                abs_output,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=abs_segment_dir,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg concat failed: {result.stderr}")
-    finally:
-        try:
-            os.unlink(txt_path)
-        except OSError:
-            pass
 
 
 def transcode_for_gemini(

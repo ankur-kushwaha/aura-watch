@@ -1,4 +1,4 @@
-"""Threaded vision pipeline: capture, detect, encode, and live preview."""
+"""Threaded vision pipeline: capture, detect, on-demand clip encode, and live preview."""
 
 from __future__ import annotations
 
@@ -15,23 +15,24 @@ import cv2
 import numpy as np
 
 from camera import CameraCapture
-from recorder import SegmentEncoder
+from recorder import ClipEncoder
 from yolo_tracker import YoloByteTracker
 
 
 @dataclass
 class PipelineSettings:
     detect_interval: int = 2
-    encode_fps: int = 30
+    encode_fps: int = 10
+    process_fps: int = 15
     stream_fps: float = 12.0
     jpeg_quality: int = 70
-    segment_sec: float = 1.0
     tracking_enabled: bool = False
 
 
 FrameCallback = Callable[[np.ndarray], None]
 DetectionCallback = Callable[[list, bool], None]
 ReidCallback = Callable[[bytes, int, float, tuple[int, int, int, int]], None]
+ClipEncoderGetter = Callable[[], Optional[ClipEncoder]]
 
 
 class VisionPipeline:
@@ -41,8 +42,8 @@ class VisionPipeline:
         self,
         camera: CameraCapture,
         tracker: YoloByteTracker,
-        encoder: SegmentEncoder,
         settings: PipelineSettings,
+        get_clip_encoder: Optional[ClipEncoderGetter] = None,
         on_preview_frame: Optional[FrameCallback] = None,
         on_detections: Optional[DetectionCallback] = None,
         on_reid_crop: Optional[ReidCallback] = None,
@@ -50,8 +51,8 @@ class VisionPipeline:
     ):
         self.camera = camera
         self.tracker = tracker
-        self.encoder = encoder
         self.settings = settings
+        self.get_clip_encoder = get_clip_encoder
         self.on_preview_frame = on_preview_frame
         self.on_detections = on_detections
         self.on_reid_crop = on_reid_crop
@@ -70,7 +71,6 @@ class VisionPipeline:
         self._capture_thread.start()
 
     def run(self):
-        frame_interval = 1.0 / max(self.settings.encode_fps, 1)
         stream_interval = 1.0 / max(self.settings.stream_fps, 1.0)
         last_stream_time = 0.0
         last_frame_time = time.monotonic()
@@ -114,7 +114,12 @@ class VisionPipeline:
                         if ok:
                             self.on_reid_crop(jpeg_buf.tobytes(), d.track_id, d.confidence, d.bbox)
 
-            self.encoder.write_frame(annotated)
+            clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
+            if clip_encoder:
+                clip_encoder.write_frame(annotated)
+                frame_interval = 1.0 / max(self.settings.encode_fps, 1)
+            else:
+                frame_interval = 1.0 / max(self.settings.process_fps, 1)
 
             now = time.monotonic()
             if self.on_preview_frame and now - last_stream_time >= stream_interval:

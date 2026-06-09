@@ -20,13 +20,9 @@ from dotenv import load_dotenv
 from camera import CameraCapture
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
-    SegmentEncoder,
-    clear_directory,
-    concat_segments,
-    copy_new_segments,
+    ClipEncoder,
     get_video_duration_seconds,
-    kill_ffmpeg_for_dir,
-    remove_directory,
+    kill_ffmpeg_for_path,
     transcode_for_gemini,
     upload_clip,
 )
@@ -56,10 +52,8 @@ YOLO_DEVICE = resolve_yolo_device(os.getenv("YOLO_DEVICE", "auto"))
 YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "416"))
 YOLO_DETECT_INTERVAL = max(int(os.getenv("YOLO_DETECT_INTERVAL", "2")), 1)
 CAMERA_FPS = max(int(os.getenv("CAMERA_FPS", "30")), 1)
-ENCODE_FPS = max(int(os.getenv("ENCODE_FPS", str(CAMERA_FPS))), 1)
 FRAME_STREAM_FPS = float(os.getenv("FRAME_STREAM_FPS", "12"))
-SEGMENT_SEC = float(os.getenv("SEGMENT_SEC", os.getenv("HLS_SEGMENT_SEC", "1")))
-SEGMENT_MAX_COUNT = max(int(os.getenv("SEGMENT_MAX_COUNT", "4")), 2)
+CLIP_ENCODE_FPS = max(int(os.getenv("CLIP_ENCODE_FPS", os.getenv("ENCODE_FPS", "10"))), 1)
 PREVIEW_JPEG_QUALITY = int(os.getenv("PREVIEW_JPEG_QUALITY", "70"))
 RECORDING_COOLDOWN_SEC = float(os.getenv("RECORDING_COOLDOWN_SEC", "45"))
 RECORDING_MAX_SEC = float(os.getenv("RECORDING_MAX_SEC", "60"))
@@ -122,6 +116,14 @@ class EdgeAgent:
 
     def send_status(self, stream_id: str, status: str):
         self._ws_send({"type": "status_change", "streamId": stream_id, "status": status})
+
+    def _stop_active_clip_encoder(self, p_data: dict[str, Any]) -> Optional[ClipEncoder]:
+        with p_data["clip_encoder_lock"]:
+            encoder = p_data.get("clip_encoder")
+            p_data["clip_encoder"] = None
+        if encoder:
+            encoder.stop()
+        return encoder
 
     def _ws_send(self, payload: dict[str, Any]):
         if not self.ws:
@@ -194,11 +196,6 @@ class EdgeAgent:
         if not config:
             return
 
-        segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
-        os.makedirs(segment_dir, exist_ok=True)
-        clear_directory(segment_dir)
-        kill_ffmpeg_for_dir(segment_dir)
-
         stop_event = threading.Event()
         pipeline_data = {
             "stop_event": stop_event,
@@ -208,6 +205,10 @@ class EdgeAgent:
             "last_detection_at": 0.0,
             "recording_lock": threading.Lock(),
             "detection_lock": threading.Lock(),
+            "clip_encoder_lock": threading.Lock(),
+            "clip_encoder": None,
+            "frame_width": 0,
+            "frame_height": 0,
             "stream_frames": False,
         }
         self.pipelines[stream_id] = pipeline_data
@@ -229,13 +230,12 @@ class EdgeAgent:
             return
 
         pipeline_data["stop_event"].set()
+        with pipeline_data["recording_lock"]:
+            pipeline_data["is_recording"] = False
+        self._stop_active_clip_encoder(pipeline_data)
         thread = pipeline_data.get("thread")
         if thread and thread.is_alive():
             thread.join(timeout=10)
-
-        segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
-        kill_ffmpeg_for_dir(segment_dir)
-        clear_directory(segment_dir)
         self.send_status(stream_id, "Offline")
 
     def restart_stream_pipeline(self, stream_id: str):
@@ -308,23 +308,13 @@ class EdgeAgent:
 
             pipeline_data["camera"] = camera
             pipeline_data["tracker"] = tracker
+            pipeline_data["frame_width"] = camera.width
+            pipeline_data["frame_height"] = camera.height
 
             self.send_log(
                 f"[{config.name}] Detection targets: {', '.join(detection_classes)} | "
                 f"device={YOLO_DEVICE} imgsz={YOLO_IMGSZ} interval={YOLO_DETECT_INTERVAL}"
             )
-
-            segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
-            encoder = SegmentEncoder(
-                segment_dir,
-                camera.width,
-                camera.height,
-                fps=ENCODE_FPS,
-                segment_sec=SEGMENT_SEC,
-                max_segments=SEGMENT_MAX_COUNT,
-            )
-            pipeline_data["encoder"] = encoder
-            encoder.start()
 
             self.send_log(
                 f"[{config.name}] Started YOLO+ByteTrack pipeline ({camera.width}x{camera.height})"
@@ -333,13 +323,20 @@ class EdgeAgent:
 
             settings = PipelineSettings(
                 detect_interval=YOLO_DETECT_INTERVAL,
-                encode_fps=ENCODE_FPS,
+                encode_fps=CLIP_ENCODE_FPS,
+                process_fps=CAMERA_FPS,
                 stream_fps=FRAME_STREAM_FPS,
                 jpeg_quality=PREVIEW_JPEG_QUALITY,
-                segment_sec=SEGMENT_SEC,
                 tracking_enabled=config.tracking_enabled,
             )
             pipeline_data["settings"] = settings
+
+            def get_clip_encoder() -> Optional[ClipEncoder]:
+                p_data = self.pipelines.get(stream_id)
+                if not p_data or not p_data.get("is_recording"):
+                    return None
+                with p_data["clip_encoder_lock"]:
+                    return p_data.get("clip_encoder")
 
             def on_preview(frame):
                 p_data = self.pipelines.get(stream_id)
@@ -371,8 +368,8 @@ class EdgeAgent:
             pipeline = VisionPipeline(
                 camera=camera,
                 tracker=tracker,
-                encoder=encoder,
                 settings=settings,
+                get_clip_encoder=get_clip_encoder,
                 on_preview_frame=on_preview,
                 on_detections=on_detections,
                 on_reid_crop=on_reid,
@@ -386,7 +383,7 @@ class EdgeAgent:
                 self.send_log(f"[{config.name}] [Detector Error] {exc}. Reconnecting...")
             finally:
                 pipeline.join_capture()
-                encoder.stop()
+                self._stop_active_clip_encoder(pipeline_data)
                 camera.release()
                 tracker.reset()
 
@@ -473,19 +470,23 @@ class EdgeAgent:
         timestamp_ms = int(time.time() * 1000)
         filename = f"clip_{timestamp_ms}_{stream_id}.mp4"
         output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
-        staging_dir = os.path.join(LOCAL_VIDEO_DIR, f"staging_{timestamp_ms}_{stream_id}")
-        copied_segments: set[str] = set()
+        width = p_data.get("frame_width") or 640
+        height = p_data.get("frame_height") or 480
+        clip_encoder: Optional[ClipEncoder] = None
         recording_start = time.monotonic()
 
         self.send_log(
-            f"[{name}] Recording while objects are detected (max {int(RECORDING_MAX_SEC)}s, stream continues)..."
+            f"[{name}] Recording while objects are detected "
+            f"(max {int(RECORDING_MAX_SEC)}s @ {CLIP_ENCODE_FPS}fps)..."
         )
 
-        segment_dir = os.path.join(BASE_DIR, "storage", f"segments_{stream_id}")
-
         try:
+            clip_encoder = ClipEncoder(output_path, width, height, fps=CLIP_ENCODE_FPS)
+            clip_encoder.start()
+            with p_data["clip_encoder_lock"]:
+                p_data["clip_encoder"] = clip_encoder
+
             while not p_data["stop_event"].is_set() and not self.shutdown_event.is_set():
-                copy_new_segments(segment_dir, staging_dir, copied_segments)
                 elapsed = time.monotonic() - recording_start
 
                 with p_data["detection_lock"]:
@@ -502,20 +503,22 @@ class EdgeAgent:
                     self.send_log(f"[{name}] Objects left frame — finalizing clip.")
                     break
 
-                time.sleep(0.4)
+                time.sleep(0.2)
 
-            copy_new_segments(segment_dir, staging_dir, copied_segments)
+            stopped_encoder = self._stop_active_clip_encoder(p_data)
+            if stopped_encoder:
+                clip_encoder = stopped_encoder
 
-            if not copied_segments:
-                raise RuntimeError("No segments captured during recording")
+            if not clip_encoder or clip_encoder.frames_written < 2:
+                raise RuntimeError("No frames captured during recording")
 
-            duration = len(copied_segments) * SEGMENT_SEC
-            self.send_log(
-                f"[{name}] Compiling ~{duration}s of footage ({len(copied_segments)} segments) into {filename}..."
-            )
-            concat_segments(staging_dir, output_path)
-            actual_duration = get_video_duration_seconds(output_path) or duration
-            self.send_log(f"[{name}] Clip compiled successfully: {filename} ({actual_duration:.1f}s)")
+            if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
+                raise RuntimeError("Clip file missing or too small after encoding")
+
+            actual_duration = get_video_duration_seconds(output_path)
+            if actual_duration <= 0:
+                actual_duration = clip_encoder.frames_written / CLIP_ENCODE_FPS
+            self.send_log(f"[{name}] Clip encoded: {filename} ({actual_duration:.1f}s)")
 
             upload_path = output_path
             temp_gemini_path = ""
@@ -554,8 +557,14 @@ class EdgeAgent:
                 os.unlink(temp_gemini_path)
         except Exception as exc:
             self.send_log(f"[{name}] Clip generation failed: {exc}")
+            kill_ffmpeg_for_path(output_path)
+            if os.path.exists(output_path):
+                try:
+                    os.unlink(output_path)
+                except OSError:
+                    pass
         finally:
-            remove_directory(staging_dir)
+            self._stop_active_clip_encoder(p_data)
             with p_data["recording_lock"]:
                 p_data["is_recording"] = False
                 p_data["recording_cooldown_until"] = time.monotonic() + RECORDING_COOLDOWN_SEC
@@ -721,14 +730,6 @@ class EdgeAgent:
 
         for stream_id in list(self.pipelines.keys()):
             self.stop_stream_pipeline(stream_id)
-
-        storage_dir = os.path.join(BASE_DIR, "storage")
-        if os.path.isdir(storage_dir):
-            for name in os.listdir(storage_dir):
-                if name.startswith("segments_"):
-                    path = os.path.join(storage_dir, name)
-                    kill_ffmpeg_for_dir(path)
-                    clear_directory(path)
 
         if self.ws:
             try:
