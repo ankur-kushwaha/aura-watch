@@ -340,6 +340,7 @@ async function processVideoClipInBackground(
             deviceId,
             streamId,
             timestamp.getTime(),
+            filename,
             trackEvents,
             frameWidth,
             frameHeight,

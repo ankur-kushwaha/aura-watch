@@ -82,9 +82,11 @@ model ReidDetection {
   stream     CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
   trackId    Int
   timestamp  DateTime      @default(now())
-  filename   String
-  bbox       String        // "x1,y1,x2,y2"
-  className  String
+  filename      String
+  clipFilename  String?
+  clipOffsetMs  Int?
+  bbox          String        // "x1,y1,x2,y2"
+  className     String
   identityId String?       @db.ObjectId
   identity   ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
 }

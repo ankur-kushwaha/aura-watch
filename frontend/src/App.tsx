@@ -125,10 +125,19 @@ interface ReidDetection {
   trackId: number;
   timestamp: string;
   filename: string;
+  clipFilename?: string | null;
+  clipOffsetMs?: number | null;
   bbox: string;
   className: string;
   identityId?: string | null;
   identity?: { id: string; label?: string | null; galleryCount?: number; centroidUpdatedAt?: string | null } | null;
+}
+
+interface TimelineVideoPlayback {
+  filename: string;
+  offsetMs: number;
+  cameraName: string;
+  cropFilename: string;
 }
 
 interface ReidRoute {
@@ -319,6 +328,8 @@ function App({ onLogout }: AppProps) {
   const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
   const [showTopology, setShowTopology] = useState<boolean>(false);
   const [reidRefreshNonce, setReidRefreshNonce] = useState<number>(0);
+  const [timelineVideo, setTimelineVideo] = useState<TimelineVideoPlayback | null>(null);
+  const timelineVideoRef = useRef<HTMLVideoElement>(null);
 
   // Topology States
   const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
@@ -687,7 +698,18 @@ function App({ onLogout }: AppProps) {
     setSelectedPerson(null);
     setPersonTimeline([]);
     setPersonSuggestions([]);
+    setTimelineVideo(null);
     fetchReidPeople();
+  };
+
+  const playTimelineCrop = (crop: ReidDetection) => {
+    if (!crop.clipFilename) return;
+    setTimelineVideo({
+      filename: crop.clipFilename,
+      offsetMs: crop.clipOffsetMs ?? 0,
+      cameraName: crop.cameraName,
+      cropFilename: crop.filename,
+    });
   };
 
   const handleSavePersonLabel = async () => {
@@ -847,6 +869,22 @@ function App({ onLogout }: AppProps) {
       }
     }
   }, [reidRefreshNonce]);
+
+  useEffect(() => {
+    const video = timelineVideoRef.current;
+    if (!video || !timelineVideo) return;
+
+    const seekToOffset = () => {
+      video.currentTime = Math.max(0, timelineVideo.offsetMs / 1000);
+    };
+
+    video.addEventListener('loadedmetadata', seekToOffset);
+    if (video.readyState >= 1) {
+      seekToOffset();
+    }
+
+    return () => video.removeEventListener('loadedmetadata', seekToOffset);
+  }, [timelineVideo]);
 
   // useEffect(() => {
   //   if (chatContainerRef.current) {
@@ -2246,26 +2284,46 @@ function App({ onLogout }: AppProps) {
                     <p className="text-text-muted text-[0.8rem] text-center py-8">No photos in this group yet.</p>
                   ) : (
                     <div className="relative border-l-2 border-primary/25 ml-4 pl-6 flex flex-col gap-5">
-                      {personTimeline.map((crop) => (
-                        <div key={crop.id} className="relative">
-                          <div className="absolute -left-[27px] top-3 w-3 h-3 rounded-full bg-primary border-2 border-[#090d16]" />
-                          <div className="glass-panel p-3 flex gap-3 items-center rounded-xl">
-                            <img
-                              src={`${API_BASE}/crops/${crop.filename}`}
-                              alt=""
-                              className="w-12 h-12 rounded-lg object-cover bg-black shrink-0"
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div className="text-[0.85rem] font-bold text-text-primary">{crop.cameraName}</div>
-                              <div className="text-[0.7rem] text-text-muted flex items-center gap-2">
-                                <Clock size={11} />
-                                {new Date(crop.timestamp).toLocaleString()}
-                                <span className="text-secondary">track {crop.trackId}</span>
+                      {personTimeline.map((crop) => {
+                        const hasClip = !!crop.clipFilename;
+                        return (
+                          <div key={crop.id} className="relative">
+                            <div className="absolute -left-[27px] top-3 w-3 h-3 rounded-full bg-primary border-2 border-[#090d16]" />
+                            <button
+                              type="button"
+                              onClick={() => playTimelineCrop(crop)}
+                              disabled={!hasClip}
+                              className={`glass-panel p-3 flex gap-3 items-center rounded-xl w-full text-left transition-all duration-200 ${
+                                hasClip ? 'cursor-pointer hover:border-primary/40 hover:bg-[rgba(124,58,237,0.06)]' : 'cursor-default opacity-90'
+                              }`}
+                            >
+                              <div className="relative w-12 h-12 shrink-0">
+                                <img
+                                  src={`${API_BASE}/crops/${crop.filename}`}
+                                  alt=""
+                                  className="w-12 h-12 rounded-lg object-cover bg-black"
+                                />
+                                {hasClip && (
+                                  <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/35">
+                                    <Play size={16} className="text-white" fill="white" />
+                                  </div>
+                                )}
                               </div>
-                            </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[0.85rem] font-bold text-text-primary">{crop.cameraName}</div>
+                                <div className="text-[0.7rem] text-text-muted flex items-center gap-2 flex-wrap">
+                                  <Clock size={11} />
+                                  {new Date(crop.timestamp).toLocaleString()}
+                                  <span className="text-secondary">track {crop.trackId}</span>
+                                  {hasClip && (
+                                    <span className="text-[#a78bfa]">tap to play clip</span>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2276,6 +2334,58 @@ function App({ onLogout }: AppProps) {
 
 
       </div>
+
+      {/* TIMELINE CLIP PLAYBACK MODAL */}
+      {timelineVideo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
+          onClick={() => setTimelineVideo(null)}
+        >
+          <div
+            className="glass-panel w-full max-w-[720px] p-5 flex flex-col gap-4 relative animate-[slideUp_0.22s_ease-out]"
+            style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-[1rem] font-bold text-text-primary">{timelineVideo.cameraName}</h2>
+                <p className="text-[0.75rem] text-text-muted mt-0.5">
+                  Clip playback from timeline detection
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTimelineVideo(null)}
+                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
+              >
+                Close
+              </button>
+            </div>
+            <div className="bg-[#000] rounded-xl overflow-hidden border border-[rgba(255,255,255,0.08)]">
+              <video
+                ref={timelineVideoRef}
+                key={timelineVideo.filename}
+                src={`${API_BASE}/videos/${timelineVideo.filename}`}
+                controls
+                autoPlay
+                className="w-full max-h-[420px] object-contain"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <img
+                src={`${API_BASE}/crops/${timelineVideo.cropFilename}`}
+                alt=""
+                className="w-12 h-12 rounded-lg object-cover bg-black shrink-0"
+              />
+              <p className="text-[0.75rem] text-text-secondary">
+                Jumped to the moment this person was detected
+                {timelineVideo.offsetMs > 0 ? ` (${(timelineVideo.offsetMs / 1000).toFixed(1)}s into clip)` : ''}.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* DEVICE LOGS MODAL */}
       {deviceLogsModal && (

@@ -23,6 +23,7 @@ import {
   syncStreamTrackMappingsForIdentity,
 } from '../services/reidStreamTrack';
 import { extractCropFromClip } from '../services/reidClipExtract';
+import { enrichDetectionWithClipSource, resolveClipForDetection } from '../services/reidClipResolve';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -61,10 +62,12 @@ export interface ReidDetectionInput {
   filename: string;
   bbox: string;
   className: string;
+  clipFilename?: string;
+  clipOffsetMs?: number;
 }
 
 export async function processReidDetectionFromCropFile(input: ReidDetectionInput): Promise<any> {
-  const { deviceId, streamId, trackId, timestamp, filename, bbox, className } = input;
+  const { deviceId, streamId, trackId, timestamp, filename, bbox, className, clipFilename, clipOffsetMs } = input;
   const filepath = path.join(CROPS_DIR, filename);
 
   const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
@@ -72,6 +75,16 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
 
   console.log(`[ReID Router] Running OSNet embedding extraction for ${filename}...`);
   const vector = await reidWorker.generateEmbedding(filepath);
+
+  let resolvedClipFilename = clipFilename ?? null;
+  let resolvedClipOffsetMs = clipOffsetMs ?? null;
+  if (!resolvedClipFilename) {
+    const resolved = await resolveClipForDetection(streamId, timestamp);
+    if (resolved) {
+      resolvedClipFilename = resolved.clipFilename;
+      resolvedClipOffsetMs = resolved.clipOffsetMs;
+    }
+  }
 
   const detection = await prisma.reidDetection.create({
     data: {
@@ -83,6 +96,8 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
       filename,
       bbox,
       className,
+      clipFilename: resolvedClipFilename,
+      clipOffsetMs: resolvedClipOffsetMs,
     },
   });
 
@@ -116,6 +131,7 @@ export async function processReidTrackEventsFromClip(
   deviceId: string,
   streamId: string,
   clipStartMs: number,
+  clipFilename: string,
   trackEvents: ReidTrackEvent[],
   frameWidth?: number,
   frameHeight?: number,
@@ -144,6 +160,8 @@ export async function processReidTrackEventsFromClip(
         filename,
         bbox: event.bbox,
         className: event.className || 'person',
+        clipFilename,
+        clipOffsetMs: event.offsetMs,
       });
       console.log(
         `[ReID Router] Extracted ReID crop from clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
@@ -697,7 +715,11 @@ router.get('/identities/:id/journey', async (req: Request, res: Response) => {
       include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
 
-    res.json({ identity, detections });
+    const enrichedDetections = await Promise.all(
+      detections.map((detection) => enrichDetectionWithClipSource(detection)),
+    );
+
+    res.json({ identity, detections: enrichedDetections });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
