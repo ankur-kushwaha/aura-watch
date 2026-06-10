@@ -1,14 +1,18 @@
 [Unit]
 Description=Aura Watch AI Edge Surveillance Agent
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=__USER__
 WorkingDirectory=__DIR__
 ExecStart=__PYTHON__ __DIR__/main.py
-Restart=on-failure
+# Restart unless explicitly stopped via `systemctl stop`
+Restart=always
 RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Install]
 WantedBy=multi-user.target
