@@ -79,7 +79,7 @@ class ReidWorkerService {
 
       if (!this.isReady) {
         if (line === 'READY') {
-          console.log('[ReID Worker] OSNet python model is loaded and ready.');
+          console.log('[ReID Worker] OSNet ONNX model is loaded and ready.');
           this.isReady = true;
           resolveReady();
           this.processQueue();

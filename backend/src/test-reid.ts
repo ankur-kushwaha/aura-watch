@@ -18,7 +18,11 @@ async function runTest() {
   // Create a mock image file using python + cv2 to ensure it is valid and uncorrupted
   const testImagePath = path.join(tempDir, 'test_reid_target.jpg');
   const { execSync } = require('child_process');
-  execSync(`python3 -c "import cv2, numpy as np; img = np.zeros((256, 128, 3), dtype=np.uint8); cv2.imwrite('${testImagePath.replace(/'/g, "\\'")}', img)"`);
+  const pythonBin = process.env.REID_PYTHON
+    || (fs.existsSync(path.join(__dirname, '../../.venv-reid/bin/python'))
+      ? path.join(__dirname, '../../.venv-reid/bin/python')
+      : 'python3');
+  execSync(`${pythonBin} -c "import cv2, numpy as np; img = np.zeros((256, 128, 3), dtype=np.uint8); cv2.imwrite('${testImagePath.replace(/'/g, "\\'")}', img)"`);
   console.log(`Created mock crop image at ${testImagePath}`);
 
   // 1. Start ReID worker

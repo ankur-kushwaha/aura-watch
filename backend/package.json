@@ -12,6 +12,7 @@
     "prisma:db-push": "prisma db push",
     "create-index": "ts-node src/create-index.ts",
     "setup-reid": "sh scripts/setup-reid-venv.sh",
+    "export-reid-onnx": "python3 scripts/export-reid-onnx.py",
     "postbuild": "cp src/services/reid_worker.py dist/services/reid_worker.py"
   },
   "dependencies": {

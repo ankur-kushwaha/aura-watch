@@ -20,10 +20,11 @@ RUN npm run build
 # Prune devDependencies to keep the image slim
 RUN npm prune --omit=dev
 
-# Stage 3: ReID Python venv (PyTorch needs glibc — Alpine/musl is unsupported)
+# Stage 3: ReID Python venv (ONNX Runtime only — no PyTorch)
 FROM python:3.12-slim-bookworm AS reid-builder
 WORKDIR /app/backend
 COPY backend/requirements-reid.txt ./
+COPY backend/models ./models
 COPY backend/scripts/setup-reid-venv.sh scripts/
 RUN chmod +x scripts/setup-reid-venv.sh && sh scripts/setup-reid-venv.sh
 
@@ -46,6 +47,7 @@ COPY --from=backend-builder /app/backend/dist ./backend/dist
 COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-builder /app/backend/prisma ./backend/prisma
 COPY --from=reid-builder /app/backend/.venv-reid ./backend/.venv-reid
+COPY --from=backend-builder /app/backend/models ./backend/models
 
 # Copy built frontend assets
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
