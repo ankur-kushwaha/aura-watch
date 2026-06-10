@@ -20,12 +20,22 @@ RUN npm run build
 # Prune devDependencies to keep the image slim
 RUN npm prune --omit=dev
 
-# Stage 3: Production runner
-FROM node:20-alpine AS runner
-RUN apk add --no-cache openssl ffmpeg
+# Stage 3: ReID Python venv (PyTorch needs glibc — Alpine/musl is unsupported)
+FROM python:3.12-slim-bookworm AS reid-builder
+WORKDIR /app/backend
+COPY backend/requirements-reid.txt ./
+COPY backend/scripts/setup-reid-venv.sh scripts/
+RUN chmod +x scripts/setup-reid-venv.sh && sh scripts/setup-reid-venv.sh
+
+# Stage 4: Production runner
+FROM node:20-bookworm-slim AS runner
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl ffmpeg libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV REID_PYTHON=/app/backend/.venv-reid/bin/python
 
 # Copy root package.json for root scripts
 COPY package*.json ./
@@ -35,6 +45,7 @@ COPY --from=backend-builder /app/backend/package*.json ./backend/
 COPY --from=backend-builder /app/backend/dist ./backend/dist
 COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-builder /app/backend/prisma ./backend/prisma
+COPY --from=reid-builder /app/backend/.venv-reid ./backend/.venv-reid
 
 # Copy built frontend assets
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

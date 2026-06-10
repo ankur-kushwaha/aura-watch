@@ -8,6 +8,7 @@ dist
 edge
 backend/storage/videos/*
 backend/.env
+backend/.venv-reid
 frontend/.env
 edge/.env
 *.log

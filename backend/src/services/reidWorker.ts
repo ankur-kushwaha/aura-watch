@@ -1,5 +1,19 @@
 import { spawn, ChildProcess } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
+
+function resolveReidPython(): string {
+  if (process.env.REID_PYTHON) {
+    return process.env.REID_PYTHON;
+  }
+
+  const venvPython = path.join(__dirname, '../../.venv-reid/bin/python');
+  if (fs.existsSync(venvPython)) {
+    return venvPython;
+  }
+
+  return 'python3';
+}
 
 interface ReidQueueItem {
   imagePath: string;
@@ -21,9 +35,10 @@ class ReidWorkerService {
 
     this.readyPromise = new Promise<void>((resolve, reject) => {
       const scriptPath = path.join(__dirname, 'reid_worker.py');
-      console.log(`[ReID Worker] Spawning persistent python process at ${scriptPath}...`);
+      const pythonBin = resolveReidPython();
+      console.log(`[ReID Worker] Spawning persistent python process (${pythonBin}) at ${scriptPath}...`);
 
-      this.pythonProcess = spawn('python3', [scriptPath]);
+      this.pythonProcess = spawn(pythonBin, [scriptPath]);
       
       this.pythonProcess.stdout?.on('data', (data: Buffer) => {
         const text = data.toString();
