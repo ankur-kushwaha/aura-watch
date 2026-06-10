@@ -15,6 +15,7 @@ import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from 
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
+import { backfillStreamTrackIdentities } from './services/reidPeople';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import prisma from './services/db';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
@@ -706,6 +707,9 @@ server.listen(PORT, async () => {
   
   // Initialize Qdrant Collection
   await initQdrant();
+  await backfillStreamTrackIdentities().catch(err => {
+    console.error('Failed to backfill stream-track identities:', err);
+  });
 
   // Start persistent ReID worker process
   try {

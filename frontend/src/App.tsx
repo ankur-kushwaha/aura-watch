@@ -19,7 +19,6 @@ import {
   LogOut,
   Fingerprint,
   Network,
-  Map,
   Plus,
   X,
   Info,
@@ -33,7 +32,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   Users,
-  Tag
+  ArrowLeft,
+  UserCircle
 } from 'lucide-react';
 
 const PREVIEW_STALL_MS = 5000;
@@ -93,6 +93,28 @@ interface RagResponseClip {
   filepath: string;
   filename?: string;
   score: number;
+}
+
+interface ReidPerson {
+  id: string;
+  label?: string | null;
+  displayName: string;
+  coverFilename: string | null;
+  coverCameraName: string | null;
+  photoCount: number;
+  galleryCount?: number;
+  lastSeen: string | null;
+  streamTracks: { streamId: string; trackId: number; cameraName: string; cropCount: number }[];
+}
+
+interface ReidPersonMatch {
+  id: string;
+  label?: string | null;
+  displayName: string;
+  coverFilename: string | null;
+  photoCount: number;
+  matchScore: number;
+  streamTracks: { streamId: string; trackId: number }[];
 }
 
 interface ReidDetection {
@@ -283,17 +305,20 @@ function App({ onLogout }: AppProps) {
   const [activeTab, setActiveTab] = useState<'events' | 'reid'>('events');
 
   // ReID States
-  const [reidCrops, setReidCrops] = useState<ReidDetection[]>([]);
-  const [loadingReidCrops, setLoadingReidCrops] = useState<boolean>(false);
-  const [selectedReidCrop, setSelectedReidCrop] = useState<ReidDetection | null>(null);
-  const [reidMatches, setReidMatches] = useState<any[]>([]);
-  const [isReidSearching, setIsReidSearching] = useState<boolean>(false);
-  const [mergeMode, setMergeMode] = useState<boolean>(false);
-  const [mergeSelection, setMergeSelection] = useState<string[]>([]);
-  const [mergeLabel, setMergeLabel] = useState<string>('');
+  const [reidPeople, setReidPeople] = useState<ReidPerson[]>([]);
+  const [loadingReidPeople, setLoadingReidPeople] = useState<boolean>(false);
+  const [reidView, setReidView] = useState<'people' | 'person'>('people');
+  const [selectedPerson, setSelectedPerson] = useState<ReidPerson | null>(null);
+  const [personTimeline, setPersonTimeline] = useState<ReidDetection[]>([]);
+  const [personSuggestions, setPersonSuggestions] = useState<ReidPersonMatch[]>([]);
+  const [loadingPersonDetail, setLoadingPersonDetail] = useState<boolean>(false);
+  const [linkPeopleMode, setLinkPeopleMode] = useState<boolean>(false);
+  const [linkPeopleSelection, setLinkPeopleSelection] = useState<string[]>([]);
   const [identityLabelDraft, setIdentityLabelDraft] = useState<string>('');
   const [savingIdentityLabel, setSavingIdentityLabel] = useState<boolean>(false);
   const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
+  const [showTopology, setShowTopology] = useState<boolean>(false);
+  const [reidRefreshNonce, setReidRefreshNonce] = useState<number>(0);
 
   // Topology States
   const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
@@ -496,13 +521,7 @@ function App({ onLogout }: AppProps) {
           setSelectedClip(data.clip);
           break;
         case 'new_reid_crop':
-          if (data.detection) {
-            setReidCrops((prev) => {
-              const alreadyExists = prev.some(c => c.id === data.detection.id);
-              if (alreadyExists) return prev;
-              return [data.detection, ...prev];
-            });
-          }
+          setReidRefreshNonce((n) => n + 1);
           break;
         case 'frame':
           if (data.image && data.streamId === selectedStreamIdRef.current) {
@@ -610,16 +629,16 @@ function App({ onLogout }: AppProps) {
     };
   }, [connectWS]);
 
-  const fetchReidCrops = useCallback(async () => {
-    setLoadingReidCrops(true);
+  const fetchReidPeople = useCallback(async () => {
+    setLoadingReidPeople(true);
     try {
-      const res = await fetch(`${API_BASE}/reid/detections`);
+      const res = await fetch(`${API_BASE}/reid/people`);
       const data = await res.json();
-      setReidCrops(data);
+      setReidPeople(data);
     } catch (err) {
-      console.error('Failed to fetch ReID crops', err);
+      console.error('Failed to fetch ReID people', err);
     } finally {
-      setLoadingReidCrops(false);
+      setLoadingReidPeople(false);
     }
   }, []);
 
@@ -633,28 +652,145 @@ function App({ onLogout }: AppProps) {
     }
   }, []);
 
-  const handleReidTrack = async (detection: ReidDetection) => {
-    setSelectedReidCrop(detection);
-    setIdentityLabelDraft(detection.identity?.label || '');
-    setIsReidSearching(true);
-    setReidMatches([]);
+  const openPersonDetail = async (person: ReidPerson) => {
+    setSelectedPerson(person);
+    setReidView('person');
+    setIdentityLabelDraft(person.label || '');
+    setLoadingPersonDetail(true);
     try {
-      const res = await fetch(`${API_BASE}/reid/track`, {
-        method: 'POST',
+      const [journeyRes, matchesRes] = await Promise.all([
+        fetch(`${API_BASE}/reid/identities/${person.id}/journey`),
+        fetch(`${API_BASE}/reid/identities/${person.id}/matches`),
+      ]);
+      const journey = await journeyRes.json();
+      const matches = await matchesRes.json();
+      setPersonTimeline(journey.detections || []);
+      setPersonSuggestions(matches || []);
+      if (journey.identity) {
+        setSelectedPerson(prev => prev ? {
+          ...prev,
+          label: journey.identity.label,
+          displayName: journey.identity.label || prev.displayName,
+          photoCount: journey.detections?.length ?? prev.photoCount,
+        } : null);
+        setIdentityLabelDraft(journey.identity.label || '');
+      }
+    } catch (err) {
+      console.error('Failed to load person detail', err);
+    } finally {
+      setLoadingPersonDetail(false);
+    }
+  };
+
+  const closePersonDetail = () => {
+    setReidView('people');
+    setSelectedPerson(null);
+    setPersonTimeline([]);
+    setPersonSuggestions([]);
+    fetchReidPeople();
+  };
+
+  const handleSavePersonLabel = async () => {
+    if (!selectedPerson) return;
+    setSavingIdentityLabel(true);
+    try {
+      const res = await fetch(`${API_BASE}/reid/identities/${selectedPerson.id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ detectionId: detection.id }),
+        body: JSON.stringify({ label: identityLabelDraft }),
       });
       const data = await res.json();
-      if (data.error) {
-        alert(`Search error: ${data.error}`);
-      } else {
-        setReidMatches(data.matches || []);
+      if (!res.ok) {
+        alert(data.error || 'Failed to save label');
+        return;
       }
-    } catch (err: any) {
-      console.error('ReID search failed', err);
-      alert(`ReID search failed: ${err.message}`);
+      const newLabel = data.identity?.label || identityLabelDraft;
+      setSelectedPerson(prev => prev ? {
+        ...prev,
+        label: newLabel,
+        displayName: newLabel || prev.displayName,
+      } : null);
+      await fetchReidPeople();
+    } catch (err) {
+      console.error('Failed to save person label', err);
     } finally {
-      setIsReidSearching(false);
+      setSavingIdentityLabel(false);
+    }
+  };
+
+  const handleStreamTrackFeedback = async (
+    type: 'same_person' | 'different_person',
+    sourceStreamId: string,
+    sourceTrackId: number,
+    targetStreamId: string,
+    targetTrackId: number,
+  ) => {
+    const key = `${type}:${sourceStreamId}:${sourceTrackId}:${targetStreamId}:${targetTrackId}`;
+    setFeedbackPending(key);
+    try {
+      const res = await fetch(`${API_BASE}/reid/feedback/stream-track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, sourceStreamId, sourceTrackId, targetStreamId, targetTrackId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to save feedback');
+        return;
+      }
+      await fetchReidPeople();
+      if (selectedPerson) {
+        const updated = reidPeople.find(p => p.id === selectedPerson.id)
+          || (data.identityId ? { ...selectedPerson, id: data.identityId } : selectedPerson);
+        await openPersonDetail(updated);
+      }
+    } catch (err) {
+      console.error('Failed to submit stream-track feedback', err);
+    } finally {
+      setFeedbackPending(null);
+    }
+  };
+
+  const handleLinkPeopleSelection = (personId: string) => {
+    setLinkPeopleSelection(prev => {
+      if (prev.includes(personId)) return prev.filter(id => id !== personId);
+      if (prev.length >= 2) return [prev[1], personId];
+      return [...prev, personId];
+    });
+  };
+
+  const handleLinkPeople = async () => {
+    if (linkPeopleSelection.length !== 2) {
+      alert('Select exactly 2 people to link.');
+      return;
+    }
+    try {
+      const [idA, idB] = linkPeopleSelection;
+      const [jA, jB] = await Promise.all([
+        fetch(`${API_BASE}/reid/identities/${idA}/journey`).then(r => r.json()),
+        fetch(`${API_BASE}/reid/identities/${idB}/journey`).then(r => r.json()),
+      ]);
+      const detA = jA.detections?.[0]?.id;
+      const detB = jB.detections?.[0]?.id;
+      if (!detA || !detB) {
+        alert('Could not find crops to link.');
+        return;
+      }
+      const res = await fetch(`${API_BASE}/reid/identities/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detectionIds: [detA, detB] }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || 'Failed to link people');
+        return;
+      }
+      setLinkPeopleSelection([]);
+      setLinkPeopleMode(false);
+      await fetchReidPeople();
+    } catch (err) {
+      console.error('Failed to link people', err);
     }
   };
 
@@ -696,142 +832,21 @@ function App({ onLogout }: AppProps) {
     }
   };
 
-  const handleDeleteReidDetection = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this face crop?')) return;
-    try {
-      const res = await fetch(`${API_BASE}/reid/detections/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setReidCrops(prev => prev.filter(c => c.id !== id));
-        if (selectedReidCrop?.id === id) {
-          setSelectedReidCrop(null);
-          setReidMatches([]);
-        }
-        setMergeSelection(prev => prev.filter(s => s !== id));
-      }
-    } catch (err) {
-      console.error('Failed to delete ReID detection', err);
-    }
-  };
-
-  const handleReidFeedback = async (
-    type: 'confirm' | 'reject' | 'same_person' | 'different_person',
-    sourceDetectionId: string,
-    targetDetectionId: string,
-  ) => {
-    const key = `${type}:${sourceDetectionId}:${targetDetectionId}`;
-    setFeedbackPending(key);
-    try {
-      const res = await fetch(`${API_BASE}/reid/feedback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, sourceDetectionId, targetDetectionId }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to save feedback');
-        return;
-      }
-
-      await fetchReidCrops();
-      if (selectedReidCrop) {
-        await handleReidTrack(selectedReidCrop);
-      }
-    } catch (err) {
-      console.error('Failed to submit ReID feedback', err);
-    } finally {
-      setFeedbackPending(null);
-    }
-  };
-
-  const handleMergeSelection = (crop: ReidDetection) => {
-    if (!mergeMode) return;
-    setMergeSelection(prev => {
-      if (prev.includes(crop.id)) {
-        return prev.filter(id => id !== crop.id);
-      }
-      return [...prev, crop.id];
-    });
-  };
-
-  const getIdentityDisplayName = (crop: ReidDetection) => {
-    if (crop.identity?.label) return crop.identity.label;
-    return 'Person';
-  };
-
-  const handleSaveIdentityLabel = async (identityId: string, label: string) => {
-    setSavingIdentityLabel(true);
-    try {
-      const res = await fetch(`${API_BASE}/reid/identities/${identityId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to save label');
-        return;
-      }
-      await fetchReidCrops();
-      if (selectedReidCrop?.identityId === identityId) {
-        setSelectedReidCrop(prev => prev ? {
-          ...prev,
-          identity: { ...prev.identity!, label: data.identity.label, id: identityId },
-        } : null);
-      }
-    } catch (err) {
-      console.error('Failed to save identity label', err);
-    } finally {
-      setSavingIdentityLabel(false);
-    }
-  };
-
-  const handleMergeIdentities = async () => {
-    if (mergeSelection.length < 2) {
-      alert('Select at least 2 crops to merge as the same person.');
-      return;
-    }
-    try {
-      const res = await fetch(`${API_BASE}/reid/identities/merge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          detectionIds: mergeSelection,
-          label: mergeLabel.trim() || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to merge identities');
-        return;
-      }
-      const mergedIds = [...mergeSelection];
-      setMergeSelection([]);
-      setMergeLabel('');
-      setMergeMode(false);
-      await fetchReidCrops();
-      if (selectedReidCrop && mergedIds.includes(selectedReidCrop.id)) {
-        await handleReidTrack(selectedReidCrop);
-      }
-    } catch (err) {
-      console.error('Failed to merge identities', err);
-    }
-  };
-
-  const handleGalleryCropClick = (crop: ReidDetection) => {
-    if (mergeMode) {
-      handleMergeSelection(crop);
-      return;
-    }
-    handleReidTrack(crop);
-  };
-
   useEffect(() => {
     if (activeTab === 'reid') {
-      fetchReidCrops();
+      fetchReidPeople();
       fetchTopology();
     }
-  }, [activeTab, fetchReidCrops, fetchTopology]);
+  }, [activeTab, fetchReidPeople, fetchTopology]);
+
+  useEffect(() => {
+    if (activeTab === 'reid' && reidRefreshNonce > 0) {
+      fetchReidPeople();
+      if (reidView === 'person' && selectedPerson) {
+        openPersonDetail(selectedPerson);
+      }
+    }
+  }, [reidRefreshNonce]);
 
   // useEffect(() => {
   //   if (chatContainerRef.current) {
@@ -1951,121 +1966,111 @@ function App({ onLogout }: AppProps) {
                 </form>
               </div>
             </>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[984px]">
-              {/* LEFT: Recent Face Crops Gallery */}
-              <div className="glass-panel p-5 flex flex-col h-full">
-                <div className="flex justify-between items-center mb-4">
+          ) : reidView === 'people' ? (
+            <div className="flex flex-col gap-6 h-[984px]">
+              <div className="glass-panel p-5 flex flex-col flex-1 min-h-0">
+                <div className="flex justify-between items-center mb-5">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
-                    <Fingerprint size={18} color="var(--color-primary)" /> Stabilized Person Crops
+                    <UserCircle size={20} color="var(--color-primary)" /> People
                   </h2>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => {
-                        setMergeMode(!mergeMode);
-                        setMergeSelection([]);
-                        setMergeLabel('');
+                        setLinkPeopleMode(!linkPeopleMode);
+                        setLinkPeopleSelection([]);
                       }}
-                      className={`btn py-1 px-2 text-[0.75rem] rounded-md ${mergeMode ? 'btn-primary' : 'btn-secondary'}`}
+                      className={`btn py-1 px-2 text-[0.75rem] rounded-md ${linkPeopleMode ? 'btn-primary' : 'btn-secondary'}`}
                     >
-                      <Users size={12} /> {mergeMode ? 'Cancel Link' : 'Link Same Person'}
+                      <Users size={12} /> {linkPeopleMode ? 'Cancel' : 'Link People'}
                     </button>
-                    {mergeMode && mergeSelection.length >= 2 && (
-                      <button
-                        onClick={handleMergeIdentities}
-                        className="btn btn-primary py-1 px-2 text-[0.75rem] rounded-md"
-                      >
-                        Link {mergeSelection.length} crops
+                    {linkPeopleMode && linkPeopleSelection.length === 2 && (
+                      <button onClick={handleLinkPeople} className="btn btn-primary py-1 px-2 text-[0.75rem] rounded-md">
+                        Merge 2 people
                       </button>
                     )}
                     <button
-                      onClick={fetchReidCrops}
+                      onClick={() => setShowTopology(!showTopology)}
                       className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
-                      disabled={loadingReidCrops}
                     >
-                      <RefreshCw size={12} className={loadingReidCrops ? 'animate-spin' : ''} /> Refresh
+                      <Network size={12} /> Topology
+                    </button>
+                    <button
+                      onClick={fetchReidPeople}
+                      className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
+                      disabled={loadingReidPeople}
+                    >
+                      <RefreshCw size={12} className={loadingReidPeople ? 'animate-spin' : ''} /> Refresh
                     </button>
                   </div>
                 </div>
 
-                {mergeMode && (
-                  <div className="flex flex-col gap-2 mb-3">
-                    <p className="text-[0.75rem] text-text-muted">
-                      Select 2 or more crops that belong to the same person.
-                      {mergeSelection.length > 0 && (
-                        <span className="text-secondary font-semibold ml-1">{mergeSelection.length} selected</span>
-                      )}
-                    </p>
-                    <div className="flex gap-2 items-center">
-                      <Tag size={12} className="text-text-muted shrink-0" />
-                      <input
-                        type="text"
-                        value={mergeLabel}
-                        onChange={(e) => setMergeLabel(e.target.value)}
-                        placeholder="Optional label (e.g. John, Delivery person)"
-                        className="flex-1 text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
-                      />
-                    </div>
-                  </div>
+                {linkPeopleMode && (
+                  <p className="text-[0.75rem] text-text-muted mb-4">
+                    Select 2 people that are the same person.
+                    {linkPeopleSelection.length > 0 && (
+                      <span className="text-secondary font-semibold ml-1">{linkPeopleSelection.length} selected</span>
+                    )}
+                  </p>
                 )}
 
                 <div className="flex-1 overflow-y-auto pr-1">
-                  {reidCrops.length === 0 ? (
+                  {loadingReidPeople && reidPeople.length === 0 ? (
+                    <div className="h-full flex flex-col justify-center items-center text-text-muted">
+                      <RefreshCw size={24} className="animate-spin mb-2" />
+                      <span>Loading people...</span>
+                    </div>
+                  ) : reidPeople.length === 0 ? (
                     <div className="h-full flex flex-col justify-center items-center text-text-muted text-[0.85rem] py-12">
-                      <Fingerprint size={32} className="mb-2" />
-                      <span>No stabilized person crops found.</span>
-                      <span className="text-[0.75rem] mt-1 text-center max-w-[240px]">Once a person stands visible for &gt;1s, their crop will appear here.</span>
+                      <UserCircle size={40} className="mb-3 opacity-50" />
+                      <span>No people detected yet.</span>
+                      <span className="text-[0.75rem] mt-1 text-center max-w-[280px]">
+                        Each camera track is auto-grouped. Crops appear here once a person is visible for &gt;1s.
+                      </span>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {reidCrops.map((crop) => {
-                        const isSelected = selectedReidCrop?.id === crop.id;
-                        const isMergeSelected = mergeSelection.includes(crop.id);
-                        const mergeIndex = mergeSelection.indexOf(crop.id);
-                        const imageUrl = `${API_BASE}/crops/${crop.filename}`;
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-6">
+                      {reidPeople.map((person) => {
+                        const isLinkSelected = linkPeopleSelection.includes(person.id);
+                        const coverUrl = person.coverFilename
+                          ? `${API_BASE}/crops/${person.coverFilename}`
+                          : null;
 
                         return (
-                          <div
-                            key={crop.id}
-                            onClick={() => handleGalleryCropClick(crop)}
-                            className={`glass-panel interactive ${isSelected && !mergeMode ? 'active border-primary bg-[rgba(124,58,237,0.1)]' : isMergeSelected ? 'border-secondary bg-[rgba(6,182,212,0.1)]' : 'border-border-glass'} p-2 rounded-[10px] cursor-pointer flex flex-col gap-2 relative`}
+                          <button
+                            key={person.id}
+                            type="button"
+                            onClick={() => linkPeopleMode
+                              ? handleLinkPeopleSelection(person.id)
+                              : openPersonDetail(person)}
+                            className={`flex flex-col items-center gap-2 group border-none bg-transparent p-0 cursor-pointer ${isLinkSelected ? 'opacity-100' : ''}`}
                           >
-                            <div className="w-full aspect-square bg-black rounded-lg overflow-hidden border border-[rgba(255,255,255,0.05)] relative">
-                              <img src={imageUrl} alt="Person crop" className="w-full h-full object-cover" />
-                              <div className="absolute bottom-1 right-1 text-[0.65rem] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono">
-                                ID:{crop.trackId}
-                              </div>
-                              {crop.identityId && (
-                                <div className="absolute top-1 left-1 text-[0.6rem] bg-secondary/80 text-white px-1.5 py-0.5 rounded font-bold max-w-[85%] truncate">
-                                  {getIdentityDisplayName(crop)}{crop.identity?.galleryCount ? ` · ${crop.identity.galleryCount}` : ''}
+                            <div className={`relative w-[88px] h-[88px] rounded-full overflow-hidden border-2 transition-all duration-200 ${
+                              isLinkSelected
+                                ? 'border-secondary shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                                : 'border-[rgba(255,255,255,0.1)] group-hover:border-primary/50 group-hover:shadow-[0_0_12px_rgba(124,58,237,0.3)]'
+                            }`}>
+                              {coverUrl ? (
+                                <img src={coverUrl} alt={person.displayName} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
+                                  <UserCircle size={32} className="text-text-muted" />
                                 </div>
                               )}
-                              {isMergeSelected && (
-                                <>
-                                  <div className="absolute inset-0 bg-secondary/20 border-2 border-secondary rounded-lg" />
-                                  <div className="absolute top-1 right-1 w-5 h-5 bg-secondary text-white text-[0.65rem] font-bold rounded-full flex items-center justify-center">
-                                    {mergeIndex + 1}
-                                  </div>
-                                </>
+                              {person.photoCount > 1 && (
+                                <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[0.6rem] text-white text-center py-0.5">
+                                  {person.photoCount}
+                                </div>
                               )}
                             </div>
-
-                            <div className="flex flex-col min-w-0">
-                              <div className="text-[0.8rem] font-bold text-text-primary truncate">{crop.cameraName}</div>
-                              <div className="text-[0.65rem] text-text-muted truncate">
-                                {new Date(crop.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                              </div>
-                            </div>
-
-                            {!mergeMode && (
-                              <button
-                                onClick={(e) => handleDeleteReidDetection(crop.id, e)}
-                                className="absolute top-1 right-1 p-1 bg-black/40 text-text-muted hover:text-danger rounded border-none hover:bg-black/80"
-                              >
-                                <Trash2 size={12} />
-                              </button>
+                            <span className="text-[0.72rem] font-semibold text-text-primary text-center max-w-[100px] truncate leading-tight">
+                              {person.displayName}
+                            </span>
+                            {person.streamTracks.length > 1 && (
+                              <span className="text-[0.6rem] text-text-muted -mt-1">
+                                {person.streamTracks.length} tracks
+                              </span>
                             )}
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
@@ -2073,277 +2078,192 @@ function App({ onLogout }: AppProps) {
                 </div>
               </div>
 
-              {/* RIGHT: Timeline Matches & Camera Topology */}
-              <div className="flex flex-col gap-6 h-full">
-                {/* TOP: Journey Timeline */}
-                <div className="glass-panel p-5 flex flex-col h-[580px]">
-                  <h2 className="text-[1.1rem] flex items-center gap-2 mb-4">
-                    <Map size={18} color="var(--color-primary)" /> Cross-Camera Matching Journey
+              {showTopology && (
+                <div className="glass-panel p-5 flex flex-col h-[320px] shrink-0">
+                  <h2 className="text-[1rem] flex items-center gap-2 mb-3">
+                    <Network size={16} color="var(--color-secondary)" /> Camera Topology
                   </h2>
-
-                  <div className="flex-1 overflow-y-auto pr-1">
-                    {isReidSearching ? (
-                      <div className="h-full flex flex-col justify-center items-center text-text-muted">
-                        <RefreshCw size={24} className="animate-spin mb-2" />
-                        <span>Computing topology weights and cosine distance...</span>
-                      </div>
-                    ) : selectedReidCrop ? (
-                      <div className="flex flex-col gap-4">
-                        {/* Query Node */}
-                        <div className="bg-[rgba(124,58,237,0.05)] border border-primary/20 rounded-xl p-3.5 flex gap-4 items-center">
-                          <img
-                            src={`${API_BASE}/crops/${selectedReidCrop.filename}`}
-                            alt="Query face"
-                            className="w-14 h-14 rounded-lg object-cover border border-primary/30 bg-black shrink-0"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[0.65rem] text-primary uppercase font-bold tracking-wider">Search Query Target</span>
-                            <h3 className="text-[0.85rem] font-bold text-text-primary break-all">{selectedReidCrop.cameraName}</h3>
-                            <span className="text-[0.7rem] text-text-muted flex items-center gap-1">
-                              <Clock size={12} /> {new Date(selectedReidCrop.timestamp).toLocaleString()}
-                            </span>
-                            {selectedReidCrop.identityId && (
-                              <span className="text-[0.65rem] text-secondary font-medium mt-0.5 inline-block">
-                                {getIdentityDisplayName(selectedReidCrop)} · {selectedReidCrop.identity?.galleryCount ?? 1} crop{(selectedReidCrop.identity?.galleryCount ?? 1) !== 1 ? 's' : ''} in profile
-                              </span>
-                            )}
-                          </div>
+                  <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
+                    <form onSubmit={handleAddTopology} className="flex flex-col gap-2 md:w-[220px] shrink-0">
+                      <select
+                        value={newRoute.fromCamera}
+                        onChange={(e) => setNewRoute({ ...newRoute, fromCamera: e.target.value })}
+                        required
+                        className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                      >
+                        <option value="">Source camera</option>
+                        {streams.map((s) => <option key={s.streamId} value={s.name}>{s.name}</option>)}
+                      </select>
+                      <select
+                        value={newRoute.toCamera}
+                        onChange={(e) => setNewRoute({ ...newRoute, toCamera: e.target.value })}
+                        required
+                        className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                      >
+                        <option value="">Target camera</option>
+                        {streams.map((s) => <option key={s.streamId} value={s.name}>{s.name}</option>)}
+                      </select>
+                      <button type="submit" className="btn btn-primary py-1 text-[0.75rem]">Save Link Rule</button>
+                    </form>
+                    <div className="flex-1 overflow-y-auto">
+                      {topologyRoutes.map((r, rIdx) => (
+                        <div key={rIdx} className="text-[0.75rem] py-1.5 border-b border-border-glass">
+                          {r.fromCamera} ↔ {r.toCamera} ({r.minTimeSeconds}s–{r.maxTimeSeconds}s)
                         </div>
-
-                        {selectedReidCrop.identityId && (
-                          <div className="flex gap-2 items-center">
-                            <Tag size={14} className="text-text-muted shrink-0" />
-                            <input
-                              type="text"
-                              value={identityLabelDraft}
-                              onChange={(e) => setIdentityLabelDraft(e.target.value)}
-                              placeholder="Identity label (e.g. John, Staff #12)"
-                              className="flex-1 text-[0.75rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleSaveIdentityLabel(selectedReidCrop.identityId!, identityLabelDraft)}
-                              disabled={savingIdentityLabel}
-                              className="btn btn-secondary py-1 px-2.5 text-[0.7rem] rounded-md shrink-0"
-                            >
-                              {savingIdentityLabel ? 'Saving…' : 'Save Label'}
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Connection Timeline path */}
-                        {reidMatches.length === 0 ? (
-                          <div className="text-center text-text-muted text-[0.8rem] py-8 border border-dashed border-border-glass rounded-xl mt-4">
-                            No valid cross-camera matches found matching travel constraints.
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-1 mt-2">
-                            <h4 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-2">Likely Transitions & Timeline</h4>
-
-                            <div className="relative border-l-2 border-primary/25 ml-7 pl-6 flex flex-col gap-6">
-                              {[...reidMatches]
-                                .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-                                .map((match) => {
-                                const matchPercentage = Math.round(match.scores.finalScore * 100);
-                                const confirmKey = `confirm:${selectedReidCrop.id}:${match.id}`;
-                                const rejectKey = `reject:${selectedReidCrop.id}:${match.id}`;
-                                const isConfirmPending = feedbackPending === confirmKey;
-                                const isRejectPending = feedbackPending === rejectKey;
-
-                                const currentT = new Date(match.timestamp).getTime();
-                                const queryT = new Date(selectedReidCrop.timestamp).getTime();
-                                const diffSec = Math.abs(currentT - queryT) / 1000;
-                                const delayStr = diffSec < 60
-                                  ? `${Math.round(diffSec)}s`
-                                  : `${Math.floor(diffSec / 60)}m ${Math.round(diffSec % 60)}s`;
-
-                                return (
-                                  <div key={match.id} className="relative">
-                                    <div className="absolute -left-[31px] top-4 bg-primary border-2 border-[#090d16] w-4 h-4 rounded-full flex items-center justify-center shadow-[0_0_8px_rgba(124,58,237,0.6)]" />
-
-                                    <div className="glass-panel p-3.5 flex gap-4 items-center bg-[rgba(255,255,255,0.02)] border-border-glass rounded-xl relative hover:border-primary/30 transition-all duration-200">
-                                      <img
-                                        src={`${API_BASE}/crops/${match.filename}`}
-                                        alt="Match face"
-                                        className="w-12 h-12 rounded-lg object-cover border border-[rgba(255,255,255,0.05)] bg-black shrink-0"
-                                      />
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex justify-between items-start flex-wrap gap-1 mb-0.5">
-                                          <span className="text-[0.85rem] font-bold text-text-primary">{match.cameraName}</span>
-                                          <span className="text-[0.75rem] font-extrabold text-[#06b6d4] bg-[rgba(6,182,212,0.1)] px-2 py-0.5 rounded whitespace-nowrap">
-                                            {matchPercentage}% Match
-                                          </span>
-                                        </div>
-
-                                        <div className="text-[0.7rem] text-text-muted flex justify-between items-center flex-wrap gap-2">
-                                          <span className="flex items-center gap-1">
-                                            <Clock size={11} /> {new Date(match.timestamp).toLocaleTimeString()}
-                                          </span>
-                                          <span className="text-secondary font-medium">
-                                            {delayStr} diff
-                                          </span>
-                                        </div>
-
-                                        <div className="flex gap-2.5 mt-1.5 flex-wrap text-[0.65rem] text-text-muted">
-                                          <span>Vec: {Math.round(match.scores.vectorSimilarity * 100)}%</span>
-                                          <span>•</span>
-                                          <span>Time: {Math.round(match.scores.timeScore * 100)}%</span>
-                                          <span>•</span>
-                                          <span>Topo: {Math.round(match.scores.topologyScore * 100)}%</span>
-                                          {match.feedbackBoost && (
-                                            <>
-                                              <span>•</span>
-                                              <span className="text-primary">Feedback +{Math.round(match.feedbackBoost * 100)}%</span>
-                                            </>
-                                          )}
-                                        </div>
-
-                                        <div className="flex gap-2 mt-2">
-                                          <button
-                                            onClick={() => handleReidFeedback('confirm', selectedReidCrop.id, match.id)}
-                                            disabled={!!feedbackPending}
-                                            className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded flex items-center gap-1 border-none hover:text-green-400"
-                                            title="Correct match — same person"
-                                          >
-                                            <ThumbsUp size={11} className={isConfirmPending ? 'animate-pulse' : ''} /> Correct
-                                          </button>
-                                          <button
-                                            onClick={() => handleReidFeedback('reject', selectedReidCrop.id, match.id)}
-                                            disabled={!!feedbackPending}
-                                            className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded flex items-center gap-1 border-none hover:text-danger"
-                                            title="Incorrect match — not the same person"
-                                          >
-                                            <ThumbsDown size={11} className={isRejectPending ? 'animate-pulse' : ''} /> Wrong
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="h-full flex flex-col justify-center items-center text-text-muted text-center p-5">
-                        <Fingerprint size={32} className="mb-2.5 mx-auto" />
-                        <p className="text-[0.85rem] font-semibold font-sans">No Target Selected</p>
-                        <p className="text-[0.75rem] mt-1 max-w-[220px]">Select any stabilized face crop from the gallery on the left to track them across all cameras.</p>
-                      </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-5 h-[984px]">
+              <div className="glass-panel p-5 flex flex-col flex-1 min-h-0">
+                <div className="flex items-start gap-4 mb-5">
+                  <button
+                    type="button"
+                    onClick={closePersonDetail}
+                    className="btn btn-secondary p-2 rounded-lg shrink-0 border-none"
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                  <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-primary/30 shrink-0">
+                    {selectedPerson?.coverFilename && (
+                      <img
+                        src={`${API_BASE}/crops/${selectedPerson.coverFilename}`}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
                     )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-[1.2rem] font-bold text-text-primary truncate">
+                      {selectedPerson?.displayName}
+                    </h2>
+                    <p className="text-[0.75rem] text-text-muted mt-0.5">
+                      {selectedPerson?.photoCount} photo{selectedPerson?.photoCount !== 1 ? 's' : ''}
+                      {selectedPerson?.streamTracks && selectedPerson.streamTracks.length > 0 && (
+                        <span> · {selectedPerson.streamTracks.length} camera track{selectedPerson.streamTracks.length !== 1 ? 's' : ''}</span>
+                      )}
+                    </p>
+                    <div className="flex gap-2 mt-2 max-w-md">
+                      <input
+                        type="text"
+                        value={identityLabelDraft}
+                        onChange={(e) => setIdentityLabelDraft(e.target.value)}
+                        placeholder="Name this person"
+                        className="flex-1 text-[0.75rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSavePersonLabel}
+                        disabled={savingIdentityLabel}
+                        className="btn btn-secondary py-1 px-3 text-[0.7rem] shrink-0"
+                      >
+                        {savingIdentityLabel ? '…' : 'Save'}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* BOTTOM: Camera Topology Manager */}
-                <div className="glass-panel p-5 flex flex-col h-[380px]">
-                  <h2 className="text-[1.1rem] flex items-center gap-2 mb-3">
-                    <Network size={18} color="var(--color-secondary)" /> Camera Topology Links & Constraints
-                  </h2>
+                {selectedPerson && selectedPerson.streamTracks.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {selectedPerson.streamTracks.map((st) => (
+                      <span
+                        key={`${st.streamId}-${st.trackId}`}
+                        className="text-[0.65rem] bg-secondary/10 text-secondary px-2 py-1 rounded-full border border-secondary/20"
+                      >
+                        {st.cameraName} · track {st.trackId} ({st.cropCount})
+                      </span>
+                    ))}
+                  </div>
+                )}
 
-                  <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
-                    {/* Left: Form */}
-                    <form onSubmit={handleAddTopology} className="flex flex-col gap-2.5 md:w-[220px] shrink-0">
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[0.7rem] text-text-secondary">Source Camera Stream</label>
-                        <select
-                          value={newRoute.fromCamera}
-                          onChange={(e) => setNewRoute({ ...newRoute, fromCamera: e.target.value })}
-                          required
-                          className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
-                        >
-                          <option value="">Select Stream</option>
-                          {streams.map((s) => (
-                            <option key={s.streamId} value={s.name}>{s.name}</option>
-                          ))}
-                        </select>
-                      </div>
+                {personSuggestions.length > 0 && (
+                  <div className="mb-5">
+                    <h3 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-3">
+                      Might be the same person
+                    </h3>
+                    <div className="flex gap-4 overflow-x-auto pb-2">
+                      {personSuggestions.map((suggestion) => {
+                        const srcTrack = selectedPerson?.streamTracks[0];
+                        const tgtTrack = suggestion.streamTracks[0];
+                        if (!srcTrack || !tgtTrack) return null;
+                        const sameKey = `same_person:${srcTrack.streamId}:${srcTrack.trackId}:${tgtTrack.streamId}:${tgtTrack.trackId}`;
+                        const diffKey = `different_person:${srcTrack.streamId}:${srcTrack.trackId}:${tgtTrack.streamId}:${tgtTrack.trackId}`;
 
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[0.7rem] text-text-secondary">Target Camera Stream</label>
-                        <select
-                          value={newRoute.toCamera}
-                          onChange={(e) => setNewRoute({ ...newRoute, toCamera: e.target.value })}
-                          required
-                          className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
-                        >
-                          <option value="">Select Stream</option>
-                          {streams.map((s) => (
-                            <option key={s.streamId} value={s.name}>{s.name}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[0.7rem] text-text-secondary">Min Sec</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={newRoute.minTimeSeconds}
-                            onChange={(e) => setNewRoute({ ...newRoute, minTimeSeconds: parseFloat(e.target.value) })}
-                            required
-                            className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[0.7rem] text-text-secondary">Max Sec</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={newRoute.maxTimeSeconds}
-                            onChange={(e) => setNewRoute({ ...newRoute, maxTimeSeconds: parseFloat(e.target.value) })}
-                            required
-                            className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[0.7rem] text-text-secondary">Topology Score (0.1 - 1.0)</label>
-                        <input
-                          type="number"
-                          min="0.1"
-                          max="1.0"
-                          step="0.1"
-                          value={newRoute.topologyScore}
-                          onChange={(e) => setNewRoute({ ...newRoute, topologyScore: parseFloat(e.target.value) })}
-                          required
-                          className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[30px]"
-                        />
-                      </div>
-
-                      <button type="submit" className="btn btn-primary text-[0.75rem] py-1.5 px-3 rounded mt-1 shadow-none">
-                        Save Link Rule
-                      </button>
-                    </form>
-
-                    {/* Right: List */}
-                    <div className="flex-1 overflow-y-auto pr-1">
-                      {topologyRoutes.length === 0 ? (
-                        <div className="h-full flex justify-center items-center text-text-muted text-[0.8rem] border border-dashed border-border-glass rounded-xl p-4 text-center">
-                          No links configured. Define adjacent cameras and expected travel times on the left.
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-1.5">
-                          {topologyRoutes.map((r, rIdx) => (
-                            <div key={rIdx} className="glass-panel p-2 px-3 bg-[rgba(255,255,255,0.01)] border-border-glass rounded-lg flex items-center justify-between text-[0.75rem]">
-                              <div className="min-w-0 flex-1">
-                                <div className="font-semibold text-text-primary flex items-center gap-1.5">
-                                  <span>{r.fromCamera}</span>
-                                  <span className="text-text-muted">↔</span>
-                                  <span>{r.toCamera}</span>
-                                </div>
-                                <div className="text-text-secondary mt-0.5 text-[0.7rem]">
-                                  Transition: {r.minTimeSeconds}s - {r.maxTimeSeconds}s • Weight: {r.topologyScore}
-                                </div>
-                              </div>
+                        return (
+                          <div key={suggestion.id} className="glass-panel p-3 rounded-xl shrink-0 w-[160px] flex flex-col items-center gap-2">
+                            <div className="w-14 h-14 rounded-full overflow-hidden border border-border-glass">
+                              {suggestion.coverFilename && (
+                                <img
+                                  src={`${API_BASE}/crops/${suggestion.coverFilename}`}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                />
+                              )}
                             </div>
-                          ))}
-                        </div>
-                      )}
+                            <span className="text-[0.7rem] font-semibold text-center truncate w-full">{suggestion.displayName}</span>
+                            <span className="text-[0.6rem] text-secondary">{Math.round(suggestion.matchScore * 100)}% match</span>
+                            <div className="flex gap-1 w-full">
+                              <button
+                                type="button"
+                                disabled={!!feedbackPending}
+                                onClick={() => handleStreamTrackFeedback('same_person', srcTrack.streamId, srcTrack.trackId, tgtTrack.streamId, tgtTrack.trackId)}
+                                className="btn btn-secondary flex-1 py-0.5 text-[0.6rem] border-none hover:text-green-400"
+                              >
+                                <ThumbsUp size={10} className={feedbackPending === sameKey ? 'animate-pulse' : ''} />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!!feedbackPending}
+                                onClick={() => handleStreamTrackFeedback('different_person', srcTrack.streamId, srcTrack.trackId, tgtTrack.streamId, tgtTrack.trackId)}
+                                className="btn btn-secondary flex-1 py-0.5 text-[0.6rem] border-none hover:text-danger"
+                              >
+                                <ThumbsDown size={10} className={feedbackPending === diffKey ? 'animate-pulse' : ''} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
+                )}
+
+                <h3 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-3">
+                  Timeline
+                </h3>
+                <div className="flex-1 overflow-y-auto pr-1">
+                  {loadingPersonDetail ? (
+                    <div className="flex justify-center py-12 text-text-muted">
+                      <RefreshCw size={20} className="animate-spin" />
+                    </div>
+                  ) : personTimeline.length === 0 ? (
+                    <p className="text-text-muted text-[0.8rem] text-center py-8">No photos in this group yet.</p>
+                  ) : (
+                    <div className="relative border-l-2 border-primary/25 ml-4 pl-6 flex flex-col gap-5">
+                      {personTimeline.map((crop) => (
+                        <div key={crop.id} className="relative">
+                          <div className="absolute -left-[27px] top-3 w-3 h-3 rounded-full bg-primary border-2 border-[#090d16]" />
+                          <div className="glass-panel p-3 flex gap-3 items-center rounded-xl">
+                            <img
+                              src={`${API_BASE}/crops/${crop.filename}`}
+                              alt=""
+                              className="w-12 h-12 rounded-lg object-cover bg-black shrink-0"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[0.85rem] font-bold text-text-primary">{crop.cameraName}</div>
+                              <div className="text-[0.7rem] text-text-muted flex items-center gap-2">
+                                <Clock size={11} />
+                                {new Date(crop.timestamp).toLocaleString()}
+                                <span className="text-secondary">track {crop.trackId}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -53,12 +53,25 @@ model CameraStream {
 }
 
 model ReidIdentity {
-  id                String          @id @default(auto()) @map("_id") @db.ObjectId
-  label             String?
-  createdAt         DateTime        @default(now())
-  centroidUpdatedAt DateTime?
-  galleryCount      Int             @default(0)
-  detections        ReidDetection[]
+  id                  String                   @id @default(auto()) @map("_id") @db.ObjectId
+  label               String?
+  createdAt           DateTime                 @default(now())
+  centroidUpdatedAt   DateTime?
+  galleryCount        Int                      @default(0)
+  detections          ReidDetection[]
+  streamTrackMappings ReidStreamTrackMapping[]
+}
+
+model ReidStreamTrackMapping {
+  id         String       @id @default(auto()) @map("_id") @db.ObjectId
+  streamId   String
+  trackId    Int
+  identityId String       @db.ObjectId
+  identity   ReidIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([streamId, trackId])
 }
 
 model ReidDetection {
@@ -74,6 +87,16 @@ model ReidDetection {
   className  String
   identityId String?       @db.ObjectId
   identity   ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
+}
+
+model ReidStreamTrackFeedback {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  type           String   // "same_person" | "different_person"
+  sourceStreamId String
+  sourceTrackId  Int
+  targetStreamId String
+  targetTrackId  Int
+  createdAt      DateTime @default(now())
 }
 
 model ReidFeedback {

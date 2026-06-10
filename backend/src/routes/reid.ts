@@ -3,8 +3,24 @@ import * as fs from 'fs';
 import * as path from 'path';
 import prisma from '../services/db';
 import reidWorker from '../services/reidWorker';
-import { upsertReidVector, searchReidVectors, deleteReidVector, updateReidPayloadBatch, retrieveReidVectors, retrieveIdentityPrototype, searchIdentityPrototypes } from '../services/qdrant';
+import { upsertReidVector, searchReidVectors, deleteReidVector, updateReidPayloadBatch, updateReidPayload, retrieveReidVectors, retrieveIdentityPrototype, searchIdentityPrototypes } from '../services/qdrant';
 import { recomputeIdentityCentroid, removeIdentityCentroid } from '../services/reidIdentity';
+import {
+  findSimilarPeople,
+  listPeople,
+  mergeStreamTracks,
+  splitStreamTrackToNewIdentity,
+} from '../services/reidPeople';
+import {
+  autoLinkDetectionToIdentity,
+  getStreamTrackKeysForIdentity,
+  inheritIdentityLabel,
+  registerStreamTrackMapping,
+  removeStreamTrackMappingsForIdentity,
+  resolveIdentityFromStreamTrack,
+  streamTrackKey,
+  syncStreamTrackMappingsForIdentity,
+} from '../services/reidStreamTrack';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -89,12 +105,18 @@ export async function handleCropUpload(req: Request, res: Response) {
         className,
       });
 
+      await autoLinkDetectionToIdentity(detection.id, streamId, trackId);
+
+      const fullDetection = await prisma.reidDetection.findUnique({
+        where: { id: detection.id },
+        include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
+      });
+
       console.log(`[ReID Router] Successfully processed ReID crop for device ${deviceId}, track ${trackId}`);
       res.status(200).json({ success: true, detectionId: detection.id });
 
-      // Notify UI clients
-      if (onReidCropUploadedCallback) {
-        onReidCropUploadedCallback(detection);
+      if (onReidCropUploadedCallback && fullDetection) {
+        onReidCropUploadedCallback(fullDetection);
       }
     } catch (err: any) {
       console.error('[ReID Router Error] Failed to process crop upload:', err);
@@ -118,6 +140,97 @@ router.get('/detections', async (req: Request, res: Response) => {
       include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
     res.json(detections);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/reid/people
+ * Google Photos-style person list with cover image and counts
+ */
+router.get('/people', async (req: Request, res: Response) => {
+  const limit = parseInt(req.query.limit as string || '50', 10);
+  try {
+    const people = await listPeople(limit);
+    res.json(people);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/reid/identities/:id/matches
+ * Suggested people that may be the same person (identity-level matching)
+ */
+router.get('/identities/:id/matches', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const limit = parseInt(req.query.limit as string || '8', 10);
+  try {
+    const matches = await findSimilarPeople(id, limit);
+    res.json(matches);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/reid/feedback/stream-track
+ * Feedback that two camera+track groups are same or different person
+ */
+router.post('/feedback/stream-track', async (req: Request, res: Response) => {
+  const {
+    type,
+    sourceStreamId,
+    sourceTrackId,
+    targetStreamId,
+    targetTrackId,
+  } = req.body;
+
+  if (!type || !sourceStreamId || sourceTrackId === undefined || !targetStreamId || targetTrackId === undefined) {
+    return res.status(400).json({
+      error: 'type, sourceStreamId, sourceTrackId, targetStreamId, and targetTrackId are required',
+    });
+  }
+  if (!['same_person', 'different_person'].includes(type)) {
+    return res.status(400).json({ error: 'type must be same_person or different_person' });
+  }
+
+  const srcTrack = parseInt(String(sourceTrackId), 10);
+  const tgtTrack = parseInt(String(targetTrackId), 10);
+
+  if (sourceStreamId === targetStreamId && srcTrack === tgtTrack) {
+    return res.status(400).json({ error: 'Source and target stream+track must differ' });
+  }
+
+  try {
+    await prisma.reidStreamTrackFeedback.create({
+      data: {
+        type,
+        sourceStreamId,
+        sourceTrackId: srcTrack,
+        targetStreamId,
+        targetTrackId: tgtTrack,
+      },
+    });
+
+    let resultIdentityId: string | null = null;
+    if (type === 'same_person') {
+      resultIdentityId = await mergeStreamTracks(
+        sourceStreamId, srcTrack, targetStreamId, tgtTrack,
+      );
+    } else {
+      const { ensureIdentityForStreamTrack } = await import('../services/reidPeople');
+      const sourceIdentityId = await ensureIdentityForStreamTrack(sourceStreamId, srcTrack);
+      const targetIdentityId = await ensureIdentityForStreamTrack(targetStreamId, tgtTrack);
+      if (sourceIdentityId === targetIdentityId) {
+        resultIdentityId = await splitStreamTrackToNewIdentity(targetStreamId, tgtTrack);
+      } else {
+        resultIdentityId = targetIdentityId;
+      }
+    }
+
+    res.json({ success: true, identityId: resultIdentityId });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -148,9 +261,11 @@ router.delete('/detections/:id', async (req: Request, res: Response) => {
       const remaining = await prisma.reidDetection.count({ where: { identityId } });
       if (remaining === 0) {
         await removeIdentityCentroid(identityId);
+        await removeStreamTrackMappingsForIdentity(identityId);
         await prisma.reidIdentity.delete({ where: { id: identityId } }).catch(() => {});
       } else {
         await recomputeIdentityCentroid(identityId);
+        await syncStreamTrackMappingsForIdentity(identityId);
       }
     }
 
@@ -159,6 +274,60 @@ router.delete('/detections/:id', async (req: Request, res: Response) => {
     }
 
     res.json({ success: true, message: 'Detection deleted successfully' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/reid/detections/:id/label
+ * Assign or update a label for a crop (creates identity + camera track mapping if needed)
+ */
+router.patch('/detections/:id/label', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { label } = req.body;
+
+  if (typeof label !== 'string') {
+    return res.status(400).json({ error: 'label must be a string' });
+  }
+
+  try {
+    const detection = await prisma.reidDetection.findUnique({ where: { id } });
+    if (!detection) {
+      return res.status(404).json({ error: 'Detection not found' });
+    }
+
+    const trimmed = label.trim();
+    let identityId = detection.identityId;
+
+    if (!identityId) {
+      const identity = await prisma.reidIdentity.create({
+        data: { label: trimmed || null },
+      });
+      identityId = identity.id;
+      await prisma.reidDetection.update({
+        where: { id },
+        data: { identityId },
+      });
+      await updateReidPayload(id, { identityId });
+    } else {
+      await prisma.reidIdentity.update({
+        where: { id: identityId },
+        data: { label: trimmed || null },
+      });
+    }
+
+    if (detection.streamId) {
+      await registerStreamTrackMapping(detection.streamId, detection.trackId, identityId);
+    }
+    await recomputeIdentityCentroid(identityId);
+
+    const updated = await prisma.reidDetection.findUnique({
+      where: { id },
+      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
+    });
+
+    res.json({ success: true, detection: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -291,8 +460,11 @@ async function assignDetectionsToIdentity(detectionIds: string[], identityId?: s
 
   for (const mergedId of mergedAwayIds) {
     await removeIdentityCentroid(mergedId);
+    await removeStreamTrackMappingsForIdentity(mergedId);
   }
   if (targetIdentityId) {
+    await inheritIdentityLabel(targetIdentityId, existingIdentityIds);
+    await syncStreamTrackMappingsForIdentity(targetIdentityId);
     await recomputeIdentityCentroid(targetIdentityId);
   }
 
@@ -498,6 +670,15 @@ router.post('/track', async (req: Request, res: Response) => {
       }
     }
 
+    let mappedTrackKeys = new Set<string>();
+    const queryIdentityId = queryDetection.identityId
+      || (queryDetection.streamId
+        ? await resolveIdentityFromStreamTrack(queryDetection.streamId, queryDetection.trackId)
+        : null);
+    if (queryIdentityId) {
+      mappedTrackKeys = await getStreamTrackKeysForIdentity(queryIdentityId);
+    }
+
     const topologyRoutes = await prisma.topologyRoute.findMany();
 
     // Load feedback involving the query detection
@@ -588,6 +769,9 @@ router.post('/track', async (req: Request, res: Response) => {
       }
       if (confirmedIds.has(payload.mongoId)) {
         feedbackBoost += 0.15;
+      }
+      if (payload.streamId && mappedTrackKeys.has(streamTrackKey(payload.streamId, payload.trackId))) {
+        feedbackBoost += 0.25;
       }
       if (payload.identityId && similarIdentityScores.has(payload.identityId)) {
         feedbackBoost += 0.1 * (similarIdentityScores.get(payload.identityId) || 0);
