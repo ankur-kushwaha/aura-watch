@@ -17,6 +17,7 @@ export function mongoIdToUuid(mongoId: string): string {
 }
 
 const REID_COLLECTION_NAME = 'reid_embeddings';
+const REID_IDENTITY_PROTOTYPES_COLLECTION = 'reid_identity_prototypes';
 
 export async function initQdrant() {
   try {
@@ -51,6 +52,20 @@ export async function initQdrant() {
       console.log(`Collection ${REID_COLLECTION_NAME} created successfully.`);
     } else {
       console.log(`Qdrant collection ${REID_COLLECTION_NAME} already exists.`);
+    }
+
+    const prototypesExist = collections.collections.some(c => c.name === REID_IDENTITY_PROTOTYPES_COLLECTION);
+    if (!prototypesExist) {
+      console.log(`Creating Qdrant collection: ${REID_IDENTITY_PROTOTYPES_COLLECTION}`);
+      await qdrant.createCollection(REID_IDENTITY_PROTOTYPES_COLLECTION, {
+        vectors: {
+          size: 512,
+          distance: 'Cosine',
+        },
+      });
+      console.log(`Collection ${REID_IDENTITY_PROTOTYPES_COLLECTION} created successfully.`);
+    } else {
+      console.log(`Qdrant collection ${REID_IDENTITY_PROTOTYPES_COLLECTION} already exists.`);
     }
   } catch (error) {
     console.error('Failed to initialize Qdrant collections:', error);
@@ -392,6 +407,69 @@ export async function searchReidVectors(
     return results;
   } catch (error) {
     console.error('Error searching ReID vectors in Qdrant:', error);
+    return [];
+  }
+}
+
+export async function upsertIdentityPrototype(identityId: string, vector: number[], payload: Record<string, unknown>) {
+  const qdrantId = mongoIdToUuid(identityId);
+  try {
+    await qdrant.upsert(REID_IDENTITY_PROTOTYPES_COLLECTION, {
+      wait: true,
+      points: [
+        {
+          id: qdrantId,
+          vector,
+          payload: {
+            ...payload,
+            identityId,
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    console.error(`Error upserting identity prototype ${identityId}:`, error);
+  }
+}
+
+export async function deleteIdentityPrototype(identityId: string) {
+  const qdrantId = mongoIdToUuid(identityId);
+  try {
+    await qdrant.delete(REID_IDENTITY_PROTOTYPES_COLLECTION, {
+      points: [qdrantId],
+    });
+  } catch (error) {
+    console.error(`Error deleting identity prototype ${identityId}:`, error);
+  }
+}
+
+export async function retrieveIdentityPrototype(identityId: string): Promise<{ vector: number[]; payload: Record<string, unknown> } | null> {
+  const qdrantId = mongoIdToUuid(identityId);
+  try {
+    const points = await qdrant.retrieve(REID_IDENTITY_PROTOTYPES_COLLECTION, {
+      ids: [qdrantId],
+      with_vector: true,
+    });
+    if (!points.length || !points[0].vector) return null;
+    return {
+      vector: points[0].vector as number[],
+      payload: (points[0].payload || {}) as Record<string, unknown>,
+    };
+  } catch (error) {
+    console.error(`Error retrieving identity prototype ${identityId}:`, error);
+    return null;
+  }
+}
+
+export async function searchIdentityPrototypes(vector: number[], limit = 5) {
+  try {
+    return await qdrant.search(REID_IDENTITY_PROTOTYPES_COLLECTION, {
+      vector,
+      limit,
+      with_payload: true,
+    });
+  } catch (error) {
+    console.error('Error searching identity prototypes in Qdrant:', error);
     return [];
   }
 }

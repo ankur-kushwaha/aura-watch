@@ -32,7 +32,8 @@ import {
   AlertTriangle,
   ThumbsUp,
   ThumbsDown,
-  Users
+  Users,
+  Tag
 } from 'lucide-react';
 
 const PREVIEW_STALL_MS = 5000;
@@ -105,7 +106,7 @@ interface ReidDetection {
   bbox: string;
   className: string;
   identityId?: string | null;
-  identity?: { id: string; label?: string | null } | null;
+  identity?: { id: string; label?: string | null; galleryCount?: number; centroidUpdatedAt?: string | null } | null;
 }
 
 interface ReidRoute {
@@ -289,6 +290,9 @@ function App({ onLogout }: AppProps) {
   const [isReidSearching, setIsReidSearching] = useState<boolean>(false);
   const [mergeMode, setMergeMode] = useState<boolean>(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
+  const [mergeLabel, setMergeLabel] = useState<string>('');
+  const [identityLabelDraft, setIdentityLabelDraft] = useState<string>('');
+  const [savingIdentityLabel, setSavingIdentityLabel] = useState<boolean>(false);
   const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
 
   // Topology States
@@ -631,6 +635,7 @@ function App({ onLogout }: AppProps) {
 
   const handleReidTrack = async (detection: ReidDetection) => {
     setSelectedReidCrop(detection);
+    setIdentityLabelDraft(detection.identity?.label || '');
     setIsReidSearching(true);
     setReidMatches([]);
     try {
@@ -745,11 +750,40 @@ function App({ onLogout }: AppProps) {
       if (prev.includes(crop.id)) {
         return prev.filter(id => id !== crop.id);
       }
-      if (prev.length >= 2) {
-        return [prev[1], crop.id];
-      }
       return [...prev, crop.id];
     });
+  };
+
+  const getIdentityDisplayName = (crop: ReidDetection) => {
+    if (crop.identity?.label) return crop.identity.label;
+    return 'Person';
+  };
+
+  const handleSaveIdentityLabel = async (identityId: string, label: string) => {
+    setSavingIdentityLabel(true);
+    try {
+      const res = await fetch(`${API_BASE}/reid/identities/${identityId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to save label');
+        return;
+      }
+      await fetchReidCrops();
+      if (selectedReidCrop?.identityId === identityId) {
+        setSelectedReidCrop(prev => prev ? {
+          ...prev,
+          identity: { ...prev.identity!, label: data.identity.label, id: identityId },
+        } : null);
+      }
+    } catch (err) {
+      console.error('Failed to save identity label', err);
+    } finally {
+      setSavingIdentityLabel(false);
+    }
   };
 
   const handleMergeIdentities = async () => {
@@ -761,7 +795,10 @@ function App({ onLogout }: AppProps) {
       const res = await fetch(`${API_BASE}/reid/identities/merge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ detectionIds: mergeSelection }),
+        body: JSON.stringify({
+          detectionIds: mergeSelection,
+          label: mergeLabel.trim() || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -770,6 +807,7 @@ function App({ onLogout }: AppProps) {
       }
       const mergedIds = [...mergeSelection];
       setMergeSelection([]);
+      setMergeLabel('');
       setMergeMode(false);
       await fetchReidCrops();
       if (selectedReidCrop && mergedIds.includes(selectedReidCrop.id)) {
@@ -1926,6 +1964,7 @@ function App({ onLogout }: AppProps) {
                       onClick={() => {
                         setMergeMode(!mergeMode);
                         setMergeSelection([]);
+                        setMergeLabel('');
                       }}
                       className={`btn py-1 px-2 text-[0.75rem] rounded-md ${mergeMode ? 'btn-primary' : 'btn-secondary'}`}
                     >
@@ -1936,7 +1975,7 @@ function App({ onLogout }: AppProps) {
                         onClick={handleMergeIdentities}
                         className="btn btn-primary py-1 px-2 text-[0.75rem] rounded-md"
                       >
-                        Merge {mergeSelection.length}
+                        Link {mergeSelection.length} crops
                       </button>
                     )}
                     <button
@@ -1950,9 +1989,24 @@ function App({ onLogout }: AppProps) {
                 </div>
 
                 {mergeMode && (
-                  <p className="text-[0.75rem] text-text-muted mb-3">
-                    Select 2 or more crops that belong to the same person, then click Merge.
-                  </p>
+                  <div className="flex flex-col gap-2 mb-3">
+                    <p className="text-[0.75rem] text-text-muted">
+                      Select 2 or more crops that belong to the same person.
+                      {mergeSelection.length > 0 && (
+                        <span className="text-secondary font-semibold ml-1">{mergeSelection.length} selected</span>
+                      )}
+                    </p>
+                    <div className="flex gap-2 items-center">
+                      <Tag size={12} className="text-text-muted shrink-0" />
+                      <input
+                        type="text"
+                        value={mergeLabel}
+                        onChange={(e) => setMergeLabel(e.target.value)}
+                        placeholder="Optional label (e.g. John, Delivery person)"
+                        className="flex-1 text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                      />
+                    </div>
+                  </div>
                 )}
 
                 <div className="flex-1 overflow-y-auto pr-1">
@@ -1967,6 +2021,7 @@ function App({ onLogout }: AppProps) {
                       {reidCrops.map((crop) => {
                         const isSelected = selectedReidCrop?.id === crop.id;
                         const isMergeSelected = mergeSelection.includes(crop.id);
+                        const mergeIndex = mergeSelection.indexOf(crop.id);
                         const imageUrl = `${API_BASE}/crops/${crop.filename}`;
 
                         return (
@@ -1981,12 +2036,17 @@ function App({ onLogout }: AppProps) {
                                 ID:{crop.trackId}
                               </div>
                               {crop.identityId && (
-                                <div className="absolute top-1 left-1 text-[0.6rem] bg-secondary/80 text-white px-1.5 py-0.5 rounded font-bold">
-                                  Person
+                                <div className="absolute top-1 left-1 text-[0.6rem] bg-secondary/80 text-white px-1.5 py-0.5 rounded font-bold max-w-[85%] truncate">
+                                  {getIdentityDisplayName(crop)}{crop.identity?.galleryCount ? ` · ${crop.identity.galleryCount}` : ''}
                                 </div>
                               )}
                               {isMergeSelected && (
-                                <div className="absolute inset-0 bg-secondary/20 border-2 border-secondary rounded-lg" />
+                                <>
+                                  <div className="absolute inset-0 bg-secondary/20 border-2 border-secondary rounded-lg" />
+                                  <div className="absolute top-1 right-1 w-5 h-5 bg-secondary text-white text-[0.65rem] font-bold rounded-full flex items-center justify-center">
+                                    {mergeIndex + 1}
+                                  </div>
+                                </>
                               )}
                             </div>
 
@@ -2044,11 +2104,32 @@ function App({ onLogout }: AppProps) {
                             </span>
                             {selectedReidCrop.identityId && (
                               <span className="text-[0.65rem] text-secondary font-medium mt-0.5 inline-block">
-                                Linked identity — feedback will improve future matches
+                                {getIdentityDisplayName(selectedReidCrop)} · {selectedReidCrop.identity?.galleryCount ?? 1} crop{(selectedReidCrop.identity?.galleryCount ?? 1) !== 1 ? 's' : ''} in profile
                               </span>
                             )}
                           </div>
                         </div>
+
+                        {selectedReidCrop.identityId && (
+                          <div className="flex gap-2 items-center">
+                            <Tag size={14} className="text-text-muted shrink-0" />
+                            <input
+                              type="text"
+                              value={identityLabelDraft}
+                              onChange={(e) => setIdentityLabelDraft(e.target.value)}
+                              placeholder="Identity label (e.g. John, Staff #12)"
+                              className="flex-1 text-[0.75rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveIdentityLabel(selectedReidCrop.identityId!, identityLabelDraft)}
+                              disabled={savingIdentityLabel}
+                              className="btn btn-secondary py-1 px-2.5 text-[0.7rem] rounded-md shrink-0"
+                            >
+                              {savingIdentityLabel ? 'Saving…' : 'Save Label'}
+                            </button>
+                          </div>
+                        )}
 
                         {/* Connection Timeline path */}
                         {reidMatches.length === 0 ? (

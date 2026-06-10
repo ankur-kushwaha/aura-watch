@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import prisma from '../services/db';
 import reidWorker from '../services/reidWorker';
-import { upsertReidVector, searchReidVectors, deleteReidVector, updateReidPayloadBatch, retrieveReidVectors } from '../services/qdrant';
+import { upsertReidVector, searchReidVectors, deleteReidVector, updateReidPayloadBatch, retrieveReidVectors, retrieveIdentityPrototype, searchIdentityPrototypes } from '../services/qdrant';
+import { recomputeIdentityCentroid, removeIdentityCentroid } from '../services/reidIdentity';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -114,7 +115,7 @@ router.get('/detections', async (req: Request, res: Response) => {
     const detections = await prisma.reidDetection.findMany({
       orderBy: { timestamp: 'desc' },
       take: limit,
-      include: { identity: { select: { id: true, label: true } } },
+      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
     res.json(detections);
   } catch (err: any) {
@@ -141,6 +142,17 @@ router.delete('/detections/:id', async (req: Request, res: Response) => {
 
     await deleteReidVector(id);
     await prisma.reidDetection.delete({ where: { id } });
+
+    const identityId = detection.identityId;
+    if (identityId) {
+      const remaining = await prisma.reidDetection.count({ where: { identityId } });
+      if (remaining === 0) {
+        await removeIdentityCentroid(identityId);
+        await prisma.reidIdentity.delete({ where: { id: identityId } }).catch(() => {});
+      } else {
+        await recomputeIdentityCentroid(identityId);
+      }
+    }
 
     if (onReidCropDeletedCallback) {
       onReidCropDeletedCallback(detection.deviceId, detection.filename);
@@ -246,6 +258,7 @@ async function assignDetectionsToIdentity(detectionIds: string[], identityId?: s
   )];
 
   let targetIdentityId = identityId;
+  const mergedAwayIds: string[] = [];
   if (!targetIdentityId) {
     if (existingIdentityIds.length === 0) {
       const identity = await prisma.reidIdentity.create({ data: {} });
@@ -254,6 +267,7 @@ async function assignDetectionsToIdentity(detectionIds: string[], identityId?: s
       targetIdentityId = existingIdentityIds[0];
       const mergeIds = existingIdentityIds.slice(1);
       for (const mergeId of mergeIds) {
+        mergedAwayIds.push(mergeId);
         const mergedDetections = await prisma.reidDetection.findMany({
           where: { identityId: mergeId },
           select: { id: true },
@@ -275,19 +289,31 @@ async function assignDetectionsToIdentity(detectionIds: string[], identityId?: s
   });
   await updateReidPayloadBatch(uniqueIds, { identityId: targetIdentityId });
 
+  for (const mergedId of mergedAwayIds) {
+    await removeIdentityCentroid(mergedId);
+  }
+  if (targetIdentityId) {
+    await recomputeIdentityCentroid(targetIdentityId);
+  }
+
   return targetIdentityId;
 }
 
-function averageVectors(vectors: number[][]): number[] {
-  if (vectors.length === 0) return [];
-  const dim = vectors[0].length;
-  const sum = new Array(dim).fill(0);
-  for (const vec of vectors) {
-    for (let i = 0; i < dim; i++) {
-      sum[i] += vec[i];
+function mergeReidCandidates(
+  ...candidateLists: Awaited<ReturnType<typeof searchReidVectors>>[]
+) {
+  const candidateMap = new Map<string, Awaited<ReturnType<typeof searchReidVectors>>[number]>();
+  for (const list of candidateLists) {
+    for (const cand of list) {
+      const mongoId = (cand.payload as { mongoId?: string })?.mongoId;
+      if (!mongoId) continue;
+      const existing = candidateMap.get(mongoId);
+      if (!existing || cand.score > existing.score) {
+        candidateMap.set(mongoId, cand);
+      }
     }
   }
-  return sum.map(v => v / vectors.length);
+  return [...candidateMap.values()];
 }
 
 /**
@@ -336,7 +362,7 @@ router.post('/feedback', async (req: Request, res: Response) => {
  * Merge multiple detections into a single identity
  */
 router.post('/identities/merge', async (req: Request, res: Response) => {
-  const { detectionIds } = req.body;
+  const { detectionIds, label } = req.body;
 
   if (!Array.isArray(detectionIds) || detectionIds.length < 2) {
     return res.status(400).json({ error: 'detectionIds must be an array of at least 2 detection IDs' });
@@ -344,13 +370,52 @@ router.post('/identities/merge', async (req: Request, res: Response) => {
 
   try {
     const identityId = await assignDetectionsToIdentity(detectionIds);
+
+    if (label !== undefined && identityId) {
+      const trimmed = typeof label === 'string' ? label.trim() : '';
+      await prisma.reidIdentity.update({
+        where: { id: identityId },
+        data: { label: trimmed || null },
+      });
+    }
+
     const detections = await prisma.reidDetection.findMany({
       where: { identityId: identityId! },
       orderBy: { timestamp: 'asc' },
-      include: { identity: { select: { id: true, label: true } } },
+      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
 
     res.json({ success: true, identityId, detections });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/reid/identities/:id
+ * Set or clear a label on an identity
+ */
+router.patch('/identities/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { label } = req.body;
+
+  if (label !== undefined && typeof label !== 'string') {
+    return res.status(400).json({ error: 'label must be a string' });
+  }
+
+  try {
+    const existing = await prisma.reidIdentity.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Identity not found' });
+    }
+
+    const trimmed = typeof label === 'string' ? label.trim() : '';
+    const identity = await prisma.reidIdentity.update({
+      where: { id },
+      data: { label: trimmed || null },
+    });
+
+    res.json({ success: true, identity });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -371,7 +436,7 @@ router.get('/identities/:id/journey', async (req: Request, res: Response) => {
     const detections = await prisma.reidDetection.findMany({
       where: { identityId: id },
       orderBy: { timestamp: 'asc' },
-      include: { identity: { select: { id: true, label: true } } },
+      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
 
     res.json({ identity, detections });
@@ -394,7 +459,7 @@ router.post('/track', async (req: Request, res: Response) => {
   try {
     const queryDetection = await prisma.reidDetection.findUnique({
       where: { id: detectionId },
-      include: { identity: { select: { id: true, label: true } } },
+      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
     if (!queryDetection) {
       return res.status(404).json({ error: `Detection ${detectionId} not found in database.` });
@@ -405,21 +470,34 @@ router.post('/track', async (req: Request, res: Response) => {
       return res.status(404).json({ error: `Vector embedding not found in Qdrant for detection ${detectionId}.` });
     }
 
-    let searchVector = queryVectors[0].vector;
+    const cropVector = queryVectors[0].vector;
+    const searchLimit = limit + 10;
 
-    // Use identity centroid when detections have been linked by feedback
+    const cropCandidates = await searchReidVectors(cropVector, searchLimit);
+
+    let centroidCandidates: Awaited<ReturnType<typeof searchReidVectors>> = [];
     if (queryDetection.identityId) {
-      const identityDetections = await prisma.reidDetection.findMany({
-        where: { identityId: queryDetection.identityId },
-        select: { id: true },
-      });
-      const identityVectors = await retrieveReidVectors(identityDetections.map(d => d.id));
-      if (identityVectors.length > 1) {
-        searchVector = averageVectors(identityVectors.map(v => v.vector));
+      let prototype = await retrieveIdentityPrototype(queryDetection.identityId);
+      if (!prototype) {
+        await recomputeIdentityCentroid(queryDetection.identityId);
+        prototype = await retrieveIdentityPrototype(queryDetection.identityId);
+      }
+      if (prototype) {
+        centroidCandidates = await searchReidVectors(prototype.vector, searchLimit);
       }
     }
 
-    const candidates = await searchReidVectors(searchVector, limit + 10);
+    const candidates = mergeReidCandidates(cropCandidates, centroidCandidates);
+
+    const similarIdentities = await searchIdentityPrototypes(cropVector, 5);
+    const similarIdentityScores = new Map<string, number>();
+    for (const hit of similarIdentities) {
+      const identityId = (hit.payload as { identityId?: string })?.identityId;
+      if (identityId && identityId !== queryDetection.identityId) {
+        similarIdentityScores.set(identityId, hit.score);
+      }
+    }
+
     const topologyRoutes = await prisma.topologyRoute.findMany();
 
     // Load feedback involving the query detection
@@ -510,6 +588,9 @@ router.post('/track', async (req: Request, res: Response) => {
       }
       if (confirmedIds.has(payload.mongoId)) {
         feedbackBoost += 0.15;
+      }
+      if (payload.identityId && similarIdentityScores.has(payload.identityId)) {
+        feedbackBoost += 0.1 * (similarIdentityScores.get(payload.identityId) || 0);
       }
 
       const finalScore = Math.min(1.0, (0.6 * vectorSimilarity) + (0.2 * timeScore) + (0.2 * topologyScore) + feedbackBoost);

@@ -53,10 +53,12 @@ model CameraStream {
 }
 
 model ReidIdentity {
-  id         String          @id @default(auto()) @map("_id") @db.ObjectId
-  label      String?
-  createdAt  DateTime        @default(now())
-  detections ReidDetection[]
+  id                String          @id @default(auto()) @map("_id") @db.ObjectId
+  label             String?
+  createdAt         DateTime        @default(now())
+  centroidUpdatedAt DateTime?
+  galleryCount      Int             @default(0)
+  detections        ReidDetection[]
 }
 
 model ReidDetection {
