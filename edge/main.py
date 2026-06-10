@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import platform
 import signal
 import subprocess
 import sys
@@ -654,7 +655,7 @@ class EdgeAgent:
                 self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
 
     def _schedule_service_restart(self, delay: float = 0.5):
-        """Exit with failure so systemd Restart=on-failure restarts the service (no sudo)."""
+        """Exit with failure so systemd restarts the service (no sudo)."""
 
         def do_restart():
             self.shutdown()
@@ -686,6 +687,65 @@ class EdgeAgent:
         if pull_result.returncode != 0:
             return False, "\n".join(output_parts) or "git pull failed"
         return True, "\n".join(output_parts)
+
+    def _run_script_with_logs(self, cmd: list[str], cwd: str, timeout_sec: float) -> tuple[bool, str]:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        output_lines: list[str] = []
+        start = time.monotonic()
+        assert proc.stdout is not None
+        while True:
+            line = proc.stdout.readline()
+            if line:
+                message = line.rstrip()
+                if message:
+                    self.send_log(message)
+                    output_lines.append(message)
+            elif proc.poll() is not None:
+                break
+            elif time.monotonic() - start > timeout_sec:
+                proc.kill()
+                proc.wait()
+                return False, "\n".join(output_lines) or f"Command timed out after {int(timeout_sec)}s"
+
+        returncode = proc.wait()
+        output = "\n".join(output_lines)
+        if returncode != 0:
+            return False, output or f"Command failed with exit code {returncode}"
+        return True, output
+
+    def _refresh_systemd_service(self, edge_dir: str) -> tuple[bool, str]:
+        if platform.system() != "Linux":
+            return True, "Skipped systemd refresh (not Linux)."
+
+        refresh_script = os.path.join(edge_dir, "scripts", "refresh-systemd-service.sh")
+        if not os.path.isfile(refresh_script):
+            return False, f"refresh-systemd-service.sh not found at {refresh_script}"
+
+        result = subprocess.run(
+            ["sudo", "-n", refresh_script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        output = (result.stdout or result.stderr or "").strip()
+        for line in output.splitlines():
+            if line.strip():
+                self.send_log(line.strip())
+        if result.returncode != 0:
+            hint = (
+                "Run ./scripts/setup-service.sh once on the device to grant passwordless systemd refresh."
+            )
+            if "password" in output.lower() or result.returncode == 1:
+                return False, f"{output}\n{hint}".strip()
+            return False, output or "Failed to refresh systemd service"
+        return True, output or "Systemd unit refreshed."
 
     def _run_update_service(self, request_id: str):
         def respond(success: bool, message: str = "", **extra: Any):
@@ -721,7 +781,41 @@ class EdgeAgent:
                 return
 
             self.send_log(f"git pull complete: {pull_output.splitlines()[-1] if pull_output else 'done'}")
-            respond(True, "git pull complete.", output=pull_output)
+
+            edge_dir = os.path.join(repo_root, "edge") if os.path.isdir(os.path.join(repo_root, "edge")) else repo_root
+            venv_script = os.path.join(edge_dir, "scripts", "setup-venv.sh")
+            update_output = [pull_output]
+
+            if os.path.isfile(venv_script):
+                self.send_log("Updating Python dependencies...")
+                venv_ok, venv_output = self._run_script_with_logs(
+                    ["sh", venv_script, edge_dir, "python3"],
+                    cwd=edge_dir,
+                    timeout_sec=600,
+                )
+                if venv_output:
+                    update_output.append(venv_output)
+                if not venv_ok:
+                    respond(False, error="Python dependency update failed", output="\n\n".join(update_output))
+                    return
+            else:
+                self.send_log("setup-venv.sh not found; skipping dependency update.")
+
+            self.send_log("Refreshing systemd service unit...")
+            systemd_ok, systemd_output = self._refresh_systemd_service(edge_dir)
+            if systemd_output:
+                update_output.append(systemd_output)
+            if not systemd_ok:
+                respond(
+                    False,
+                    error="Systemd service refresh failed",
+                    output="\n\n".join(update_output),
+                )
+                return
+
+            combined_output = "\n\n".join(part for part in update_output if part)
+            respond(True, "Update complete. Restarting edge service...", output=combined_output)
+            self._schedule_service_restart()
         except subprocess.TimeoutExpired:
             respond(False, error="Update timed out.")
         except FileNotFoundError as exc:

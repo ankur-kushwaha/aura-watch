@@ -33,35 +33,27 @@ echo "Installing Python dependencies into virtual environment..."
 sh "$VENV_SCRIPT" "$DIR" python3
 PYTHON_PATH="$DIR/.venv/bin/python"
 
-echo "Generating systemd service file..."
-SERVICE_TEMPLATE="$DIR/scripts/aura-watch-edge.service.template"
-SERVICE_OUT="/etc/systemd/system/aura-watch-edge.service"
-
-if [ ! -f "$SERVICE_TEMPLATE" ]; then
-    echo "Error: Template file not found: $SERVICE_TEMPLATE"
+REFRESH_SCRIPT="$DIR/scripts/refresh-systemd-service.sh"
+if [ ! -f "$REFRESH_SCRIPT" ]; then
+    echo "Error: refresh script not found: $REFRESH_SCRIPT"
     exit 1
 fi
+chmod +x "$REFRESH_SCRIPT"
 
-sudo sed -e "s|__USER__|${USER_NAME}|g" \
-         -e "s|__DIR__|${DIR}|g" \
-         -e "s|__PYTHON__|${PYTHON_PATH}|g" \
-         "$SERVICE_TEMPLATE" | sudo tee "$SERVICE_OUT" > /dev/null
+echo "Generating systemd service file..."
+sudo "$REFRESH_SCRIPT"
 
-echo "Configuring passwordless reboot for cloud dashboard (sudoers)..."
+echo "Configuring passwordless dashboard commands (sudoers)..."
 SUDOERS_FILE="/etc/sudoers.d/aura-watch-edge-${USER_NAME}"
 sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
-# Aura Watch — allow edge agent user to reboot from cloud dashboard (no password)
-${USER_NAME} ALL=(ALL) NOPASSWD: /usr/sbin/reboot, /sbin/reboot, /bin/systemctl reboot
+# Aura Watch — allow edge agent user to reboot and refresh systemd from cloud dashboard
+${USER_NAME} ALL=(ALL) NOPASSWD: /usr/sbin/reboot, /sbin/reboot, /bin/systemctl reboot, ${REFRESH_SCRIPT}
 EOF
 sudo chmod 440 "$SUDOERS_FILE"
 if ! sudo visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1; then
     echo "Warning: sudoers validation failed. Reboot from dashboard may require a password."
     sudo rm -f "$SUDOERS_FILE"
 fi
-
-echo "Registering systemd daemon..."
-sudo systemctl daemon-reload
-sudo systemctl enable aura-watch-edge.service
 
 echo "Starting systemd service..."
 sudo systemctl start aura-watch-edge.service

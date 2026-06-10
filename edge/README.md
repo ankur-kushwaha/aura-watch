@@ -198,6 +198,8 @@ sudo systemctl restart aura-watch-edge.service
 sudo journalctl -u aura-watch-edge.service -f
 ```
 
+**Remote update from the cloud dashboard** runs `git pull`, refreshes Python dependencies, re-installs the systemd unit from `scripts/aura-watch-edge.service.template`, and restarts the agent. Devices that were installed before this feature need a **one-time** re-run of `./scripts/setup-service.sh` on the Pi so passwordless `refresh-systemd-service.sh` is allowed in sudoers.
+
 ---
 
 ## Troubleshooting
@@ -306,9 +308,14 @@ See [macOS: system Python vs Homebrew](#macos-system-python-vs-homebrew) above.
 
 ### Re-install after code updates
 
+Prefer the **Update** button in the cloud dashboard (same steps as below).
+
+Manual equivalent:
+
 ```bash
 cd ~/aura-watch-edge && git pull
-sh scripts/setup-venv.sh edge python3
+sh edge/scripts/setup-venv.sh edge python3
+sudo edge/scripts/refresh-systemd-service.sh   # or ./edge/scripts/setup-service.sh
 ```
 
 ---
@@ -320,4 +327,5 @@ sh scripts/setup-venv.sh edge python3
 | `scripts/install.sh` | Full interactive / one-line installer |
 | `scripts/setup-venv.sh` | Create `.venv` and install Python deps |
 | `scripts/setup-service.sh` | Register systemd service (Linux) |
+| `scripts/refresh-systemd-service.sh` | Re-apply systemd unit from template (sudo) |
 | `scripts/export_model.py` | Export YOLO to ONNX / CoreML / TensorRT / OpenVINO |

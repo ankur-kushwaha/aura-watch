@@ -306,7 +306,7 @@ router.post('/:deviceId/command/restart-service', async (req: Request, res: Resp
 
 /**
  * POST /api/devices/:deviceId/command/update-service
- * Run git pull on the edge device
+ * git pull, refresh Python deps + systemd unit, then restart the edge agent on the device
  */
 router.post('/:deviceId/command/update-service', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
@@ -316,7 +316,7 @@ router.post('/:deviceId/command/update-service', async (req: Request, res: Respo
       return res.status(404).json({ error: 'Device not found' });
     }
 
-    const result = await sendDeviceCommand(deviceId, 'update_service', {}, 300000);
+    const result = await sendDeviceCommand(deviceId, 'update_service', {}, 900000);
     res.json({ message: result.message || 'Update complete', ...result });
   } catch (error: any) {
     const status = error.message === 'Device is offline' ? 503 : 500;

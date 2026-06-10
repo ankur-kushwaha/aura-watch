@@ -1078,7 +1078,7 @@ function App({ onLogout }: AppProps) {
     e.stopPropagation();
     if (
       !confirm(
-        `Run git pull on "${deviceName}"?`
+        `Update "${deviceName}"?\n\nThis will git pull, refresh dependencies and the systemd service, then restart the edge agent.`
       )
     ) {
       return;
