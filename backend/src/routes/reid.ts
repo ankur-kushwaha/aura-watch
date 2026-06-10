@@ -79,7 +79,7 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
   let resolvedClipFilename = clipFilename ?? null;
   let resolvedClipOffsetMs = clipOffsetMs ?? null;
   if (!resolvedClipFilename) {
-    const resolved = await resolveClipForDetection(streamId, timestamp);
+    const resolved = await resolveClipForDetection(streamId, timestamp, filename, deviceId);
     if (resolved) {
       resolvedClipFilename = resolved.clipFilename;
       resolvedClipOffsetMs = resolved.clipOffsetMs;
@@ -698,6 +698,32 @@ router.patch('/identities/:id', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/reid/detections/:id/source-clip
+ * Resolve and return the video clip for a detection (lazy lookup + backfill)
+ */
+router.get('/detections/:id/source-clip', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const detection = await prisma.reidDetection.findUnique({ where: { id } });
+    if (!detection) {
+      return res.status(404).json({ error: 'Detection not found' });
+    }
+
+    const enriched = await enrichDetectionWithClipSource(detection, { persist: true });
+    if (!enriched.clipFilename) {
+      return res.status(404).json({ error: 'No matching video clip for this detection' });
+    }
+
+    res.json({
+      clipFilename: enriched.clipFilename,
+      clipOffsetMs: enriched.clipOffsetMs ?? 0,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/reid/identities/:id/journey
  * List all detections linked to an identity
  */
@@ -716,7 +742,7 @@ router.get('/identities/:id/journey', async (req: Request, res: Response) => {
     });
 
     const enrichedDetections = await Promise.all(
-      detections.map((detection) => enrichDetectionWithClipSource(detection)),
+      detections.map((detection) => enrichDetectionWithClipSource(detection, { persist: true })),
     );
 
     res.json({ identity, detections: enrichedDetections });

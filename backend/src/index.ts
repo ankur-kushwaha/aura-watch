@@ -332,21 +332,21 @@ async function processVideoClipInBackground(
     geminiPath = await transcodeForGemini(filepath);
     const summaryPath = geminiPath !== filepath ? geminiPath : filepath;
 
-    const [summary] = await Promise.all([
-      summarizeVideo(summaryPath, cameraName),
-      trackEvents.length > 0
-        ? processReidTrackEventsFromClip(
-            filepath,
-            deviceId,
-            streamId,
-            timestamp.getTime(),
-            filename,
-            trackEvents,
-            frameWidth,
-            frameHeight,
-          )
-        : Promise.resolve(),
-    ]);
+    const reidFromClipPromise = trackEvents.length > 0
+      ? processReidTrackEventsFromClip(
+          filepath,
+          deviceId,
+          streamId,
+          timestamp.getTime(),
+          filename,
+          trackEvents,
+          frameWidth,
+          frameHeight,
+        )
+      : Promise.resolve();
+
+    const summary = await summarizeVideo(summaryPath, cameraName);
+    await reidFromClipPromise;
 
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Gemini summary generated successfully.`);
 

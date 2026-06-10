@@ -329,6 +329,8 @@ function App({ onLogout }: AppProps) {
   const [showTopology, setShowTopology] = useState<boolean>(false);
   const [reidRefreshNonce, setReidRefreshNonce] = useState<number>(0);
   const [timelineVideo, setTimelineVideo] = useState<TimelineVideoPlayback | null>(null);
+  const [timelineClipLoading, setTimelineClipLoading] = useState<string | null>(null);
+  const [showIdentitySuggestions, setShowIdentitySuggestions] = useState<boolean>(false);
   const timelineVideoRef = useRef<HTMLVideoElement>(null);
 
   // Topology States
@@ -667,6 +669,7 @@ function App({ onLogout }: AppProps) {
     setSelectedPerson(person);
     setReidView('person');
     setIdentityLabelDraft(person.label || '');
+    setShowIdentitySuggestions(!person.label?.trim());
     setLoadingPersonDetail(true);
     try {
       const [journeyRes, matchesRes] = await Promise.all([
@@ -699,17 +702,44 @@ function App({ onLogout }: AppProps) {
     setPersonTimeline([]);
     setPersonSuggestions([]);
     setTimelineVideo(null);
+    setShowIdentitySuggestions(false);
     fetchReidPeople();
   };
 
-  const playTimelineCrop = (crop: ReidDetection) => {
-    if (!crop.clipFilename) return;
-    setTimelineVideo({
-      filename: crop.clipFilename,
-      offsetMs: crop.clipOffsetMs ?? 0,
-      cameraName: crop.cameraName,
-      cropFilename: crop.filename,
-    });
+  const playTimelineCrop = async (crop: ReidDetection) => {
+    setTimelineClipLoading(crop.id);
+    try {
+      let clipFilename = crop.clipFilename;
+      let clipOffsetMs = crop.clipOffsetMs ?? 0;
+
+      if (!clipFilename) {
+        const res = await fetch(`${API_BASE}/reid/detections/${crop.id}/source-clip`);
+        if (!res.ok) {
+          alert('No video clip found for this detection.');
+          return;
+        }
+        const data = await res.json();
+        clipFilename = data.clipFilename;
+        clipOffsetMs = data.clipOffsetMs ?? 0;
+        setPersonTimeline((prev) =>
+          prev.map((d) =>
+            d.id === crop.id ? { ...d, clipFilename, clipOffsetMs } : d,
+          ),
+        );
+      }
+
+      setTimelineVideo({
+        filename: clipFilename!,
+        offsetMs: clipOffsetMs,
+        cameraName: crop.cameraName,
+        cropFilename: crop.filename,
+      });
+    } catch (err) {
+      console.error('Failed to resolve clip for detection', err);
+      alert('Could not load video for this detection.');
+    } finally {
+      setTimelineClipLoading(null);
+    }
   };
 
   const handleSavePersonLabel = async () => {
@@ -732,6 +762,9 @@ function App({ onLogout }: AppProps) {
         label: newLabel,
         displayName: newLabel || prev.displayName,
       } : null);
+      if (newLabel?.trim()) {
+        setShowIdentitySuggestions(false);
+      }
       await fetchReidPeople();
     } catch (err) {
       console.error('Failed to save person label', err);
@@ -2223,9 +2256,30 @@ function App({ onLogout }: AppProps) {
 
                 {personSuggestions.length > 0 && (
                   <div className="mb-5">
-                    <h3 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-3">
-                      Might be the same person
-                    </h3>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <h3 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider">
+                        Might be the same person
+                      </h3>
+                      {selectedPerson?.label?.trim() && !showIdentitySuggestions && (
+                        <button
+                          type="button"
+                          onClick={() => setShowIdentitySuggestions(true)}
+                          className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md shrink-0"
+                        >
+                          Change selection
+                        </button>
+                      )}
+                      {selectedPerson?.label?.trim() && showIdentitySuggestions && (
+                        <button
+                          type="button"
+                          onClick={() => setShowIdentitySuggestions(false)}
+                          className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                    {(!selectedPerson?.label?.trim() || showIdentitySuggestions) && (
                     <div className="flex gap-4 overflow-x-auto pb-2">
                       {personSuggestions.map((suggestion) => {
                         const srcTrack = selectedPerson?.streamTracks[0];
@@ -2269,6 +2323,7 @@ function App({ onLogout }: AppProps) {
                         );
                       })}
                     </div>
+                    )}
                   </div>
                 )}
 
@@ -2285,17 +2340,15 @@ function App({ onLogout }: AppProps) {
                   ) : (
                     <div className="relative border-l-2 border-primary/25 ml-4 pl-6 flex flex-col gap-5">
                       {personTimeline.map((crop) => {
-                        const hasClip = !!crop.clipFilename;
+                        const isLoadingClip = timelineClipLoading === crop.id;
                         return (
                           <div key={crop.id} className="relative">
                             <div className="absolute -left-[27px] top-3 w-3 h-3 rounded-full bg-primary border-2 border-[#090d16]" />
                             <button
                               type="button"
                               onClick={() => playTimelineCrop(crop)}
-                              disabled={!hasClip}
-                              className={`glass-panel p-3 flex gap-3 items-center rounded-xl w-full text-left transition-all duration-200 ${
-                                hasClip ? 'cursor-pointer hover:border-primary/40 hover:bg-[rgba(124,58,237,0.06)]' : 'cursor-default opacity-90'
-                              }`}
+                              disabled={isLoadingClip}
+                              className="glass-panel p-3 flex gap-3 items-center rounded-xl w-full text-left transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-[rgba(124,58,237,0.06)]"
                             >
                               <div className="relative w-12 h-12 shrink-0">
                                 <img
@@ -2303,11 +2356,13 @@ function App({ onLogout }: AppProps) {
                                   alt=""
                                   className="w-12 h-12 rounded-lg object-cover bg-black"
                                 />
-                                {hasClip && (
-                                  <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/35">
+                                <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
+                                  {isLoadingClip ? (
+                                    <RefreshCw size={14} className="text-white animate-spin" />
+                                  ) : (
                                     <Play size={16} className="text-white" fill="white" />
-                                  </div>
-                                )}
+                                  )}
+                                </div>
                               </div>
                               <div className="min-w-0 flex-1">
                                 <div className="text-[0.85rem] font-bold text-text-primary">{crop.cameraName}</div>
@@ -2315,9 +2370,7 @@ function App({ onLogout }: AppProps) {
                                   <Clock size={11} />
                                   {new Date(crop.timestamp).toLocaleString()}
                                   <span className="text-secondary">track {crop.trackId}</span>
-                                  {hasClip && (
-                                    <span className="text-[#a78bfa]">tap to play clip</span>
-                                  )}
+                                  <span className="text-[#a78bfa]">tap to play clip</span>
                                 </div>
                               </div>
                             </button>
