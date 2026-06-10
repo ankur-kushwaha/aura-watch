@@ -670,56 +670,21 @@ class EdgeAgent:
             return BASE_DIR
         return BASE_DIR
 
-    def _force_git_pull(self, repo_root: str) -> tuple[bool, str]:
-        fetch_result = subprocess.run(
-            ["git", "fetch", "origin"],
+    def _git_pull(self, repo_root: str) -> tuple[bool, str]:
+        pull_result = subprocess.run(
+            ["git", "pull"],
             cwd=repo_root,
             capture_output=True,
             text=True,
             timeout=120,
         )
         output_parts: list[str] = []
-        if fetch_result.stdout.strip():
-            output_parts.append(fetch_result.stdout.strip())
-        if fetch_result.stderr.strip():
-            output_parts.append(fetch_result.stderr.strip())
-        if fetch_result.returncode != 0:
-            return False, "\n".join(output_parts) or "git fetch failed"
-
-        upstream = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "@{u}"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        reset_target = "@{u}"
-        if upstream.returncode != 0:
-            branch = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            ).stdout.strip() or "main"
-            reset_target = f"origin/{branch}"
-
-        reset_result = subprocess.run(
-            ["git", "reset", "--hard", reset_target],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if reset_result.stdout.strip():
-            output_parts.append(reset_result.stdout.strip())
-        if reset_result.stderr.strip():
-            output_parts.append(reset_result.stderr.strip())
-        if reset_result.returncode != 0:
-            return False, "\n".join(output_parts) or "git reset --hard failed"
-
-        summary = reset_result.stdout.strip() or f"Reset to {reset_target}"
-        output_parts.append(summary)
+        if pull_result.stdout.strip():
+            output_parts.append(pull_result.stdout.strip())
+        if pull_result.stderr.strip():
+            output_parts.append(pull_result.stderr.strip())
+        if pull_result.returncode != 0:
+            return False, "\n".join(output_parts) or "git pull failed"
         return True, "\n".join(output_parts)
 
     def _run_update_service(self, request_id: str):
@@ -743,52 +708,20 @@ class EdgeAgent:
                 )
                 return
 
-            self.send_log(f"Starting edge service update (force pull in {repo_root})...")
+            self.send_log(f"Running git pull in {repo_root}...")
 
-            pull_ok, pull_output = self._force_git_pull(repo_root)
-            output_parts: list[str] = [pull_output] if pull_output else []
+            pull_ok, pull_output = self._git_pull(repo_root)
 
             if not pull_ok:
                 respond(
                     False,
-                    error="git force pull failed",
-                    output="\n".join(output_parts),
+                    error="git pull failed",
+                    output=pull_output,
                 )
                 return
 
-            self.send_log(f"git force pull complete: {pull_output.splitlines()[-1] if pull_output else 'done'}")
-
-            venv_script = os.path.join(BASE_DIR, "scripts", "setup-venv.sh")
-            if os.path.isfile(venv_script):
-                self.send_log("Updating Python dependencies (this may take a few minutes)...")
-                venv_result = subprocess.run(
-                    ["sh", venv_script, ".", "python3"],
-                    cwd=BASE_DIR,
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                )
-                venv_output = (venv_result.stderr or venv_result.stdout or "").strip()
-                if venv_output:
-                    for line in venv_output.splitlines()[-8:]:
-                        self.send_log(line)
-                if venv_result.returncode != 0:
-                    respond(
-                        False,
-                        error="Dependency update failed",
-                        output="\n".join(output_parts + [venv_output]),
-                    )
-                    return
-                output_parts.append("Dependencies updated.")
-            else:
-                self.send_log("setup-venv.sh not found; skipping dependency update.")
-
-            respond(
-                True,
-                "Update complete. Restarting aura-watch-edge service...",
-                output="\n".join(output_parts),
-            )
-            self._schedule_service_restart()
+            self.send_log(f"git pull complete: {pull_output.splitlines()[-1] if pull_output else 'done'}")
+            respond(True, "git pull complete.", output=pull_output)
         except subprocess.TimeoutExpired:
             respond(False, error="Update timed out.")
         except FileNotFoundError as exc:

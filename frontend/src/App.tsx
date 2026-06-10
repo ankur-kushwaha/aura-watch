@@ -1045,7 +1045,7 @@ function App({ onLogout }: AppProps) {
     e.stopPropagation();
     if (
       !confirm(
-        `Pull latest code and update aura-watch-edge on "${deviceName}"?\n\nThis runs git pull, updates dependencies, and restarts the service. It may take several minutes.`
+        `Run git pull on "${deviceName}"?`
       )
     ) {
       return;
@@ -1405,7 +1405,7 @@ function App({ onLogout }: AppProps) {
                           onClick={(e) => handleUpdateService(dev.deviceId, dev.name, e)}
                           disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:update`}
                           className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
-                          title="Pull latest code from git and update service"
+                          title="Run git pull on the edge device"
                         >
                           <Download size={11} />
                           {deviceCommandPending === `${dev.deviceId}:update` ? 'Updating...' : 'Update'}

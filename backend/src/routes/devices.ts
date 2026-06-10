@@ -306,7 +306,7 @@ router.post('/:deviceId/command/restart-service', async (req: Request, res: Resp
 
 /**
  * POST /api/devices/:deviceId/command/update-service
- * git pull latest code, refresh dependencies, and restart aura-watch-edge
+ * Run git pull on the edge device
  */
 router.post('/:deviceId/command/update-service', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
