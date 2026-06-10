@@ -2241,6 +2241,15 @@ function App({ onLogout }: AppProps) {
                                             : 'cursor-default'
                                         }`}
                                       >
+                                        {obj.cropFilename && (
+                                          <div className="w-10 h-10 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.2)] shrink-0">
+                                            <img
+                                              src={`${API_BASE}/crops/${obj.cropFilename}`}
+                                              alt=""
+                                              className="w-full h-full object-cover bg-black"
+                                            />
+                                          </div>
+                                        )}
                                         <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
                                           {obj.className}
                                           {obj.confidence != null && obj.confidence > 0 && (
