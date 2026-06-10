@@ -173,6 +173,7 @@ interface ReidRoute {
 }
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
+const identityCoverUrl = (identityId: string) => `${API_BASE}/reid/identities/${identityId}/cover`;
 const CLIPS_PAGE_SIZE = 10;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 const HUB_HTTP = import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
@@ -338,6 +339,7 @@ function App({ onLogout }: AppProps) {
   // ReID States
   const [reidPeople, setReidPeople] = useState<ReidPerson[]>([]);
   const [loadingReidPeople, setLoadingReidPeople] = useState<boolean>(false);
+  const [brokenIdentityCovers, setBrokenIdentityCovers] = useState<Set<string>>(new Set());
   const [deletingIdentityId, setDeletingIdentityId] = useState<string | null>(null);
   const [reidView, setReidView] = useState<'people' | 'person'>('people');
   const [selectedPerson, setSelectedPerson] = useState<ReidPerson | null>(null);
@@ -763,6 +765,7 @@ function App({ onLogout }: AppProps) {
       const res = await fetch(`${API_BASE}/reid/people`);
       const data = await res.json();
       setReidPeople(data);
+      setBrokenIdentityCovers(new Set());
     } catch (err) {
       console.error('Failed to fetch ReID people', err);
     } finally {
@@ -2592,9 +2595,7 @@ function App({ onLogout }: AppProps) {
                     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-6">
                       {reidPeople.map((person) => {
                         const isLinkSelected = linkPeopleSelection.includes(person.id);
-                        const coverUrl = person.coverFilename
-                          ? `${API_BASE}/crops/${person.coverFilename}`
-                          : null;
+                        const coverBroken = brokenIdentityCovers.has(person.id);
 
                         return (
                           <div
@@ -2626,12 +2627,19 @@ function App({ onLogout }: AppProps) {
                                 ? 'border-secondary shadow-[0_0_12px_rgba(6,182,212,0.5)]'
                                 : 'border-[rgba(255,255,255,0.1)] group-hover:border-primary/50 group-hover:shadow-[0_0_12px_rgba(124,58,237,0.3)]'
                             }`}>
-                              {coverUrl ? (
-                                <img src={coverUrl} alt={person.displayName} className="w-full h-full object-cover" />
-                              ) : (
+                              {coverBroken ? (
                                 <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
                                   <UserCircle size={32} className="text-text-muted" />
                                 </div>
+                              ) : (
+                                <img
+                                  src={identityCoverUrl(person.id)}
+                                  alt=""
+                                  onError={() => {
+                                    setBrokenIdentityCovers((prev) => new Set(prev).add(person.id));
+                                  }}
+                                  className="w-full h-full object-cover"
+                                />
                               )}
                               {person.photoCount > 1 && (
                                 <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[0.6rem] text-white text-center py-0.5">
@@ -2710,12 +2718,21 @@ function App({ onLogout }: AppProps) {
                     <ArrowLeft size={16} />
                   </button>
                   <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-primary/30 shrink-0">
-                    {selectedPerson?.coverFilename && (
+                    {selectedPerson && !brokenIdentityCovers.has(selectedPerson.id) ? (
                       <img
-                        src={`${API_BASE}/crops/${selectedPerson.coverFilename}`}
+                        src={identityCoverUrl(selectedPerson.id)}
                         alt=""
+                        onError={() => {
+                          if (selectedPerson) {
+                            setBrokenIdentityCovers((prev) => new Set(prev).add(selectedPerson.id));
+                          }
+                        }}
                         className="w-full h-full object-cover"
                       />
+                    ) : (
+                      <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
+                        <UserCircle size={36} className="text-text-muted" />
+                      </div>
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -2798,10 +2815,17 @@ function App({ onLogout }: AppProps) {
                         return (
                           <div key={suggestion.id} className="glass-panel p-3 rounded-xl shrink-0 w-[160px] flex flex-col items-center gap-2">
                             <div className="w-14 h-14 rounded-full overflow-hidden border border-border-glass">
-                              {suggestion.coverFilename && (
+                              {brokenIdentityCovers.has(suggestion.id) ? (
+                                <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
+                                  <UserCircle size={24} className="text-text-muted" />
+                                </div>
+                              ) : (
                                 <img
-                                  src={`${API_BASE}/crops/${suggestion.coverFilename}`}
+                                  src={identityCoverUrl(suggestion.id)}
                                   alt=""
+                                  onError={() => {
+                                    setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
+                                  }}
                                   className="w-full h-full object-cover"
                                 />
                               )}
@@ -3056,10 +3080,17 @@ function App({ onLogout }: AppProps) {
                         className="glass-panel interactive flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-left disabled:opacity-50"
                       >
                         <div className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black">
-                          {suggestion.coverFilename && (
+                          {brokenIdentityCovers.has(suggestion.id) ? (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <UserCircle size={14} className="text-text-muted" />
+                            </div>
+                          ) : (
                             <img
-                              src={`${API_BASE}/crops/${suggestion.coverFilename}`}
+                              src={identityCoverUrl(suggestion.id)}
                               alt=""
+                              onError={() => {
+                                setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
+                              }}
                               className="w-full h-full object-cover"
                             />
                           )}

@@ -12,6 +12,8 @@ import {
   splitStreamTrackToNewIdentity,
   cleanupEmptyIdentities,
 } from '../services/reidPeople';
+import { fetchFileFromEdge } from '../services/edgeFileFetch';
+import { rankCoverCandidates, resolveCropImageBuffer } from '../services/cropResolve';
 import {
   autoLinkDetectionToIdentity,
   getStreamTrackKeysForIdentity,
@@ -247,6 +249,40 @@ router.get('/detections', async (req: Request, res: Response) => {
     res.json(detections);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/reid/identities/:id/cover
+ * Best available cover image for a person, trying multiple detections if needed.
+ */
+router.get('/identities/:id/cover', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const detections = await prisma.reidDetection.findMany({
+      where: { identityId: id },
+      orderBy: { timestamp: 'desc' },
+      take: 20,
+    });
+
+    if (detections.length === 0) {
+      return res.status(404).json({ error: 'No detections for identity' });
+    }
+
+    for (const detection of rankCoverCandidates(detections)) {
+      const buffer = await resolveCropImageBuffer(detection, fetchFileFromEdge);
+      if (buffer) {
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        return res.send(buffer);
+      }
+    }
+
+    return res.status(404).json({ error: 'No cover image available' });
+  } catch (err: any) {
+    console.error(`[ReID] Error resolving cover for identity ${id}:`, err);
+    const status = err.message?.includes('offline') ? 503 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 

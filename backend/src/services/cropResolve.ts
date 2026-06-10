@@ -4,16 +4,33 @@ import prisma from './db';
 import { CROPS_DIR } from '../routes/reid';
 import { extractCropFromClip } from './reidClipExtract';
 import { enrichDetectionWithClipSource } from './reidClipResolve';
+import type { EdgeFileFetcher } from './edgeFileFetch';
 
 const TEMP_DIR = path.join(__dirname, '../storage/temp');
 
-export type EdgeFileFetcher = (
-  deviceId: string,
-  filename: string,
-) => Promise<{ contentType: string; data: Buffer | string }>;
+export type { EdgeFileFetcher };
 
 export function cropExistsLocally(filename: string): boolean {
   return fs.existsSync(path.join(CROPS_DIR, filename));
+}
+
+export type CoverCandidate = {
+  filename: string;
+  clipFilename: string | null;
+  clipOffsetMs: number | null;
+};
+
+/** Prefer a detection whose crop file exists or can be regenerated from clip metadata. */
+export function rankCoverCandidates<T extends CoverCandidate>(candidates: T[]): T[] {
+  if (candidates.length <= 1) return candidates;
+
+  const withLocalFile = candidates.filter((c) => cropExistsLocally(c.filename));
+  const withClipMeta = candidates.filter((c) => c.clipFilename && c.clipOffsetMs != null);
+  const rest = candidates.filter(
+    (c) => !cropExistsLocally(c.filename) && !(c.clipFilename && c.clipOffsetMs != null),
+  );
+
+  return [...withLocalFile, ...withClipMeta, ...rest];
 }
 
 async function resolveClipPath(
@@ -91,4 +108,45 @@ export async function regenerateCropFromDetection(
       }
     }
   }
+}
+
+type CropDetection = {
+  id: string;
+  deviceId: string;
+  filename: string;
+  bbox: string;
+  streamId: string | null;
+  timestamp: Date;
+  clipId: string | null;
+  clipFilename: string | null;
+  clipOffsetMs: number | null;
+};
+
+/** Resolve crop bytes from local storage, edge proxy, or clip extraction. */
+export async function resolveCropImageBuffer(
+  detection: CropDetection,
+  fetchFileFromEdge: EdgeFileFetcher,
+): Promise<Buffer | null> {
+  const localPath = path.join(CROPS_DIR, detection.filename);
+  if (fs.existsSync(localPath)) {
+    return fs.readFileSync(localPath);
+  }
+
+  try {
+    const result = await fetchFileFromEdge(detection.deviceId, detection.filename);
+    const buffer = Buffer.isBuffer(result.data)
+      ? result.data
+      : Buffer.from(result.data as string, 'base64');
+    fs.writeFileSync(localPath, buffer);
+    return buffer;
+  } catch (edgeErr: any) {
+    console.warn(`[CropResolve] Edge fetch failed for ${detection.filename}:`, edgeErr.message);
+  }
+
+  const regenerated = await regenerateCropFromDetection(detection, fetchFileFromEdge);
+  if (regenerated && fs.existsSync(regenerated)) {
+    return fs.readFileSync(regenerated);
+  }
+
+  return null;
 }

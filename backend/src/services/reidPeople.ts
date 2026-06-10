@@ -13,6 +13,7 @@ import {
   streamTrackKey,
   syncStreamTrackMappingsForIdentity,
 } from './reidStreamTrack';
+import { rankCoverCandidates } from './cropResolve';
 
 export function defaultPersonLabel(cameraName: string, trackId: number): string {
   return `${cameraName} · track ${trackId}`;
@@ -187,7 +188,7 @@ export async function listPeople(limit = 50) {
       streamTrackMappings: true,
       detections: {
         orderBy: { timestamp: 'desc' },
-        take: 1,
+        take: 20,
         select: {
           id: true,
           filename: true,
@@ -195,6 +196,8 @@ export async function listPeople(limit = 50) {
           streamId: true,
           trackId: true,
           timestamp: true,
+          clipFilename: true,
+          clipOffsetMs: true,
         },
       },
       _count: { select: { detections: true } },
@@ -202,7 +205,7 @@ export async function listPeople(limit = 50) {
   });
 
   const people = await Promise.all(identities.map(async (identity) => {
-    const cover = identity.detections[0];
+    const cover = rankCoverCandidates(identity.detections)[0];
     const streamTracks = await resolveStreamTracksForIdentity(identity.id);
 
     const primaryTrack = streamTracks[0];
@@ -299,7 +302,18 @@ export async function findSimilarPeople(identityId: string, limit = 8) {
   const similar = await prisma.reidIdentity.findMany({
     where: { id: { in: sortedIds }, detections: { some: {} } },
     include: {
-      detections: { orderBy: { timestamp: 'desc' }, take: 1 },
+      detections: {
+        orderBy: { timestamp: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          filename: true,
+          cameraName: true,
+          trackId: true,
+          clipFilename: true,
+          clipOffsetMs: true,
+        },
+      },
       streamTrackMappings: true,
       _count: { select: { detections: true } },
     },
@@ -307,7 +321,7 @@ export async function findSimilarPeople(identityId: string, limit = 8) {
 
   return sortedIds.map(id => {
     const person = similar.find(p => p.id === id)!;
-    const cover = person.detections[0];
+    const cover = rankCoverCandidates(person.detections)[0];
     const primaryMapping = person.streamTrackMappings[0];
     const score = identityScores.get(id) ?? 0;
     return {

@@ -17,7 +17,8 @@ import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROP
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { aggregateTrackEvents } from './services/clipDetections';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
-import { regenerateCropFromDetection } from './services/cropResolve';
+import { resolveCropImageBuffer } from './services/cropResolve';
+import { registerEdgeFileFetcher } from './services/edgeFileFetch';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import { transcodeForGemini } from './services/videoTranscode';
@@ -298,6 +299,8 @@ function fetchFileFromEdge(deviceId: string, filename: string): Promise<{ conten
   });
 }
 
+registerEdgeFileFetcher(fetchFileFromEdge);
+
 app.get('/api/crops/:filename', async (req, res) => {
   const { filename } = req.params;
 
@@ -306,29 +309,20 @@ app.get('/api/crops/:filename', async (req, res) => {
   }
 
   try {
-    const localPath = path.join(CROPS_DIR, filename);
-    if (fs.existsSync(localPath)) {
-      res.setHeader('Content-Type', 'image/jpeg');
-      return res.sendFile(localPath);
-    }
-
     const detection = await prisma.reidDetection.findFirst({ where: { filename } });
     if (!detection?.deviceId) {
+      const localPath = path.join(CROPS_DIR, filename);
+      if (fs.existsSync(localPath)) {
+        res.setHeader('Content-Type', 'image/jpeg');
+        return res.sendFile(localPath);
+      }
       return res.status(404).json({ error: `Crop metadata not found for ${filename}` });
     }
 
-    try {
-      const result = await fetchFileFromEdge(detection.deviceId, filename);
-      res.setHeader('Content-Type', result.contentType || 'image/jpeg');
-      return res.send(result.data);
-    } catch (edgeErr: any) {
-      console.warn(`[Crop Proxy] Edge fetch failed for ${filename}, trying clip extraction:`, edgeErr.message);
-    }
-
-    const regenerated = await regenerateCropFromDetection(detection, fetchFileFromEdge);
-    if (regenerated && fs.existsSync(regenerated)) {
+    const buffer = await resolveCropImageBuffer(detection, fetchFileFromEdge);
+    if (buffer) {
       res.setHeader('Content-Type', 'image/jpeg');
-      return res.sendFile(regenerated);
+      return res.send(buffer);
     }
 
     return res.status(404).json({ error: `Crop image not found for ${filename}` });
