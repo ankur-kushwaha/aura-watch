@@ -1294,7 +1294,7 @@ function App({ onLogout }: AppProps) {
           </div>
           <div>
             <h1 className="text-gradient-purple text-[1.6rem] font-extrabold">AURA WATCH AI</h1>
-            <p className="text-[0.8rem] text-text-muted">Edge Surveillance Vector Search & RAG Dashboard</p>
+            <p className="text-[0.8rem] text-text-muted">Smart surveillance — see everything, ask anything</p>
           </div>
         </div>
 

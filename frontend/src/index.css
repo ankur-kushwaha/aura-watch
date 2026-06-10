@@ -29,19 +29,22 @@
 }
 
 /* Base Body Setup */
+html {
+  overflow-x: hidden;
+}
+
 body {
   background-color: var(--color-bg-dark);
   color: var(--color-text-primary);
   font-family: var(--font-body);
   min-height: 100vh;
   overflow-x: hidden;
-  position: relative;
 }
 
-/* Background animated glow spheres */
+/* Background animated glow spheres — fixed so they don't extend scroll height */
 body::before, body::after {
   content: '';
-  position: absolute;
+  position: fixed;
   border-radius: 50%;
   filter: blur(120px);
   z-index: -1;

@@ -46,7 +46,7 @@ export default function Login({ onLogin, onBack }: LoginProps) {
             <Cpu size={28} color="white" />
           </div>
           <h1 className="text-gradient-purple text-[1.75rem] font-extrabold mb-1">AURA WATCH AI</h1>
-          <p className="text-[0.85rem] text-text-muted">Sign in to access the surveillance dashboard</p>
+          <p className="text-[0.85rem] text-text-muted">Sign in to monitor your cameras and review events</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
