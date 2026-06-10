@@ -7,8 +7,9 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build the backend and prepare production node_modules
-FROM node:20-alpine AS backend-builder
-RUN apk add --no-cache openssl
+FROM node:20-bookworm-slim AS backend-builder
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
 COPY backend/package*.json ./
 RUN npm ci
