@@ -3,8 +3,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 function resolveReidPython(): string {
-  if (process.env.REID_PYTHON) {
-    return process.env.REID_PYTHON;
+  const envPython = process.env.REID_PYTHON;
+  if (envPython && fs.existsSync(envPython)) {
+    return envPython;
+  }
+  if (envPython) {
+    console.warn(
+      `[ReID Worker] REID_PYTHON is set to ${envPython} but file not found; falling back to auto-detect`
+    );
   }
 
   const venvPython = path.join(__dirname, '../../.venv-reid/bin/python');
