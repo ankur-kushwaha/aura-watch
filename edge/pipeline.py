@@ -31,7 +31,7 @@ class PipelineSettings:
 
 FrameCallback = Callable[[np.ndarray], None]
 DetectionCallback = Callable[[list, bool], None]
-ReidCallback = Callable[[bytes, int, float, tuple[int, int, int, int]], None]
+ReidCallback = Callable[[bytes, int, float, tuple[int, int, int, int], str], None]
 ClipEncoderGetter = Callable[[], Optional[ClipEncoder]]
 
 
@@ -112,11 +112,11 @@ class VisionPipeline:
                         crop = frame[y1:y2, x1:x2]
                         ok, jpeg_buf = cv2.imencode(".jpg", crop)
                         if ok:
-                            self.on_reid_crop(jpeg_buf.tobytes(), d.track_id, d.confidence, d.bbox)
+                            self.on_reid_crop(jpeg_buf.tobytes(), d.track_id, d.confidence, d.bbox, d.class_name)
 
             clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
             if clip_encoder:
-                clip_encoder.write_frame(annotated)
+                clip_encoder.write_frame(frame)
                 frame_interval = 1.0 / max(self.settings.encode_fps, 1)
             else:
                 frame_interval = 1.0 / max(self.settings.process_fps, 1)

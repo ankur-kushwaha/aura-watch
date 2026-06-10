@@ -13,10 +13,11 @@ import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from './routes/devices';
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
-import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR } from './routes/reid';
+import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR, processReidTrackEventsFromClip, ReidTrackEvent } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
+import { transcodeForGemini } from './services/videoTranscode';
 import prisma from './services/db';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
 
@@ -202,8 +203,8 @@ registerOnStreamsUpdated(async (deviceId) => {
   }
 });
 
-registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId) => {
-  await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId);
+registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight) => {
+  await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight);
 });
 
 registerOnClipDeleted((deviceId, filename) => {
@@ -301,7 +302,17 @@ app.get('/api/crops/:filename', async (req, res) => {
 /**
  * Upload to Gemini, fetch summary, generate vector embeddings, and save to MongoDB + Qdrant
  */
-async function processVideoClipInBackground(filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number = 10.0, streamId: string) {
+async function processVideoClipInBackground(
+  filepath: string,
+  filename: string,
+  timestamp: Date,
+  deviceId: string,
+  duration: number = 10.0,
+  streamId: string,
+  trackEvents: ReidTrackEvent[] = [],
+  frameWidth?: number,
+  frameHeight?: number,
+) {
   const stream = await prisma.cameraStream.findUnique({
     where: { streamId }
   });
@@ -315,10 +326,35 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
   broadcastToSubscribedUIs(deviceId, { type: 'status', streamId, status: 'Processing' });
   broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Processing video clip: ${filename} via Gemini...`);
 
+  let geminiPath: string | null = null;
+
   try {
-    // 1. Send to Gemini for summarization
-    const summary = await summarizeVideo(filepath, cameraName);
+    geminiPath = await transcodeForGemini(filepath);
+    const summaryPath = geminiPath !== filepath ? geminiPath : filepath;
+
+    const [summary] = await Promise.all([
+      summarizeVideo(summaryPath, cameraName),
+      trackEvents.length > 0
+        ? processReidTrackEventsFromClip(
+            filepath,
+            deviceId,
+            streamId,
+            timestamp.getTime(),
+            trackEvents,
+            frameWidth,
+            frameHeight,
+          )
+        : Promise.resolve(),
+    ]);
+
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Gemini summary generated successfully.`);
+
+    if (trackEvents.length > 0) {
+      broadcastLogToSubscribedUIs(
+        deviceId,
+        `[${cameraName}] Extracted ${trackEvents.length} ReID crop(s) from clip ${filename}.`,
+      );
+    }
 
     // 2. Save metadata to MongoDB via Prisma
     const clipDb = await prisma.videoClip.create({
@@ -361,6 +397,14 @@ async function processVideoClipInBackground(filepath: string, filename: string, 
     console.error(`[Pipeline Error] Failed to process ${filename}:`, error);
     broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);
   } finally {
+    if (geminiPath && geminiPath !== filepath && fs.existsSync(geminiPath)) {
+      try {
+        fs.unlinkSync(geminiPath);
+      } catch (err: any) {
+        console.error(`[Cloud Hub] Failed to delete gemini transcode ${geminiPath}:`, err);
+      }
+    }
+
     // Delete temporary backend video file
     if (fs.existsSync(filepath)) {
       try {

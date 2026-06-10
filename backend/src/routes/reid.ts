@@ -22,6 +22,7 @@ import {
   streamTrackKey,
   syncStreamTrackMappingsForIdentity,
 } from '../services/reidStreamTrack';
+import { extractCropFromClip } from '../services/reidClipExtract';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -42,6 +43,118 @@ let onReidCropDeletedCallback: ReidCropDeletedCallback | null = null;
 
 export function registerOnReidCropDeleted(cb: ReidCropDeletedCallback) {
   onReidCropDeletedCallback = cb;
+}
+
+export interface ReidTrackEvent {
+  trackId: number;
+  bbox: string;
+  offsetMs: number;
+  confidence: number;
+  className: string;
+}
+
+export interface ReidDetectionInput {
+  deviceId: string;
+  streamId: string;
+  trackId: number;
+  timestamp: Date;
+  filename: string;
+  bbox: string;
+  className: string;
+}
+
+export async function processReidDetectionFromCropFile(input: ReidDetectionInput): Promise<any> {
+  const { deviceId, streamId, trackId, timestamp, filename, bbox, className } = input;
+  const filepath = path.join(CROPS_DIR, filename);
+
+  const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
+  const cameraName = stream?.name ?? 'Unknown Camera';
+
+  console.log(`[ReID Router] Running OSNet embedding extraction for ${filename}...`);
+  const vector = await reidWorker.generateEmbedding(filepath);
+
+  const detection = await prisma.reidDetection.create({
+    data: {
+      deviceId,
+      cameraName,
+      streamId,
+      trackId,
+      timestamp,
+      filename,
+      bbox,
+      className,
+    },
+  });
+
+  await upsertReidVector(detection.id, vector, {
+    deviceId,
+    cameraName,
+    streamId,
+    trackId,
+    timestamp: timestamp.toISOString(),
+    filename,
+    bbox,
+    className,
+  });
+
+  await autoLinkDetectionToIdentity(detection.id, streamId, trackId);
+
+  const fullDetection = await prisma.reidDetection.findUnique({
+    where: { id: detection.id },
+    include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
+  });
+
+  if (onReidCropUploadedCallback && fullDetection) {
+    onReidCropUploadedCallback(fullDetection);
+  }
+
+  return fullDetection;
+}
+
+export async function processReidTrackEventsFromClip(
+  clipPath: string,
+  deviceId: string,
+  streamId: string,
+  clipStartMs: number,
+  trackEvents: ReidTrackEvent[],
+  frameWidth?: number,
+  frameHeight?: number,
+): Promise<void> {
+  if (!trackEvents.length) return;
+
+  for (const event of trackEvents) {
+    const timestamp = new Date(clipStartMs + event.offsetMs);
+    const filename = `crop_${timestamp.getTime()}_${deviceId}_${event.trackId}.jpg`;
+    const cropPath = path.join(CROPS_DIR, filename);
+
+    try {
+      await extractCropFromClip(
+        clipPath,
+        event.offsetMs,
+        event.bbox,
+        cropPath,
+        frameWidth,
+        frameHeight,
+      );
+      await processReidDetectionFromCropFile({
+        deviceId,
+        streamId,
+        trackId: event.trackId,
+        timestamp,
+        filename,
+        bbox: event.bbox,
+        className: event.className || 'person',
+      });
+      console.log(
+        `[ReID Router] Extracted ReID crop from clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
+      );
+    } catch (err: any) {
+      console.error(
+        `[ReID Router] Failed to extract ReID from clip for track ${event.trackId} @ ${event.offsetMs}ms:`,
+        err.message,
+      );
+    }
+  }
 }
 
 /**
@@ -73,52 +186,18 @@ export async function handleCropUpload(req: Request, res: Response) {
       fs.writeFileSync(filepath, buffer);
       console.log(`[ReID Router] Saved crop file to ${filepath}`);
 
-      const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
-      const cameraName = stream?.name ?? 'Unknown Camera';
-
-      // 1. Generate OSNet 512-d Embedding
-      console.log(`[ReID Router] Running OSNet embedding extraction for ${filename}...`);
-      const vector = await reidWorker.generateEmbedding(filepath);
-
-      // 2. Save metadata to MongoDB
-      const detection = await prisma.reidDetection.create({
-        data: {
-          deviceId,
-          cameraName,
-          streamId,
-          trackId,
-          timestamp,
-          filename,
-          bbox,
-          className,
-        }
-      });
-
-      // 3. Upsert into Qdrant reid_embeddings collection
-      await upsertReidVector(detection.id, vector, {
+      const fullDetection = await processReidDetectionFromCropFile({
         deviceId,
-        cameraName,
         streamId,
         trackId,
-        timestamp: timestamp.toISOString(),
+        timestamp,
         filename,
         bbox,
         className,
       });
 
-      await autoLinkDetectionToIdentity(detection.id, streamId, trackId);
-
-      const fullDetection = await prisma.reidDetection.findUnique({
-        where: { id: detection.id },
-        include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
-      });
-
       console.log(`[ReID Router] Successfully processed ReID crop for device ${deviceId}, track ${trackId}`);
-      res.status(200).json({ success: true, detectionId: detection.id });
-
-      if (onReidCropUploadedCallback && fullDetection) {
-        onReidCropUploadedCallback(fullDetection);
-      }
+      res.status(200).json({ success: true, detectionId: fullDetection?.id });
     } catch (err: any) {
       console.error('[ReID Router Error] Failed to process crop upload:', err);
       res.status(500).json({ error: err.message });

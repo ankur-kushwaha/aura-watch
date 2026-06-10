@@ -24,7 +24,6 @@ from recorder import (
     ClipEncoder,
     get_video_duration_seconds,
     kill_ffmpeg_for_path,
-    transcode_for_gemini,
     upload_clip,
 )
 from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names, resolve_yolo_device
@@ -217,6 +216,10 @@ class EdgeAgent:
             "stream_frames": False,
             "last_preview_sent_at": 0.0,
             "preview_stalled": False,
+            "clip_track_events": [],
+            "clip_track_events_lock": threading.Lock(),
+            "recording_started_at_mono": None,
+            "recording_started_at_ms": None,
         }
         self.pipelines[stream_id] = pipeline_data
 
@@ -358,7 +361,26 @@ class EdgeAgent:
                 if p_data and p_data.get("stream_frames", False):
                     self._send_annotated_frame(stream_id, frame, settings.jpeg_quality)
 
-            def on_reid(crop_jpeg, track_id, confidence, bbox):
+            def on_reid(crop_jpeg, track_id, confidence, bbox, class_name):
+                p_data = self.pipelines.get(stream_id)
+                if not p_data:
+                    return
+
+                started_mono = p_data.get("recording_started_at_mono")
+                if p_data.get("is_recording") and started_mono is not None:
+                    offset_ms = int((time.monotonic() - started_mono) * 1000)
+                    bbox_str = ",".join(map(str, bbox))
+                    event = {
+                        "trackId": track_id,
+                        "bbox": bbox_str,
+                        "offsetMs": offset_ms,
+                        "confidence": round(confidence, 4),
+                        "className": class_name,
+                    }
+                    with p_data["clip_track_events_lock"]:
+                        p_data["clip_track_events"].append(event)
+                    return
+
                 threading.Thread(
                     target=self._upload_reid_crop,
                     args=(stream_id, crop_jpeg, track_id, confidence, bbox),
@@ -502,6 +524,9 @@ class EdgeAgent:
                 return False
             p_data["is_recording"] = True
             p_data["last_detection_at"] = time.monotonic()
+            p_data["recording_started_at_mono"] = time.monotonic()
+            with p_data["clip_track_events_lock"]:
+                p_data["clip_track_events"] = []
 
         config = self.streams_config.get(stream_id)
         name = config.name if config else stream_id
@@ -526,6 +551,7 @@ class EdgeAgent:
         name = config.name if config else stream_id
 
         timestamp_ms = int(time.time() * 1000)
+        p_data["recording_started_at_ms"] = timestamp_ms
         filename = f"clip_{timestamp_ms}_{stream_id}.mp4"
         output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
         width = p_data.get("frame_width") or 640
@@ -578,41 +604,26 @@ class EdgeAgent:
                 actual_duration = clip_encoder.frames_written / CLIP_ENCODE_FPS
             self.send_log(f"[{name}] Clip encoded: {filename} ({actual_duration:.1f}s)")
 
-            upload_path = output_path
-            temp_gemini_path = ""
+            with p_data["clip_track_events_lock"]:
+                track_events = list(p_data.get("clip_track_events") or [])
 
-            if os.getenv("GEMINI_OPTIMIZE", "true").lower() == "true":
-                temp_gemini_path = os.path.join(
-                    LOCAL_VIDEO_DIR,
-                    f"temp_gemini_{timestamp_ms}_{stream_id}.mp4",
-                )
-                try:
-                    self.send_log(f"[{name}] Optimizing clip for Gemini...")
-                    transcode_for_gemini(
-                        output_path,
-                        temp_gemini_path,
-                        fps=os.getenv("GEMINI_OPTIMIZE_FPS", "1"),
-                        resolution=os.getenv("GEMINI_OPTIMIZE_RESOLUTION", "640:480"),
-                        crf=os.getenv("GEMINI_OPTIMIZE_CRF", "28"),
-                    )
-                    if os.path.exists(temp_gemini_path):
-                        upload_path = temp_gemini_path
-                except Exception as exc:
-                    self.send_log(f"[{name}] [Transcode Warning] {exc}. Using original clip.")
-
-            self.send_log(f"[{name}] Uploading clip to Cloud: {filename}...")
+            self.send_log(
+                f"[{name}] Uploading clip to Cloud: {filename} "
+                f"({len(track_events)} bundled track event(s))..."
+            )
             upload_clip(
                 CLOUD_URL,
                 self.device_id,
-                upload_path,
+                output_path,
                 filename,
                 duration=actual_duration,
                 stream_id=stream_id,
+                track_events=track_events,
+                frame_width=width,
+                frame_height=height,
+                clip_start_ms=timestamp_ms,
             )
             self.send_log(f"[{name}] Successfully uploaded clip to Cloud: {filename}")
-
-            if temp_gemini_path and os.path.exists(temp_gemini_path):
-                os.unlink(temp_gemini_path)
         except Exception as exc:
             self.send_log(f"[{name}] Clip generation failed: {exc}")
             kill_ffmpeg_for_path(output_path)
@@ -626,6 +637,10 @@ class EdgeAgent:
             with p_data["recording_lock"]:
                 p_data["is_recording"] = False
                 p_data["recording_cooldown_until"] = time.monotonic() + RECORDING_COOLDOWN_SEC
+            p_data["recording_started_at_mono"] = None
+            p_data["recording_started_at_ms"] = None
+            with p_data["clip_track_events_lock"]:
+                p_data["clip_track_events"] = []
             if RECORDING_COOLDOWN_SEC > 0:
                 self.send_log(
                     f"[{name}] Clip cooldown started ({int(RECORDING_COOLDOWN_SEC)}s before next clip can begin)."

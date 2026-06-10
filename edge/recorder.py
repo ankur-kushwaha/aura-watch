@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import subprocess
@@ -240,6 +241,10 @@ def upload_clip(
     filename: str,
     duration: Optional[float] = None,
     stream_id: Optional[str] = None,
+    track_events: Optional[list] = None,
+    frame_width: Optional[int] = None,
+    frame_height: Optional[int] = None,
+    clip_start_ms: Optional[int] = None,
 ):
     url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/upload"
     size = os.path.getsize(filepath)
@@ -252,6 +257,14 @@ def upload_clip(
         headers["x-duration"] = f"{duration:.2f}"
     if stream_id:
         headers["x-stream-id"] = stream_id
+    if track_events:
+        headers["x-track-events"] = json.dumps(track_events)
+    if frame_width is not None and frame_width > 0:
+        headers["x-frame-width"] = str(frame_width)
+    if frame_height is not None and frame_height > 0:
+        headers["x-frame-height"] = str(frame_height)
+    if clip_start_ms is not None:
+        headers["x-clip-start-ms"] = str(clip_start_ms)
 
     with open(filepath, "rb") as handle:
         response = requests.post(url, data=handle, headers=headers, timeout=120)

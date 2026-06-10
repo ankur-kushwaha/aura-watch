@@ -2,13 +2,23 @@ import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import * as fs from 'fs';
 import * as path from 'path';
-import { handleCropUpload } from './reid';
+import { handleCropUpload, ReidTrackEvent } from './reid';
 import { sendDeviceCommand } from '../services/deviceCommands';
 
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
 
-export type ClipUploadCallback = (filepath: string, filename: string, timestamp: Date, deviceId: string, duration: number, streamId: string) => Promise<void>;
+export type ClipUploadCallback = (
+  filepath: string,
+  filename: string,
+  timestamp: Date,
+  deviceId: string,
+  duration: number,
+  streamId: string,
+  trackEvents: ReidTrackEvent[],
+  frameWidth?: number,
+  frameHeight?: number,
+) => Promise<void>;
 
 let onClipUploadedCallback: ClipUploadCallback | null = null;
 let onDevicesChangedCallback: (() => void) | null = null;
@@ -206,10 +216,40 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
       const durationHeader = req.headers['x-duration'];
       const duration = durationHeader ? parseFloat(String(durationHeader)) : 10.0;
 
+      const clipStartHeader = req.headers['x-clip-start-ms'] as string | undefined;
+      const timestamp = clipStartHeader ? new Date(parseInt(clipStartHeader, 10)) : new Date();
+
+      const frameWidthHeader = req.headers['x-frame-width'] as string | undefined;
+      const frameHeightHeader = req.headers['x-frame-height'] as string | undefined;
+      const frameWidth = frameWidthHeader ? parseInt(frameWidthHeader, 10) : undefined;
+      const frameHeight = frameHeightHeader ? parseInt(frameHeightHeader, 10) : undefined;
+
+      let trackEvents: ReidTrackEvent[] = [];
+      const trackEventsHeader = req.headers['x-track-events'] as string | undefined;
+      if (trackEventsHeader) {
+        try {
+          const parsed = JSON.parse(trackEventsHeader);
+          if (Array.isArray(parsed)) {
+            trackEvents = parsed;
+          }
+        } catch (err) {
+          console.warn('[Cloud Hub] Failed to parse x-track-events header:', err);
+        }
+      }
+
       // Run background processing (Gemini pipelines, MongoDB, Qdrant) asynchronously
       if (onClipUploadedCallback) {
-        onClipUploadedCallback(filepath, filename, new Date(), deviceId, duration, streamId)
-          .catch((err) => console.error(`[Cloud Hub] Error processing uploaded clip ${filename}:`, err));
+        onClipUploadedCallback(
+          filepath,
+          filename,
+          timestamp,
+          deviceId,
+          duration,
+          streamId,
+          trackEvents,
+          frameWidth,
+          frameHeight,
+        ).catch((err) => console.error(`[Cloud Hub] Error processing uploaded clip ${filename}:`, err));
       }
     });
   } catch (error) {
