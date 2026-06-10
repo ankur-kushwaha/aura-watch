@@ -10,6 +10,7 @@ import {
   listPeople,
   mergeStreamTracks,
   splitStreamTrackToNewIdentity,
+  cleanupEmptyIdentities,
 } from '../services/reidPeople';
 import {
   autoLinkDetectionToIdentity,
@@ -152,6 +153,7 @@ router.get('/detections', async (req: Request, res: Response) => {
 router.get('/people', async (req: Request, res: Response) => {
   const limit = parseInt(req.query.limit as string || '50', 10);
   try {
+    await cleanupEmptyIdentities();
     const people = await listPeople(limit);
     res.json(people);
   } catch (err: any) {
@@ -220,15 +222,20 @@ router.post('/feedback/stream-track', async (req: Request, res: Response) => {
         sourceStreamId, srcTrack, targetStreamId, tgtTrack,
       );
     } else {
-      const { ensureIdentityForStreamTrack } = await import('../services/reidPeople');
-      const sourceIdentityId = await ensureIdentityForStreamTrack(sourceStreamId, srcTrack);
-      const targetIdentityId = await ensureIdentityForStreamTrack(targetStreamId, tgtTrack);
-      if (sourceIdentityId === targetIdentityId) {
+      const sourceMapping = await prisma.reidStreamTrackMapping.findUnique({
+        where: { streamId_trackId: { streamId: sourceStreamId, trackId: srcTrack } },
+      });
+      const targetMapping = await prisma.reidStreamTrackMapping.findUnique({
+        where: { streamId_trackId: { streamId: targetStreamId, trackId: tgtTrack } },
+      });
+      if (sourceMapping && targetMapping && sourceMapping.identityId === targetMapping.identityId) {
         resultIdentityId = await splitStreamTrackToNewIdentity(targetStreamId, tgtTrack);
       } else {
-        resultIdentityId = targetIdentityId;
+        resultIdentityId = targetMapping?.identityId ?? sourceMapping?.identityId ?? null;
       }
     }
+
+    await cleanupEmptyIdentities();
 
     res.json({ success: true, identityId: resultIdentityId });
   } catch (err: any) {

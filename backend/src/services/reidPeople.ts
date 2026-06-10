@@ -114,8 +114,73 @@ export async function mergeStreamTracks(
   return targetIdentityId;
 }
 
+export async function cleanupEmptyIdentities(): Promise<number> {
+  const emptyIdentities = await prisma.reidIdentity.findMany({
+    where: {
+      label: null,
+      detections: { none: {} },
+    },
+    select: { id: true },
+  });
+
+  if (emptyIdentities.length === 0) return 0;
+
+  const ids = emptyIdentities.map(i => i.id);
+  const { removeIdentityCentroid } = await import('./reidIdentity');
+
+  for (const id of ids) {
+    await removeIdentityCentroid(id);
+    await removeStreamTrackMappingsForIdentity(id);
+  }
+  await prisma.reidIdentity.deleteMany({ where: { id: { in: ids } } });
+
+  console.log(`[ReID] Cleaned up ${ids.length} empty identity/identities`);
+  return ids.length;
+}
+
+async function resolveStreamTracksForIdentity(identityId: string) {
+  const fromDetections = await prisma.reidDetection.groupBy({
+    by: ['streamId', 'trackId', 'cameraName'],
+    where: { identityId, streamId: { not: null } },
+    _count: { id: true },
+  });
+
+  if (fromDetections.length > 0) {
+    return fromDetections.map(st => ({
+      streamId: st.streamId!,
+      trackId: st.trackId,
+      cameraName: st.cameraName,
+      cropCount: st._count.id,
+    }));
+  }
+
+  const mappings = await prisma.reidStreamTrackMapping.findMany({
+    where: { identityId },
+  });
+
+  const tracks = [];
+  for (const m of mappings) {
+    const stream = await prisma.cameraStream.findUnique({
+      where: { streamId: m.streamId },
+      select: { name: true },
+    });
+    const cropCount = await prisma.reidDetection.count({
+      where: { identityId, streamId: m.streamId, trackId: m.trackId },
+    });
+    tracks.push({
+      streamId: m.streamId,
+      trackId: m.trackId,
+      cameraName: stream?.name ?? 'Unknown Camera',
+      cropCount,
+    });
+  }
+  return tracks;
+}
 export async function listPeople(limit = 50) {
   const identities = await prisma.reidIdentity.findMany({
+    where: {
+      detections: { some: {} },
+    },
     orderBy: { centroidUpdatedAt: 'desc' },
     take: limit,
     include: {
@@ -138,11 +203,7 @@ export async function listPeople(limit = 50) {
 
   const people = await Promise.all(identities.map(async (identity) => {
     const cover = identity.detections[0];
-    const streamTracks = await prisma.reidDetection.groupBy({
-      by: ['streamId', 'trackId', 'cameraName'],
-      where: { identityId: identity.id, streamId: { not: null } },
-      _count: { id: true },
-    });
+    const streamTracks = await resolveStreamTracksForIdentity(identity.id);
 
     const primaryTrack = streamTracks[0];
     const displayName = identity.label
@@ -159,12 +220,7 @@ export async function listPeople(limit = 50) {
       photoCount: identity._count.detections,
       galleryCount: identity.galleryCount,
       lastSeen: cover?.timestamp?.toISOString() ?? null,
-      streamTracks: streamTracks.map(st => ({
-        streamId: st.streamId!,
-        trackId: st.trackId,
-        cameraName: st.cameraName,
-        cropCount: st._count.id,
-      })),
+      streamTracks,
     };
   }));
 
@@ -238,8 +294,10 @@ export async function findSimilarPeople(identityId: string, limit = 8) {
     .slice(0, limit)
     .map(([id]) => id);
 
+  if (sortedIds.length === 0) return [];
+
   const similar = await prisma.reidIdentity.findMany({
-    where: { id: { in: sortedIds } },
+    where: { id: { in: sortedIds }, detections: { some: {} } },
     include: {
       detections: { orderBy: { timestamp: 'desc' }, take: 1 },
       streamTrackMappings: true,
@@ -295,4 +353,6 @@ export async function backfillStreamTrackIdentities(): Promise<void> {
   if (created > 0) {
     console.log(`[ReID] Auto-mapped ${created} stream+track group(s) to identities`);
   }
+
+  await cleanupEmptyIdentities();
 }

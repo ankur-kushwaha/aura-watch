@@ -2065,11 +2065,15 @@ function App({ onLogout }: AppProps) {
                             <span className="text-[0.72rem] font-semibold text-text-primary text-center max-w-[100px] truncate leading-tight">
                               {person.displayName}
                             </span>
-                            {person.streamTracks.length > 1 && (
+                            {person.streamTracks.length > 1 ? (
                               <span className="text-[0.6rem] text-text-muted -mt-1">
                                 {person.streamTracks.length} tracks
                               </span>
-                            )}
+                            ) : person.streamTracks.length === 1 && person.label ? (
+                              <span className="text-[0.6rem] text-text-muted -mt-1">
+                                track {person.streamTracks[0].trackId}
+                              </span>
+                            ) : null}
                           </button>
                         );
                       })}
