@@ -513,6 +513,12 @@ wss.on('connection', async (ws: WebSocket, req) => {
     broadcastLogToSubscribedUIs(deviceId, `Edge device connected.`);
     broadcastDevicesChanged();
 
+    // Re-sync stream config from DB on every connect/reconnect (edge may have missed configure while offline).
+    if (ws.readyState === WebSocket.OPEN && streams.length > 0) {
+      console.log(`[WS Hub] Syncing ${streams.length} stream config(s) to edge device: ${deviceId}`);
+      ws.send(JSON.stringify({ type: 'configure', streams }));
+    }
+
     // If there is already a UI client subscribed to any of the device's streams, toggle streaming for them
     for (const stream of streams) {
       const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(stream.streamId);
@@ -536,15 +542,25 @@ wss.on('connection', async (ws: WebSocket, req) => {
             break;
           case 'status_change':
             if (data.streamId) {
+              const streamRow = await prisma.cameraStream.findUnique({ where: { streamId: data.streamId } });
+              let reportedStatus = data.status as string;
+              // Edge may briefly report Recording/Monitoring with stale in-memory config after tracking was disabled in DB.
+              if (
+                streamRow &&
+                !streamRow.trackingEnabled &&
+                (reportedStatus === 'Recording' || reportedStatus === 'Monitoring')
+              ) {
+                reportedStatus = 'Idle';
+              }
               await prisma.cameraStream.update({
                 where: { streamId: data.streamId },
-                data: { status: data.status }
+                data: { status: reportedStatus }
               });
-              broadcastToSubscribedUIs(deviceId, { type: 'status', streamId: data.streamId, status: data.status });
+              broadcastToSubscribedUIs(deviceId, { type: 'status', streamId: data.streamId, status: reportedStatus });
 
               // Pipeline restarts reset preview on the edge; re-enable if the UI is still watching.
               const previewStatuses = ['Idle', 'Monitoring', 'Recording'];
-              if (previewStatuses.includes(data.status)) {
+              if (previewStatuses.includes(reportedStatus)) {
                 const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(data.streamId);
                 if (hasSubscribers) {
                   const deviceSocket = activeDevices.get(deviceId);

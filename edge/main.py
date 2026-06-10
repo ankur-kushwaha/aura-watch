@@ -156,6 +156,46 @@ class EdgeAgent:
         response.raise_for_status()
         return response.json()
 
+    def _cancel_active_recording(self, stream_id: str, reason: str = "tracking disabled") -> None:
+        p_data = self.pipelines.get(stream_id)
+        if not p_data:
+            return
+
+        with p_data["recording_lock"]:
+            was_recording = bool(p_data.get("is_recording"))
+            p_data["is_recording"] = False
+
+        if not was_recording:
+            return
+
+        self._stop_active_clip_encoder(p_data)
+        config = self.streams_config.get(stream_id)
+        name = config.name if config else stream_id
+        self.send_log(f"[{name}] Cancelled in-progress clip recording ({reason}).")
+        self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
+
+    def _apply_tracking_toggle(self, stream_id: str, config: EdgeConfig) -> None:
+        """Apply tracking on/off without restarting the camera pipeline."""
+        self.streams_config[stream_id] = config
+        p_data = self.pipelines.get(stream_id)
+
+        if not p_data:
+            self.start_stream_pipeline(stream_id)
+            return
+
+        settings = p_data.get("settings")
+        if settings is not None:
+            settings.tracking_enabled = config.tracking_enabled
+
+        tracker = p_data.get("tracker")
+        if tracker and not config.tracking_enabled:
+            tracker.reset_detection_edge()
+
+        if not config.tracking_enabled:
+            self._cancel_active_recording(stream_id)
+
+        self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
+
     def update_streams_config(self, streams_data: list[dict[str, Any]]):
         active_ids = set()
         for s in streams_data:
@@ -174,17 +214,23 @@ class EdgeAgent:
             )
 
             existing = self.streams_config.get(stream_id)
-            if not existing or (
+            needs_restart = not existing or (
                 existing.camera_type != config.camera_type
                 or existing.stream_url != config.stream_url
-                or existing.tracking_enabled != config.tracking_enabled
                 or existing.detect_person != config.detect_person
                 or existing.detect_vehicle != config.detect_vehicle
                 or existing.motion_threshold != config.motion_threshold
                 or existing.pixel_change_threshold != config.pixel_change_threshold
-            ):
+            )
+            tracking_changed = not existing or existing.tracking_enabled != config.tracking_enabled
+
+            if needs_restart:
                 self.streams_config[stream_id] = config
+                if tracking_changed and not config.tracking_enabled:
+                    self._cancel_active_recording(stream_id, reason="config restart")
                 self.restart_stream_pipeline(stream_id)
+            elif tracking_changed:
+                self._apply_tracking_toggle(stream_id, config)
             else:
                 self.streams_config[stream_id] = config
 
@@ -392,10 +438,12 @@ class EdgeAgent:
                 p_data = self.pipelines.get(stream_id)
                 if not p_data:
                     return
+                live_config = self.streams_config.get(stream_id)
+                tracking_on = bool(live_config and live_config.tracking_enabled)
                 with p_data["detection_lock"]:
                     if detections:
                         p_data["last_detection_at"] = time.monotonic()
-                if new_detection and config.tracking_enabled:
+                if new_detection and tracking_on:
                     names = ", ".join(sorted({d.class_name for d in detections}))
                     if not self._try_start_clip_recording(stream_id, names):
                         with p_data["recording_lock"]:
@@ -572,6 +620,16 @@ class EdgeAgent:
                 p_data["clip_encoder"] = clip_encoder
 
             while not p_data["stop_event"].is_set() and not self.shutdown_event.is_set():
+                with p_data["recording_lock"]:
+                    if not p_data.get("is_recording"):
+                        self.send_log(f"[{name}] Clip recording cancelled.")
+                        break
+
+                live_config = self.streams_config.get(stream_id)
+                if not live_config or not live_config.tracking_enabled:
+                    self.send_log(f"[{name}] Clip recording stopped (tracking disabled).")
+                    break
+
                 elapsed = time.monotonic() - recording_start
 
                 with p_data["detection_lock"]:
