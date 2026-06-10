@@ -13,6 +13,9 @@ export interface ClipObjectDisplay {
   trackId: number;
   className: string;
   confidence?: number;
+  detectionId?: string;
+  identityId?: string | null;
+  cropFilename?: string;
   labelStatus: 'confirmed' | 'suggested' | 'none';
   label?: string;
   matchScore?: number;
@@ -97,7 +100,12 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
     : [];
 
   const reidDetections = await prisma.reidDetection.findMany({
-    where: { clipFilename: clip.filename },
+    where: {
+      OR: [
+        { clipId: clip.id },
+        { clipFilename: clip.filename },
+      ],
+    },
     orderBy: { timestamp: 'asc' },
     include: { identity: { select: { id: true, label: true } } },
   });
@@ -129,6 +137,9 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
       trackId: object.trackId,
       className: object.className,
       confidence: object.confidence > 0 ? object.confidence : undefined,
+      detectionId: detection?.id,
+      identityId: detection?.identityId ?? null,
+      cropFilename: detection?.filename,
       ...identityInfo,
     });
   }

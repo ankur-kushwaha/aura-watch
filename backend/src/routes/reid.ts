@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import prisma from '../services/db';
 import reidWorker from '../services/reidWorker';
-import { upsertReidVector, searchReidVectors, deleteReidVector, updateReidPayloadBatch, updateReidPayload, retrieveReidVectors, retrieveIdentityPrototype, searchIdentityPrototypes } from '../services/qdrant';
+import { upsertReidVector, searchReidVectors, deleteReidVector, deleteReidVectors, updateReidPayloadBatch, updateReidPayload, retrieveReidVectors, retrieveIdentityPrototype, searchIdentityPrototypes } from '../services/qdrant';
 import { recomputeIdentityCentroid, removeIdentityCentroid } from '../services/reidIdentity';
 import {
   findSimilarPeople,
@@ -24,6 +24,7 @@ import {
 } from '../services/reidStreamTrack';
 import { extractCropFromClip } from '../services/reidClipExtract';
 import { enrichDetectionWithClipSource, resolveClipForDetection } from '../services/reidClipResolve';
+import { resolveClipIdFromFilename } from '../services/clipLink';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -85,6 +86,7 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
       resolvedClipOffsetMs = resolved.clipOffsetMs;
     }
   }
+  const resolvedClipId = await resolveClipIdFromFilename(resolvedClipFilename);
 
   const detection = await prisma.reidDetection.create({
     data: {
@@ -96,6 +98,7 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
       filename,
       bbox,
       className,
+      clipId: resolvedClipId,
       clipFilename: resolvedClipFilename,
       clipOffsetMs: resolvedClipOffsetMs,
     },
@@ -135,9 +138,10 @@ export async function processReidTrackEventsFromClip(
   trackEvents: ReidTrackEvent[],
   frameWidth?: number,
   frameHeight?: number,
-): Promise<void> {
-  if (!trackEvents.length) return;
+): Promise<number> {
+  if (!trackEvents.length) return 0;
 
+  let succeeded = 0;
   for (const event of trackEvents) {
     const timestamp = new Date(clipStartMs + event.offsetMs);
     const filename = `crop_${timestamp.getTime()}_${deviceId}_${event.trackId}.jpg`;
@@ -163,6 +167,7 @@ export async function processReidTrackEventsFromClip(
         clipFilename,
         clipOffsetMs: event.offsetMs,
       });
+      succeeded++;
       console.log(
         `[ReID Router] Extracted ReID crop from clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
       );
@@ -173,6 +178,8 @@ export async function processReidTrackEventsFromClip(
       );
     }
   }
+
+  return succeeded;
 }
 
 /**
@@ -378,6 +385,46 @@ router.delete('/detections/:id', async (req: Request, res: Response) => {
     }
 
     res.json({ success: true, message: 'Detection deleted successfully' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/reid/detections/:id/assign-identity
+ * Link a detection to an existing ReidIdentity
+ */
+router.post('/detections/:id/assign-identity', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { identityId } = req.body;
+
+  if (!identityId || typeof identityId !== 'string') {
+    return res.status(400).json({ error: 'identityId is required' });
+  }
+
+  try {
+    const detection = await prisma.reidDetection.findUnique({ where: { id } });
+    if (!detection) {
+      return res.status(404).json({ error: 'Detection not found' });
+    }
+
+    const identity = await prisma.reidIdentity.findUnique({ where: { id: identityId } });
+    if (!identity) {
+      return res.status(404).json({ error: 'Identity not found' });
+    }
+
+    const resultIdentityId = await assignDetectionsToIdentity([id], identityId);
+    if (detection.streamId) {
+      await registerStreamTrackMapping(detection.streamId, detection.trackId, identityId);
+    }
+    await cleanupEmptyIdentities();
+
+    const updated = await prisma.reidDetection.findUnique({
+      where: { id },
+      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
+    });
+
+    res.json({ success: true, identityId: resultIdentityId, detection: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -668,6 +715,46 @@ router.post('/identities/merge', async (req: Request, res: Response) => {
 });
 
 /**
+ * DELETE /api/reid/identities/:id
+ * Delete an identity and all of its detections, crops, and vectors
+ */
+router.delete('/identities/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const identity = await prisma.reidIdentity.findUnique({ where: { id } });
+    if (!identity) {
+      return res.status(404).json({ error: 'Identity not found' });
+    }
+
+    const detections = await prisma.reidDetection.findMany({
+      where: { identityId: id },
+      select: { id: true, filename: true, deviceId: true },
+    });
+
+    for (const detection of detections) {
+      const filepath = path.join(CROPS_DIR, detection.filename);
+      if (fs.existsSync(filepath)) {
+        fs.unlinkSync(filepath);
+      }
+      if (onReidCropDeletedCallback) {
+        onReidCropDeletedCallback(detection.deviceId, detection.filename);
+      }
+    }
+
+    await deleteReidVectors(detections.map((d) => d.id));
+    await prisma.reidDetection.deleteMany({ where: { identityId: id } });
+    await removeStreamTrackMappingsForIdentity(id);
+    await removeIdentityCentroid(id);
+    await prisma.reidIdentity.delete({ where: { id } });
+
+    res.json({ success: true, deletedDetections: detections.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * PATCH /api/reid/identities/:id
  * Set or clear a label on an identity
  */
@@ -937,10 +1024,43 @@ router.post('/track', async (req: Request, res: Response) => {
     }
 
     scoredMatches.sort((a, b) => b.scores.finalScore - a.scores.finalScore);
+    const topMatches = scoredMatches.slice(0, limit);
+
+    const matchIds = topMatches.map((m) => m.id);
+    const matchDetections = matchIds.length > 0
+      ? await prisma.reidDetection.findMany({
+          where: { id: { in: matchIds } },
+          select: { id: true, clipId: true, clipFilename: true, clipOffsetMs: true },
+        })
+      : [];
+    const clipFieldsById = new Map(matchDetections.map((d) => [d.id, d]));
+
+    const enrichedMatches = await Promise.all(topMatches.map(async (match) => {
+      const stored = clipFieldsById.get(match.id);
+      if (stored?.clipFilename) {
+        return {
+          ...match,
+          clipFilename: stored.clipFilename,
+          clipOffsetMs: stored.clipOffsetMs ?? 0,
+          clipId: stored.clipId,
+        };
+      }
+      const detection = await prisma.reidDetection.findUnique({ where: { id: match.id } });
+      if (!detection) return match;
+      const enriched = await enrichDetectionWithClipSource(detection, { persist: true });
+      return {
+        ...match,
+        clipFilename: enriched.clipFilename,
+        clipOffsetMs: enriched.clipOffsetMs ?? 0,
+        clipId: enriched.clipId,
+      };
+    }));
+
+    const enrichedQuery = await enrichDetectionWithClipSource(queryDetection, { persist: true });
 
     res.json({
-      query: queryDetection,
-      matches: scoredMatches.slice(0, limit)
+      query: enrichedQuery,
+      matches: enrichedMatches,
     });
 
   } catch (err: any) {

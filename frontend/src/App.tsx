@@ -53,8 +53,21 @@ interface ClipObjectDetection {
   trackId: number;
   className: string;
   confidence?: number;
+  detectionId?: string;
+  identityId?: string | null;
+  cropFilename?: string;
   labelStatus: 'confirmed' | 'suggested' | 'none';
   label?: string;
+  matchScore?: number;
+}
+
+interface PersonClipReference {
+  id: string;
+  cameraName: string;
+  timestamp: string;
+  filename: string;
+  clipFilename?: string | null;
+  clipOffsetMs?: number | null;
   matchScore?: number;
 }
 
@@ -326,6 +339,7 @@ function App({ onLogout }: AppProps) {
   // ReID States
   const [reidPeople, setReidPeople] = useState<ReidPerson[]>([]);
   const [loadingReidPeople, setLoadingReidPeople] = useState<boolean>(false);
+  const [deletingIdentityId, setDeletingIdentityId] = useState<string | null>(null);
   const [reidView, setReidView] = useState<'people' | 'person'>('people');
   const [selectedPerson, setSelectedPerson] = useState<ReidPerson | null>(null);
   const [personTimeline, setPersonTimeline] = useState<ReidDetection[]>([]);
@@ -353,6 +367,8 @@ function App({ onLogout }: AppProps) {
     topologyScore: 1.0,
   });
   const selectedStreamIdRef = useRef(selectedStreamId);
+  const fetchClipsRef = useRef<() => Promise<void>>(async () => {});
+  const streamStatusRef = useRef<string>('Offline');
   const deviceLogsModalRef = useRef(deviceLogsModal);
   const deviceLogsContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -386,6 +402,15 @@ function App({ onLogout }: AppProps) {
   const [selectedClip, setSelectedClip] = useState<VideoClip | null>(null);
   const [clipDetections, setClipDetections] = useState<ClipObjectDetection[]>([]);
   const [loadingClipDetections, setLoadingClipDetections] = useState<boolean>(false);
+  const [personRefsModal, setPersonRefsModal] = useState<ClipObjectDetection | null>(null);
+  const [personRefs, setPersonRefs] = useState<PersonClipReference[]>([]);
+  const [personRefsIdentityId, setPersonRefsIdentityId] = useState<string | null>(null);
+  const [personRefsIdentitySuggestions, setPersonRefsIdentitySuggestions] = useState<ReidPersonMatch[]>([]);
+  const [personRefsLabelDraft, setPersonRefsLabelDraft] = useState('');
+  const [personRefsLabelConfirmed, setPersonRefsLabelConfirmed] = useState(false);
+  const [showPersonRefsSuggestions, setShowPersonRefsSuggestions] = useState(true);
+  const [loadingPersonRefs, setLoadingPersonRefs] = useState(false);
+  const [savingPersonRefsLabel, setSavingPersonRefsLabel] = useState(false);
 
   // RAG Q&A states
   const [query, setQuery] = useState<string>('');
@@ -467,6 +492,14 @@ function App({ onLogout }: AppProps) {
     }
   }, [clips.length, clipsTotal, loadingMoreClips]);
 
+  useEffect(() => {
+    fetchClipsRef.current = fetchClips;
+  }, [fetchClips]);
+
+  useEffect(() => {
+    streamStatusRef.current = status;
+  }, [status]);
+
   const connectWS = useCallback(function connect() {
     if (
       wsRef.current &&
@@ -495,6 +528,12 @@ function App({ onLogout }: AppProps) {
       switch (data.type) {
         case 'status':
           if (data.streamId) {
+            const prevStatus = data.streamId === selectedStreamIdRef.current
+              ? streamStatusRef.current
+              : null;
+            const isProcessingStatus = (s: string) =>
+              s === 'Processing' || s === 'Processing Video';
+
             setStreams((prev) =>
               prev.map((s) =>
                 s.streamId === data.streamId
@@ -518,6 +557,10 @@ function App({ onLogout }: AppProps) {
             );
 
             if (data.streamId === selectedStreamIdRef.current) {
+              if (prevStatus && isProcessingStatus(prevStatus) && !isProcessingStatus(data.status)) {
+                fetchClipsRef.current();
+              }
+              streamStatusRef.current = data.status;
               setStatus(data.status);
               if (data.cameraConfig) {
                 const cfg = data.cameraConfig;
@@ -559,10 +602,25 @@ function App({ onLogout }: AppProps) {
           }
           break;
         }
-        case 'new_clip':
-          setClips((prev) => [data.clip, ...prev]);
+        case 'new_clip': {
+          const clip = data.clip as VideoClip | undefined;
+          if (!clip?.id) break;
+          const normalized: VideoClip = {
+            ...clip,
+            timestamp: typeof clip.timestamp === 'string'
+              ? clip.timestamp
+              : new Date(clip.timestamp as unknown as string).toISOString(),
+          };
+          setClips((prev) => {
+            if (prev.some((c) => c.id === normalized.id)) return prev;
+            return [normalized, ...prev];
+          });
           setClipsTotal((prev) => prev + 1);
-          setSelectedClip(data.clip);
+          setSelectedClip(normalized);
+          break;
+        }
+        case 'clip_processing_complete':
+          fetchClipsRef.current();
           break;
         case 'new_reid_crop':
           setReidRefreshNonce((n) => n + 1);
@@ -764,6 +822,288 @@ function App({ onLogout }: AppProps) {
     fetchReidPeople();
   };
 
+  const closePersonRefsModal = () => {
+    setPersonRefsModal(null);
+    setPersonRefs([]);
+    setPersonRefsIdentityId(null);
+    setPersonRefsIdentitySuggestions([]);
+    setPersonRefsLabelDraft('');
+    setPersonRefsLabelConfirmed(false);
+    setShowPersonRefsSuggestions(true);
+  };
+
+  const loadPersonRefsIdentitySuggestions = async (identityId: string | null) => {
+    const suggestions: ReidPersonMatch[] = [];
+    const seen = new Set<string>();
+    if (identityId) seen.add(identityId);
+
+    if (identityId) {
+      try {
+        const matchesRes = await fetch(`${API_BASE}/reid/identities/${identityId}/matches`);
+        if (matchesRes.ok) {
+          const matches: ReidPersonMatch[] = await matchesRes.json();
+          for (const match of matches) {
+            if (seen.has(match.id)) continue;
+            suggestions.push(match);
+            seen.add(match.id);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load identity matches', err);
+      }
+    }
+
+    try {
+      const peopleRes = await fetch(`${API_BASE}/reid/people`);
+      if (peopleRes.ok) {
+        const people: ReidPerson[] = await peopleRes.json();
+        for (const person of people) {
+          if (seen.has(person.id)) continue;
+          suggestions.push({
+            id: person.id,
+            label: person.label,
+            displayName: person.displayName,
+            coverFilename: person.coverFilename,
+            photoCount: person.photoCount,
+            matchScore: 0,
+            streamTracks: person.streamTracks.map((st) => ({
+              streamId: st.streamId,
+              trackId: st.trackId,
+            })),
+          });
+          seen.add(person.id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load people for identity suggestions', err);
+    }
+
+    suggestions.sort((a, b) => {
+      if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+      return a.displayName.localeCompare(b.displayName);
+    });
+    setPersonRefsIdentitySuggestions(suggestions);
+  };
+
+  const reloadPersonRefsJourney = async (identityId: string) => {
+    const journeyRes = await fetch(`${API_BASE}/reid/identities/${identityId}/journey`);
+    if (!journeyRes.ok) return;
+    const journey = await journeyRes.json();
+    const identityLabel = journey.identity?.label?.trim() || '';
+    if (identityLabel) {
+      setPersonRefsLabelDraft(identityLabel);
+      setPersonRefsLabelConfirmed(true);
+      setShowPersonRefsSuggestions(false);
+    }
+    setPersonRefs((journey.detections || []).map((d: ReidDetection) => ({
+      id: d.id,
+      cameraName: d.cameraName,
+      timestamp: d.timestamp,
+      filename: d.filename,
+      clipFilename: d.clipFilename,
+      clipOffsetMs: d.clipOffsetMs,
+    })));
+  };
+
+  const refreshClipDetectionsAfterLabel = async () => {
+    if (!selectedClip) return;
+    const detRes = await fetch(`${API_BASE}/clips/${selectedClip.id}/detections`);
+    if (detRes.ok) {
+      const updated = await detRes.json();
+      setClipDetections(Array.isArray(updated) ? updated : []);
+    }
+  };
+
+  const openClipFromReference = (ref: PersonClipReference) => {
+    if (!ref.clipFilename) return;
+    const clip = clips.find((c) => c.filename === ref.clipFilename);
+    if (clip) {
+      setSelectedClip(clip);
+      closePersonRefsModal();
+    }
+  };
+
+  const openPersonRefsModal = async (obj: ClipObjectDetection) => {
+    if (obj.className !== 'person' || !obj.detectionId) return;
+
+    setPersonRefsModal(obj);
+    setPersonRefs([]);
+    setPersonRefsIdentityId(obj.identityId ?? null);
+    const initiallyConfirmed = obj.labelStatus === 'confirmed' && !!obj.label?.trim();
+    setPersonRefsLabelDraft(initiallyConfirmed ? obj.label! : '');
+    setPersonRefsLabelConfirmed(initiallyConfirmed);
+    setShowPersonRefsSuggestions(!initiallyConfirmed);
+    setPersonRefsIdentitySuggestions([]);
+    setLoadingPersonRefs(true);
+
+    let resolvedIdentityId = obj.identityId ?? null;
+
+    try {
+      if (obj.identityId) {
+        const journeyRes = await fetch(`${API_BASE}/reid/identities/${obj.identityId}/journey`);
+        if (!journeyRes.ok) throw new Error('Failed to load identity journey');
+        const journey = await journeyRes.json();
+        const identityLabel = journey.identity?.label?.trim() || '';
+        if (identityLabel) {
+          setPersonRefsLabelDraft(identityLabel);
+          setPersonRefsLabelConfirmed(true);
+          setShowPersonRefsSuggestions(false);
+        }
+
+        const refs: PersonClipReference[] = (journey.detections || []).map((d: ReidDetection) => ({
+          id: d.id,
+          cameraName: d.cameraName,
+          timestamp: d.timestamp,
+          filename: d.filename,
+          clipFilename: d.clipFilename,
+          clipOffsetMs: d.clipOffsetMs,
+        }));
+        setPersonRefs(refs);
+      } else {
+
+      const trackRes = await fetch(`${API_BASE}/reid/track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detectionId: obj.detectionId, limit: 30 }),
+      });
+      if (!trackRes.ok) throw new Error('Failed to search similar detections');
+      const trackData = await trackRes.json();
+      const query = trackData.query as ReidDetection | undefined;
+      const matches = (trackData.matches || []) as Array<{
+        id: string;
+        cameraName: string;
+        timestamp: string;
+        filename: string;
+        clipFilename?: string;
+        clipOffsetMs?: number;
+        scores?: { finalScore: number };
+      }>;
+
+      const refs: PersonClipReference[] = [];
+      if (query) {
+        refs.push({
+          id: query.id,
+          cameraName: query.cameraName,
+          timestamp: query.timestamp,
+          filename: query.filename,
+          clipFilename: query.clipFilename,
+          clipOffsetMs: query.clipOffsetMs,
+        });
+        if (query.identityId) {
+          setPersonRefsIdentityId(query.identityId);
+          resolvedIdentityId = query.identityId;
+        }
+        if (query.identity?.label?.trim()) {
+          setPersonRefsLabelDraft(query.identity.label.trim());
+          setPersonRefsLabelConfirmed(true);
+          setShowPersonRefsSuggestions(false);
+        }
+      }
+
+      for (const match of matches) {
+        if (refs.some((r) => r.id === match.id)) continue;
+        refs.push({
+          id: match.id,
+          cameraName: match.cameraName,
+          timestamp: match.timestamp,
+          filename: match.filename,
+          clipFilename: match.clipFilename,
+          clipOffsetMs: match.clipOffsetMs,
+          matchScore: match.scores?.finalScore,
+        });
+      }
+
+      refs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setPersonRefs(refs);
+      }
+
+      await loadPersonRefsIdentitySuggestions(resolvedIdentityId);
+    } catch (err) {
+      console.error('Failed to load person references', err);
+      alert('Could not load appearances for this person.');
+      closePersonRefsModal();
+    } finally {
+      setLoadingPersonRefs(false);
+    }
+  };
+
+  const handleAssignPersonRefsIdentity = async (suggestion: ReidPersonMatch) => {
+    if (!personRefsModal?.detectionId) return;
+    setSavingPersonRefsLabel(true);
+    try {
+      const res = await fetch(`${API_BASE}/reid/detections/${personRefsModal.detectionId}/assign-identity`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identityId: suggestion.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to assign identity');
+        return;
+      }
+
+      setPersonRefsIdentityId(suggestion.id);
+      const assignedLabel = suggestion.label?.trim() || suggestion.displayName;
+      setPersonRefsLabelDraft(assignedLabel);
+      setPersonRefsLabelConfirmed(!!suggestion.label?.trim());
+      setShowPersonRefsSuggestions(false);
+      await reloadPersonRefsJourney(suggestion.id);
+      await loadPersonRefsIdentitySuggestions(suggestion.id);
+      await refreshClipDetectionsAfterLabel();
+    } catch (err) {
+      console.error('Failed to assign existing identity', err);
+      alert('Could not assign this person to the selected identity.');
+    } finally {
+      setSavingPersonRefsLabel(false);
+    }
+  };
+
+  const handleSavePersonRefsLabel = async () => {
+    if (!personRefsModal?.detectionId) return;
+    setSavingPersonRefsLabel(true);
+    try {
+      if (personRefsIdentityId) {
+        const res = await fetch(`${API_BASE}/reid/identities/${personRefsIdentityId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: personRefsLabelDraft }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to save label');
+          return;
+        }
+      } else {
+        const res = await fetch(`${API_BASE}/reid/detections/${personRefsModal.detectionId}/label`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: personRefsLabelDraft }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to save label');
+          return;
+        }
+        if (data.detection?.identityId) {
+          setPersonRefsIdentityId(data.detection.identityId);
+        }
+      }
+
+      if (personRefsLabelDraft.trim()) {
+        setPersonRefsLabelConfirmed(true);
+        setShowPersonRefsSuggestions(false);
+      }
+      await refreshClipDetectionsAfterLabel();
+      if (personRefsIdentityId) {
+        await loadPersonRefsIdentitySuggestions(personRefsIdentityId);
+      }
+    } catch (err) {
+      console.error('Failed to save person label from clip modal', err);
+    } finally {
+      setSavingPersonRefsLabel(false);
+    }
+  };
+
   const playTimelineCrop = async (crop: ReidDetection) => {
     setTimelineClipLoading(crop.id);
     try {
@@ -870,6 +1210,37 @@ function App({ onLogout }: AppProps) {
       if (prev.length >= 2) return [prev[1], personId];
       return [...prev, personId];
     });
+  };
+
+  const handleDeleteIdentity = async (person: ReidPerson, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (linkPeopleMode) return;
+
+    const label = person.displayName || 'this person';
+    if (!confirm(`Delete "${label}" and all ${person.photoCount} associated crop(s)? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingIdentityId(person.id);
+    try {
+      const res = await fetch(`${API_BASE}/reid/identities/${person.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to delete identity');
+        return;
+      }
+
+      if (selectedPerson?.id === person.id) {
+        closePersonDetail();
+      } else {
+        setReidPeople((prev) => prev.filter((p) => p.id !== person.id));
+      }
+    } catch (err) {
+      console.error('Failed to delete identity', err);
+      alert('Failed to delete identity');
+    } finally {
+      setDeletingIdentityId(null);
+    }
   };
 
   const handleLinkPeople = async () => {
@@ -1885,33 +2256,46 @@ function App({ onLogout }: AppProps) {
                                 <p className="text-[0.75rem] text-text-muted">Loading detections…</p>
                               ) : (
                                 <div className="flex flex-col gap-1.5">
-                                  {clipDetections.map((obj) => (
-                                    <div
-                                      key={obj.trackId}
-                                      className="flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary"
-                                    >
-                                      <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
-                                        {obj.className}
-                                        {obj.confidence != null && obj.confidence > 0 && (
-                                          <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
+                                  {clipDetections.map((obj) => {
+                                    const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
+                                    return (
+                                      <button
+                                        key={obj.trackId}
+                                        type="button"
+                                        disabled={!isClickablePerson}
+                                        onClick={() => openPersonRefsModal(obj)}
+                                        className={`flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary text-left w-full rounded-md px-1 py-0.5 -mx-1 ${
+                                          isClickablePerson
+                                            ? 'hover:bg-[rgba(56,189,248,0.08)] cursor-pointer'
+                                            : 'cursor-default'
+                                        }`}
+                                      >
+                                        <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
+                                          {obj.className}
+                                          {obj.confidence != null && obj.confidence > 0 && (
+                                            <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
+                                          )}
+                                        </span>
+                                        {obj.trackId > 0 && (
+                                          <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
                                         )}
-                                      </span>
-                                      {obj.trackId > 0 && (
-                                        <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
-                                      )}
-                                      {obj.labelStatus === 'confirmed' && obj.label && (
-                                        <span className="text-[0.72rem] text-green-400 font-medium">
-                                          {obj.label}
-                                          <span className="text-text-muted font-normal ml-1">(confirmed)</span>
-                                        </span>
-                                      )}
-                                      {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
-                                        <span className="text-[0.72rem] text-secondary">
-                                          {Math.round(obj.matchScore * 100)}% match · {obj.label}
-                                        </span>
-                                      )}
-                                    </div>
-                                  ))}
+                                        {obj.labelStatus === 'confirmed' && obj.label && (
+                                          <span className="text-[0.72rem] text-green-400 font-medium">
+                                            {obj.label}
+                                            <span className="text-text-muted font-normal ml-1">(confirmed)</span>
+                                          </span>
+                                        )}
+                                        {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
+                                          <span className="text-[0.72rem] text-secondary">
+                                            {Math.round(obj.matchScore * 100)}% match · {obj.label}
+                                          </span>
+                                        )}
+                                        {isClickablePerson && (
+                                          <span className="text-[0.65rem] text-primary ml-auto">View appearances →</span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>
@@ -2233,14 +2617,30 @@ function App({ onLogout }: AppProps) {
                           : null;
 
                         return (
-                          <button
+                          <div
                             key={person.id}
-                            type="button"
-                            onClick={() => linkPeopleMode
-                              ? handleLinkPeopleSelection(person.id)
-                              : openPersonDetail(person)}
-                            className={`flex flex-col items-center gap-2 group border-none bg-transparent p-0 cursor-pointer ${isLinkSelected ? 'opacity-100' : ''}`}
+                            className={`relative flex flex-col items-center gap-2 group ${isLinkSelected ? 'opacity-100' : ''}`}
                           >
+                            {!linkPeopleMode && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteIdentity(person, e)}
+                                disabled={deletingIdentityId === person.id}
+                                title="Delete person"
+                                className="absolute top-0 right-0 z-10 btn p-1 bg-[rgba(9,13,22,0.85)] text-text-muted hover:text-danger border border-[rgba(255,255,255,0.1)] rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                              >
+                                {deletingIdentityId === person.id
+                                  ? <RefreshCw size={11} className="animate-spin" />
+                                  : <Trash2 size={11} />}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => linkPeopleMode
+                                ? handleLinkPeopleSelection(person.id)
+                                : openPersonDetail(person)}
+                              className="flex flex-col items-center gap-2 border-none bg-transparent p-0 cursor-pointer w-full"
+                            >
                             <div className={`relative w-[88px] h-[88px] rounded-full overflow-hidden border-2 transition-all duration-200 ${
                               isLinkSelected
                                 ? 'border-secondary shadow-[0_0_12px_rgba(6,182,212,0.5)]'
@@ -2271,7 +2671,8 @@ function App({ onLogout }: AppProps) {
                                 track {person.streamTracks[0].trackId}
                               </span>
                             ) : null}
-                          </button>
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -2561,6 +2962,201 @@ function App({ onLogout }: AppProps) {
                 Jumped to the moment this person was detected
                 {timelineVideo.offsetMs > 0 ? ` (${(timelineVideo.offsetMs / 1000).toFixed(1)}s into clip)` : ''}.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PERSON APPEARANCES MODAL (from clip viewer) */}
+      {personRefsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
+          onClick={closePersonRefsModal}
+        >
+          <div
+            className="glass-panel w-full max-w-[640px] p-6 flex flex-col gap-4 relative animate-[slideUp_0.22s_ease-out] max-h-[85vh]"
+            style={{ boxShadow: '0 24px 80px rgba(56,189,248,0.2), 0 0 0 1px rgba(56,189,248,0.15)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                {personRefsModal.cropFilename && (
+                  <div className="w-14 h-14 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.25)] shrink-0">
+                    <img
+                      src={`${API_BASE}/crops/${personRefsModal.cropFilename}`}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <h2 className="text-[1.05rem] font-bold text-text-primary">
+                    Person appearances
+                  </h2>
+                  <p className="text-[0.72rem] text-text-muted mt-0.5">
+                    track {personRefsModal.trackId}
+                    {personRefsModal.labelStatus === 'confirmed' && personRefsModal.label
+                      ? ` · ${personRefsModal.label}`
+                      : ''}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closePersonRefsModal}
+                className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)] shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={personRefsLabelDraft}
+                onChange={(e) => setPersonRefsLabelDraft(e.target.value)}
+                placeholder="Name this person"
+                className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+              />
+              <button
+                type="button"
+                onClick={handleSavePersonRefsLabel}
+                disabled={savingPersonRefsLabel}
+                className="btn btn-secondary py-1 px-3 text-[0.75rem] shrink-0"
+              >
+                {savingPersonRefsLabel ? '…' : 'Save label'}
+              </button>
+            </div>
+
+            {!loadingPersonRefs && personRefsIdentitySuggestions.length > 0 && (() => {
+              const draft = personRefsLabelDraft.trim().toLowerCase();
+              const filtered = draft
+                ? personRefsIdentitySuggestions.filter((s) =>
+                    s.displayName.toLowerCase().includes(draft)
+                    || (s.label?.toLowerCase().includes(draft) ?? false),
+                  )
+                : personRefsIdentitySuggestions;
+              const shown = filtered.slice(0, 8);
+              const hideSuggestions = personRefsLabelConfirmed && !showPersonRefsSuggestions;
+
+              return (
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-[0.7rem] font-bold text-text-secondary uppercase tracking-wider">
+                      Use existing person
+                    </p>
+                    {hideSuggestions && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPersonRefsSuggestions(true)}
+                        className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md shrink-0"
+                      >
+                        Change
+                      </button>
+                    )}
+                    {personRefsLabelConfirmed && showPersonRefsSuggestions && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPersonRefsSuggestions(false)}
+                        className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md shrink-0"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                  {!hideSuggestions && shown.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {shown.map((suggestion) => (
+                      <button
+                        key={suggestion.id}
+                        type="button"
+                        disabled={savingPersonRefsLabel || suggestion.id === personRefsIdentityId}
+                        onClick={() => handleAssignPersonRefsIdentity(suggestion)}
+                        className="glass-panel interactive flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-left disabled:opacity-50"
+                      >
+                        <div className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black">
+                          {suggestion.coverFilename && (
+                            <img
+                              src={`${API_BASE}/crops/${suggestion.coverFilename}`}
+                              alt=""
+                              className="w-full h-full object-cover"
+                            />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[0.75rem] font-semibold text-text-primary block truncate max-w-[140px]">
+                            {suggestion.displayName}
+                          </span>
+                          {suggestion.matchScore > 0 && (
+                            <span className="text-[0.65rem] text-secondary">
+                              {Math.round(suggestion.matchScore * 100)}% match
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="h-px bg-[rgba(255,255,255,0.07)]" />
+
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+              {loadingPersonRefs ? (
+                <div className="flex justify-center py-10 text-text-muted">
+                  <RefreshCw size={20} className="animate-spin" />
+                </div>
+              ) : personRefs.length === 0 ? (
+                <p className="text-[0.8rem] text-text-muted text-center py-8">
+                  No other clip appearances found yet.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {personRefs.map((ref) => {
+                    const isCurrentClip = ref.clipFilename === selectedClip?.filename;
+                    return (
+                      <button
+                        key={ref.id}
+                        type="button"
+                        disabled={!ref.clipFilename}
+                        onClick={() => openClipFromReference(ref)}
+                        className={`glass-panel p-2.5 flex items-center gap-3 w-full text-left transition-all ${
+                          ref.clipFilename ? 'interactive cursor-pointer hover:border-primary/30' : 'opacity-60 cursor-default'
+                        } ${isCurrentClip ? 'border-primary/40' : ''}`}
+                      >
+                        <div className="w-12 h-12 rounded-md overflow-hidden border border-border-glass shrink-0 bg-black">
+                          <img
+                            src={`${API_BASE}/crops/${ref.filename}`}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
+                            {isCurrentClip && (
+                              <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
+                            )}
+                            {ref.matchScore != null && (
+                              <span className="text-[0.65rem] text-secondary">
+                                {Math.round(ref.matchScore * 100)}% match
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[0.7rem] text-text-muted mt-0.5">
+                            {formatDate(ref.timestamp)}
+                            {ref.clipFilename ? ` · ${ref.clipFilename}` : ''}
+                          </p>
+                        </div>
+                        {ref.clipFilename && <Play size={14} className="text-text-muted shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>

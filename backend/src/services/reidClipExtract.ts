@@ -7,10 +7,10 @@ const execAsync = promisify(exec);
 
 async function probeVideoDimensions(videoPath: string): Promise<{ width: number; height: number }> {
   const result = await execAsync(
-    `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x= "${videoPath}"`,
+    `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${videoPath}"`,
     { maxBuffer: 1024 * 1024 },
   );
-  const [widthStr, heightStr] = result.stdout.trim().split('x');
+  const [widthStr, heightStr] = result.stdout.trim().split(',');
   const width = parseInt(widthStr, 10);
   const height = parseInt(heightStr, 10);
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {

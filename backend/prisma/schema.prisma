@@ -9,17 +9,18 @@ generator client {
 }
 
 model VideoClip {
-  id              String        @id @default(auto()) @map("_id") @db.ObjectId
+  id              String          @id @default(auto()) @map("_id") @db.ObjectId
   filepath        String
   filename        String
-  timestamp       DateTime      @default(now())
+  timestamp       DateTime        @default(now())
   summary         String
-  duration        Float         @default(10.0)
+  duration        Float           @default(10.0)
   camera          String
   deviceId        String?
   streamId        String?
   detectedObjects Json?
-  stream          CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
+  stream          CameraStream?   @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
+  detections      ReidDetection[]
 }
 
 model EdgeDevice {
@@ -76,20 +77,22 @@ model ReidStreamTrackMapping {
 }
 
 model ReidDetection {
-  id         String        @id @default(auto()) @map("_id") @db.ObjectId
-  deviceId   String
-  cameraName String
-  streamId   String?
-  stream     CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
-  trackId    Int
-  timestamp  DateTime      @default(now())
-  filename      String
-  clipFilename  String?
-  clipOffsetMs  Int?
-  bbox          String        // "x1,y1,x2,y2"
-  className     String
-  identityId String?       @db.ObjectId
-  identity   ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  deviceId     String
+  cameraName   String
+  streamId     String?
+  stream       CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
+  trackId      Int
+  timestamp    DateTime      @default(now())
+  filename     String
+  clipId       String?       @db.ObjectId
+  clip         VideoClip?    @relation(fields: [clipId], references: [id], onDelete: SetNull)
+  clipFilename String?
+  clipOffsetMs Int?
+  bbox         String        // "x1,y1,x2,y2"
+  className    String
+  identityId   String?       @db.ObjectId
+  identity     ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
 }
 
 model ReidStreamTrackFeedback {

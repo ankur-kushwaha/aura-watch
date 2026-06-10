@@ -16,6 +16,7 @@ import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR, processReidTrackEventsFromClip, ReidTrackEvent } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { aggregateTrackEvents } from './services/clipDetections';
+import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import { transcodeForGemini } from './services/videoTranscode';
@@ -145,16 +146,41 @@ registerOnDevicesChanged(() => {
 
 function broadcastToSubscribedUIs(deviceId: string, data: any) {
   const message = JSON.stringify(data);
+  const sent = new Set<WebSocket>();
+
   for (const [ws, subDeviceId] of uiSubscriptions.entries()) {
     if (subDeviceId === deviceId && ws.readyState === WebSocket.OPEN) {
       ws.send(message);
+      sent.add(ws);
     }
   }
+
+  // Device-level events (logs, clips, etc.) also reach stream subscribers on that device.
+  for (const [ws, subStreamId] of uiStreamSubscriptions.entries()) {
+    if (
+      streamDeviceCache.get(subStreamId) === deviceId &&
+      ws.readyState === WebSocket.OPEN &&
+      !sent.has(ws)
+    ) {
+      ws.send(message);
+      sent.add(ws);
+    }
+  }
+
   if (data.streamId) {
     for (const [ws, subStreamId] of uiStreamSubscriptions.entries()) {
       if (subStreamId === data.streamId && ws.readyState === WebSocket.OPEN) {
         ws.send(message);
       }
+    }
+  }
+}
+
+function broadcastNewClipToAllUIs(clip: object, deviceId: string, streamId: string) {
+  const message = JSON.stringify({ type: 'new_clip', clip, deviceId, streamId });
+  for (const ws of uiClients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
     }
   }
 }
@@ -344,18 +370,25 @@ async function processVideoClipInBackground(
           frameWidth,
           frameHeight,
         )
-      : Promise.resolve();
+      : Promise.resolve(0);
 
     const summary = await summarizeVideo(summaryPath, cameraName);
-    await reidFromClipPromise;
+    const reidCropsExtracted = await reidFromClipPromise;
 
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Gemini summary generated successfully.`);
 
     if (trackEvents.length > 0) {
-      broadcastLogToSubscribedUIs(
-        deviceId,
-        `[${cameraName}] Extracted ${trackEvents.length} ReID crop(s) from clip ${filename}.`,
-      );
+      if (reidCropsExtracted > 0) {
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] Extracted ${reidCropsExtracted} ReID crop(s) from clip ${filename}.`,
+        );
+      } else {
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] ReID crop extraction failed for ${trackEvents.length} track event(s) in ${filename}.`,
+        );
+      }
     }
 
     const detectedObjects = trackEvents.length > 0 ? aggregateTrackEvents(trackEvents) : undefined;
@@ -374,6 +407,7 @@ async function processVideoClipInBackground(
         detectedObjects: detectedObjects as object,
       }
     });
+    await linkDetectionsToClip(clipDb.id, filename);
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
 
     // 3. Generate embedding vector of the summary
@@ -392,11 +426,8 @@ async function processVideoClipInBackground(
 
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Successfully indexed clip in Qdrant.`);
     
-    // Notify subscribed UI clients of the new clip
-    broadcastToSubscribedUIs(deviceId, {
-      type: 'new_clip',
-      clip: clipDb
-    });
+    // Notify all UI clients — archive is global and may not have a device/stream subscription.
+    broadcastNewClipToAllUIs(clipDb, deviceId, streamId);
 
   } catch (error: any) {
     console.error(`[Pipeline Error] Failed to process ${filename}:`, error);
@@ -435,6 +466,13 @@ async function processVideoClipInBackground(
       streamId,
       status: finalStatus 
     });
+
+    // Fallback signal for UIs to refresh archive after processing ends (success or failure).
+    for (const ws of uiClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'clip_processing_complete', streamId, deviceId }));
+      }
+    }
   }
 }
 
@@ -758,6 +796,9 @@ server.listen(PORT, async () => {
   await initQdrant();
   await backfillStreamTrackIdentities().catch(err => {
     console.error('Failed to backfill stream-track identities:', err);
+  });
+  await backfillDetectionClipLinks().catch(err => {
+    console.error('Failed to backfill detection clip links:', err);
   });
   await cleanupEmptyIdentities().catch(err => {
     console.error('Failed to cleanup empty identities:', err);

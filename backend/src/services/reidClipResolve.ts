@@ -1,4 +1,5 @@
 import prisma from './db';
+import { resolveClipIdFromFilename } from './clipLink';
 
 export interface ResolvedClipSource {
   clipFilename: string;
@@ -63,6 +64,7 @@ type DetectionClipFields = {
   deviceId: string;
   timestamp: Date;
   filename: string;
+  clipId: string | null;
   clipFilename: string | null;
   clipOffsetMs: number | null;
 };
@@ -72,8 +74,16 @@ export async function enrichDetectionWithClipSource<T extends DetectionClipField
   options?: { persist?: boolean },
 ): Promise<T> {
   if (detection.clipFilename) {
+    const clipId = detection.clipId ?? await resolveClipIdFromFilename(detection.clipFilename);
+    if (options?.persist && clipId && !detection.clipId) {
+      await prisma.reidDetection.update({
+        where: { id: detection.id },
+        data: { clipId },
+      });
+    }
     return {
       ...detection,
+      clipId,
       clipFilename: detection.clipFilename,
       clipOffsetMs: detection.clipOffsetMs ?? 0,
     };
@@ -87,15 +97,18 @@ export async function enrichDetectionWithClipSource<T extends DetectionClipField
   );
   if (!resolved) return detection;
 
+  const resolvedClipId = await resolveClipIdFromFilename(resolved.clipFilename);
+
   if (options?.persist) {
     await prisma.reidDetection.update({
       where: { id: detection.id },
       data: {
+        clipId: resolvedClipId,
         clipFilename: resolved.clipFilename,
         clipOffsetMs: resolved.clipOffsetMs,
       },
     });
   }
 
-  return { ...detection, ...resolved };
+  return { ...detection, clipId: resolvedClipId, ...resolved };
 }
