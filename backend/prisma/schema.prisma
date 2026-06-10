@@ -52,6 +52,13 @@ model CameraStream {
   toRoutes             TopologyRoute[] @relation("ToRoute")
 }
 
+model ReidIdentity {
+  id         String          @id @default(auto()) @map("_id") @db.ObjectId
+  label      String?
+  createdAt  DateTime        @default(now())
+  detections ReidDetection[]
+}
+
 model ReidDetection {
   id         String        @id @default(auto()) @map("_id") @db.ObjectId
   deviceId   String
@@ -63,6 +70,16 @@ model ReidDetection {
   filename   String
   bbox       String        // "x1,y1,x2,y2"
   className  String
+  identityId String?       @db.ObjectId
+  identity   ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
+}
+
+model ReidFeedback {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  type              String   // "confirm" | "reject" | "same_person" | "different_person"
+  sourceDetectionId String   @db.ObjectId
+  targetDetectionId String   @db.ObjectId
+  createdAt         DateTime @default(now())
 }
 
 model TopologyRoute {

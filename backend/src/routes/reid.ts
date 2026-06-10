@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import prisma from '../services/db';
 import reidWorker from '../services/reidWorker';
-import { upsertReidVector, searchReidVectors, deleteReidVector } from '../services/qdrant';
+import { upsertReidVector, searchReidVectors, deleteReidVector, updateReidPayloadBatch, retrieveReidVectors } from '../services/qdrant';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -114,6 +114,7 @@ router.get('/detections', async (req: Request, res: Response) => {
     const detections = await prisma.reidDetection.findMany({
       orderBy: { timestamp: 'desc' },
       take: limit,
+      include: { identity: { select: { id: true, label: true } } },
     });
     res.json(detections);
   } catch (err: any) {
@@ -224,6 +225,161 @@ router.post('/topology', async (req: Request, res: Response) => {
   }
 });
 
+const FEEDBACK_TYPES = ['confirm', 'reject', 'same_person', 'different_person'] as const;
+type FeedbackType = typeof FEEDBACK_TYPES[number];
+
+async function assignDetectionsToIdentity(detectionIds: string[], identityId?: string) {
+  const uniqueIds = [...new Set(detectionIds)];
+  if (uniqueIds.length === 0) return null;
+
+  const detections = await prisma.reidDetection.findMany({
+    where: { id: { in: uniqueIds } },
+    select: { id: true, identityId: true },
+  });
+
+  if (detections.length !== uniqueIds.length) {
+    throw new Error('One or more detections not found');
+  }
+
+  const existingIdentityIds = [...new Set(
+    detections.map(d => d.identityId).filter((id): id is string => !!id)
+  )];
+
+  let targetIdentityId = identityId;
+  if (!targetIdentityId) {
+    if (existingIdentityIds.length === 0) {
+      const identity = await prisma.reidIdentity.create({ data: {} });
+      targetIdentityId = identity.id;
+    } else {
+      targetIdentityId = existingIdentityIds[0];
+      const mergeIds = existingIdentityIds.slice(1);
+      for (const mergeId of mergeIds) {
+        const mergedDetections = await prisma.reidDetection.findMany({
+          where: { identityId: mergeId },
+          select: { id: true },
+        });
+        const mergedDetectionIds = mergedDetections.map(d => d.id);
+        await prisma.reidDetection.updateMany({
+          where: { identityId: mergeId },
+          data: { identityId: targetIdentityId },
+        });
+        await updateReidPayloadBatch(mergedDetectionIds, { identityId: targetIdentityId });
+        await prisma.reidIdentity.delete({ where: { id: mergeId } });
+      }
+    }
+  }
+
+  await prisma.reidDetection.updateMany({
+    where: { id: { in: uniqueIds } },
+    data: { identityId: targetIdentityId },
+  });
+  await updateReidPayloadBatch(uniqueIds, { identityId: targetIdentityId });
+
+  return targetIdentityId;
+}
+
+function averageVectors(vectors: number[][]): number[] {
+  if (vectors.length === 0) return [];
+  const dim = vectors[0].length;
+  const sum = new Array(dim).fill(0);
+  for (const vec of vectors) {
+    for (let i = 0; i < dim; i++) {
+      sum[i] += vec[i];
+    }
+  }
+  return sum.map(v => v / vectors.length);
+}
+
+/**
+ * POST /api/reid/feedback
+ * Submit user feedback on a match or pair of detections
+ */
+router.post('/feedback', async (req: Request, res: Response) => {
+  const { type, sourceDetectionId, targetDetectionId } = req.body;
+
+  if (!type || !sourceDetectionId || !targetDetectionId) {
+    return res.status(400).json({ error: 'type, sourceDetectionId, and targetDetectionId are required' });
+  }
+  if (!FEEDBACK_TYPES.includes(type)) {
+    return res.status(400).json({ error: `type must be one of: ${FEEDBACK_TYPES.join(', ')}` });
+  }
+  if (sourceDetectionId === targetDetectionId) {
+    return res.status(400).json({ error: 'sourceDetectionId and targetDetectionId must differ' });
+  }
+
+  try {
+    const [source, target] = await Promise.all([
+      prisma.reidDetection.findUnique({ where: { id: sourceDetectionId } }),
+      prisma.reidDetection.findUnique({ where: { id: targetDetectionId } }),
+    ]);
+    if (!source || !target) {
+      return res.status(404).json({ error: 'One or both detections not found' });
+    }
+
+    const feedback = await prisma.reidFeedback.create({
+      data: { type, sourceDetectionId, targetDetectionId },
+    });
+
+    let identityId: string | null = null;
+    if (type === 'confirm' || type === 'same_person') {
+      identityId = await assignDetectionsToIdentity([sourceDetectionId, targetDetectionId]);
+    }
+
+    res.json({ success: true, feedback, identityId });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/reid/identities/merge
+ * Merge multiple detections into a single identity
+ */
+router.post('/identities/merge', async (req: Request, res: Response) => {
+  const { detectionIds } = req.body;
+
+  if (!Array.isArray(detectionIds) || detectionIds.length < 2) {
+    return res.status(400).json({ error: 'detectionIds must be an array of at least 2 detection IDs' });
+  }
+
+  try {
+    const identityId = await assignDetectionsToIdentity(detectionIds);
+    const detections = await prisma.reidDetection.findMany({
+      where: { identityId: identityId! },
+      orderBy: { timestamp: 'asc' },
+      include: { identity: { select: { id: true, label: true } } },
+    });
+
+    res.json({ success: true, identityId, detections });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/reid/identities/:id/journey
+ * List all detections linked to an identity
+ */
+router.get('/identities/:id/journey', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const identity = await prisma.reidIdentity.findUnique({ where: { id } });
+    if (!identity) {
+      return res.status(404).json({ error: 'Identity not found' });
+    }
+
+    const detections = await prisma.reidDetection.findMany({
+      where: { identityId: id },
+      orderBy: { timestamp: 'asc' },
+      include: { identity: { select: { id: true, label: true } } },
+    });
+
+    res.json({ identity, detections });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /**
  * POST /api/reid/track
  * Track a person across cameras using a source detection ID
@@ -236,33 +392,56 @@ router.post('/track', async (req: Request, res: Response) => {
   }
 
   try {
-    // 1. Fetch query crop details from MongoDB
-    const queryDetection = await prisma.reidDetection.findUnique({ where: { id: detectionId } });
+    const queryDetection = await prisma.reidDetection.findUnique({
+      where: { id: detectionId },
+      include: { identity: { select: { id: true, label: true } } },
+    });
     if (!queryDetection) {
       return res.status(404).json({ error: `Detection ${detectionId} not found in database.` });
     }
 
-    // 2. Fetch the corresponding vector from Qdrant by converting MongoDB ID to Qdrant UUID
-    const { QdrantClient } = require('@qdrant/js-client-rest');
-    const qdrant = new QdrantClient({
-      url: process.env.QDRANT_URL,
-      apiKey: process.env.QDRANT_API_KEY,
-    });
-    const { mongoIdToUuid } = require('../services/qdrant');
-    const qdrantId = mongoIdToUuid(detectionId);
-
-    const point = await qdrant.retrieve('reid_embeddings', { ids: [qdrantId], with_vector: true });
-    if (!point || point.length === 0 || !point[0].vector) {
+    const queryVectors = await retrieveReidVectors([detectionId]);
+    if (queryVectors.length === 0) {
       return res.status(404).json({ error: `Vector embedding not found in Qdrant for detection ${detectionId}.` });
     }
 
-    const queryVector = point[0].vector as number[];
+    let searchVector = queryVectors[0].vector;
 
-    // 3. Search Qdrant for closest ReID neighbors
-    const candidates = await searchReidVectors(queryVector, limit + 5);
+    // Use identity centroid when detections have been linked by feedback
+    if (queryDetection.identityId) {
+      const identityDetections = await prisma.reidDetection.findMany({
+        where: { identityId: queryDetection.identityId },
+        select: { id: true },
+      });
+      const identityVectors = await retrieveReidVectors(identityDetections.map(d => d.id));
+      if (identityVectors.length > 1) {
+        searchVector = averageVectors(identityVectors.map(v => v.vector));
+      }
+    }
 
-    // 4. Load topology routes to calculate topological and time scores
+    const candidates = await searchReidVectors(searchVector, limit + 10);
     const topologyRoutes = await prisma.topologyRoute.findMany();
+
+    // Load feedback involving the query detection
+    const feedbackEntries = await prisma.reidFeedback.findMany({
+      where: {
+        OR: [
+          { sourceDetectionId: detectionId },
+          { targetDetectionId: detectionId },
+        ],
+      },
+    });
+
+    const rejectedIds = new Set<string>();
+    const confirmedIds = new Set<string>();
+    for (const fb of feedbackEntries) {
+      const otherId = fb.sourceDetectionId === detectionId ? fb.targetDetectionId : fb.sourceDetectionId;
+      if (fb.type === 'reject' || fb.type === 'different_person') {
+        rejectedIds.add(otherId);
+      } else if (fb.type === 'confirm' || fb.type === 'same_person') {
+        confirmedIds.add(otherId);
+      }
+    }
 
     const tq = new Date(queryDetection.timestamp).getTime();
     const Cq = queryDetection.cameraName;
@@ -273,19 +452,22 @@ router.post('/track', async (req: Request, res: Response) => {
     for (const cand of candidates) {
       const payload = cand.payload as any;
       if (!payload || payload.mongoId === detectionId) {
-        continue; // Skip self
+        continue;
+      }
+
+      if (rejectedIds.has(payload.mongoId)) {
+        continue;
       }
 
       const tc = new Date(payload.timestamp).getTime();
       const Cc = payload.cameraName;
       const Sc = payload.streamId;
-      const deltaTime = Math.abs(tq - tc) / 1000; // time diff in seconds
+      const deltaTime = Math.abs(tq - tc) / 1000;
 
-      let timeScore = 0.5; // default moderate score
-      let topologyScore = 0.5; // default moderate score
+      let timeScore = 0.5;
+      let topologyScore = 0.5;
       let isValidTransition = true;
 
-      // Find route config bi-directionally by streamId first, then by cameraName
       const route = topologyRoutes.find(r => 
         (Sq && Sc && ((r.fromStreamId === Sq && r.toStreamId === Sc) || (r.fromStreamId === Sc && r.toStreamId === Sq))) ||
         (r.fromCamera === Cq && r.toCamera === Cc) || 
@@ -296,43 +478,42 @@ router.post('/track', async (req: Request, res: Response) => {
         topologyScore = route.topologyScore;
 
         if (deltaTime < route.minTimeSeconds) {
-          // Impossible speed: set score to 0 and flag as invalid
           timeScore = 0.0;
           isValidTransition = false;
         } else if (deltaTime >= route.minTimeSeconds && deltaTime <= route.maxTimeSeconds) {
-          // Normal/valid travel time range: score decays linearly from 1.0 to 0.2
           const span = route.maxTimeSeconds - route.minTimeSeconds;
           timeScore = span > 0 
             ? 1.0 - 0.8 * ((deltaTime - route.minTimeSeconds) / span)
             : 1.0;
         } else {
-          // Too long ago: exponential decay after max time
           timeScore = 0.2 * Math.exp(-(deltaTime - route.maxTimeSeconds) / 600);
         }
       } else {
-        // No topology route configured between these cameras/streams
         const isSameCamera = Sq && Sc ? Sq === Sc : Cq === Cc;
         if (isSameCamera) {
-          // Same camera: higher topology default, decay over time
           topologyScore = 0.8;
-          timeScore = Math.exp(-deltaTime / 300); // decays over 5 mins
+          timeScore = Math.exp(-deltaTime / 300);
         } else {
-          // Different cameras: lower baseline topology
           topologyScore = 0.2;
-          // Apply general walk decay (assume min 10s to walk between general cams)
           if (deltaTime < 10) {
-            timeScore = 0.1; // unlikely to hop cams in < 10s
+            timeScore = 0.1;
           } else {
-            timeScore = Math.exp(-(deltaTime - 10) / 600); // decays over 10 mins
+            timeScore = Math.exp(-(deltaTime - 10) / 600);
           }
         }
       }
 
-      // Final Score = 0.6 * vector_similarity + 0.2 * time_score + 0.2 * camera_topology_score
-      const vectorSimilarity = cand.score; // cosine similarity score from Qdrant
-      const finalScore = (0.6 * vectorSimilarity) + (0.2 * timeScore) + (0.2 * topologyScore);
+      const vectorSimilarity = cand.score;
+      let feedbackBoost = 0;
+      if (queryDetection.identityId && payload.identityId === queryDetection.identityId) {
+        feedbackBoost += 0.3;
+      }
+      if (confirmedIds.has(payload.mongoId)) {
+        feedbackBoost += 0.15;
+      }
 
-      // Only include candidate if it's a physically possible transition
+      const finalScore = Math.min(1.0, (0.6 * vectorSimilarity) + (0.2 * timeScore) + (0.2 * topologyScore) + feedbackBoost);
+
       if (isValidTransition && finalScore >= 0.3) {
         scoredMatches.push({
           id: payload.mongoId,
@@ -344,6 +525,8 @@ router.post('/track', async (req: Request, res: Response) => {
           filename: payload.filename,
           bbox: payload.bbox,
           className: payload.className,
+          identityId: payload.identityId || null,
+          feedbackBoost: feedbackBoost > 0 ? feedbackBoost : undefined,
           scores: {
             vectorSimilarity,
             timeScore,
@@ -354,7 +537,6 @@ router.post('/track', async (req: Request, res: Response) => {
       }
     }
 
-    // Sort by final score descending
     scoredMatches.sort((a, b) => b.scores.finalScore - a.scores.finalScore);
 
     res.json({

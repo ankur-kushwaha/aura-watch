@@ -29,7 +29,10 @@ import {
   RotateCcw,
   ScrollText,
   Download,
-  AlertTriangle
+  AlertTriangle,
+  ThumbsUp,
+  ThumbsDown,
+  Users
 } from 'lucide-react';
 
 const PREVIEW_STALL_MS = 5000;
@@ -101,6 +104,8 @@ interface ReidDetection {
   filename: string;
   bbox: string;
   className: string;
+  identityId?: string | null;
+  identity?: { id: string; label?: string | null } | null;
 }
 
 interface ReidRoute {
@@ -282,6 +287,9 @@ function App({ onLogout }: AppProps) {
   const [selectedReidCrop, setSelectedReidCrop] = useState<ReidDetection | null>(null);
   const [reidMatches, setReidMatches] = useState<any[]>([]);
   const [isReidSearching, setIsReidSearching] = useState<boolean>(false);
+  const [mergeMode, setMergeMode] = useState<boolean>(false);
+  const [mergeSelection, setMergeSelection] = useState<string[]>([]);
+  const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
 
   // Topology States
   const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
@@ -694,10 +702,90 @@ function App({ onLogout }: AppProps) {
           setSelectedReidCrop(null);
           setReidMatches([]);
         }
+        setMergeSelection(prev => prev.filter(s => s !== id));
       }
     } catch (err) {
       console.error('Failed to delete ReID detection', err);
     }
+  };
+
+  const handleReidFeedback = async (
+    type: 'confirm' | 'reject' | 'same_person' | 'different_person',
+    sourceDetectionId: string,
+    targetDetectionId: string,
+  ) => {
+    const key = `${type}:${sourceDetectionId}:${targetDetectionId}`;
+    setFeedbackPending(key);
+    try {
+      const res = await fetch(`${API_BASE}/reid/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, sourceDetectionId, targetDetectionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to save feedback');
+        return;
+      }
+
+      await fetchReidCrops();
+      if (selectedReidCrop) {
+        await handleReidTrack(selectedReidCrop);
+      }
+    } catch (err) {
+      console.error('Failed to submit ReID feedback', err);
+    } finally {
+      setFeedbackPending(null);
+    }
+  };
+
+  const handleMergeSelection = (crop: ReidDetection) => {
+    if (!mergeMode) return;
+    setMergeSelection(prev => {
+      if (prev.includes(crop.id)) {
+        return prev.filter(id => id !== crop.id);
+      }
+      if (prev.length >= 2) {
+        return [prev[1], crop.id];
+      }
+      return [...prev, crop.id];
+    });
+  };
+
+  const handleMergeIdentities = async () => {
+    if (mergeSelection.length < 2) {
+      alert('Select at least 2 crops to merge as the same person.');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/reid/identities/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detectionIds: mergeSelection }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to merge identities');
+        return;
+      }
+      const mergedIds = [...mergeSelection];
+      setMergeSelection([]);
+      setMergeMode(false);
+      await fetchReidCrops();
+      if (selectedReidCrop && mergedIds.includes(selectedReidCrop.id)) {
+        await handleReidTrack(selectedReidCrop);
+      }
+    } catch (err) {
+      console.error('Failed to merge identities', err);
+    }
+  };
+
+  const handleGalleryCropClick = (crop: ReidDetection) => {
+    if (mergeMode) {
+      handleMergeSelection(crop);
+      return;
+    }
+    handleReidTrack(crop);
   };
 
   useEffect(() => {
@@ -1833,14 +1921,39 @@ function App({ onLogout }: AppProps) {
                   <h2 className="text-[1.1rem] flex items-center gap-2">
                     <Fingerprint size={18} color="var(--color-primary)" /> Stabilized Person Crops
                   </h2>
-                  <button
-                    onClick={fetchReidCrops}
-                    className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
-                    disabled={loadingReidCrops}
-                  >
-                    <RefreshCw size={12} className={loadingReidCrops ? 'animate-spin' : ''} /> Refresh
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setMergeMode(!mergeMode);
+                        setMergeSelection([]);
+                      }}
+                      className={`btn py-1 px-2 text-[0.75rem] rounded-md ${mergeMode ? 'btn-primary' : 'btn-secondary'}`}
+                    >
+                      <Users size={12} /> {mergeMode ? 'Cancel Link' : 'Link Same Person'}
+                    </button>
+                    {mergeMode && mergeSelection.length >= 2 && (
+                      <button
+                        onClick={handleMergeIdentities}
+                        className="btn btn-primary py-1 px-2 text-[0.75rem] rounded-md"
+                      >
+                        Merge {mergeSelection.length}
+                      </button>
+                    )}
+                    <button
+                      onClick={fetchReidCrops}
+                      className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
+                      disabled={loadingReidCrops}
+                    >
+                      <RefreshCw size={12} className={loadingReidCrops ? 'animate-spin' : ''} /> Refresh
+                    </button>
+                  </div>
                 </div>
+
+                {mergeMode && (
+                  <p className="text-[0.75rem] text-text-muted mb-3">
+                    Select 2 or more crops that belong to the same person, then click Merge.
+                  </p>
+                )}
 
                 <div className="flex-1 overflow-y-auto pr-1">
                   {reidCrops.length === 0 ? (
@@ -1853,19 +1966,28 @@ function App({ onLogout }: AppProps) {
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {reidCrops.map((crop) => {
                         const isSelected = selectedReidCrop?.id === crop.id;
+                        const isMergeSelected = mergeSelection.includes(crop.id);
                         const imageUrl = `${API_BASE}/crops/${crop.filename}`;
 
                         return (
                           <div
                             key={crop.id}
-                            onClick={() => handleReidTrack(crop)}
-                            className={`glass-panel interactive ${isSelected ? 'active border-primary bg-[rgba(124,58,237,0.1)]' : 'border-border-glass'} p-2 rounded-[10px] cursor-pointer flex flex-col gap-2 relative`}
+                            onClick={() => handleGalleryCropClick(crop)}
+                            className={`glass-panel interactive ${isSelected && !mergeMode ? 'active border-primary bg-[rgba(124,58,237,0.1)]' : isMergeSelected ? 'border-secondary bg-[rgba(6,182,212,0.1)]' : 'border-border-glass'} p-2 rounded-[10px] cursor-pointer flex flex-col gap-2 relative`}
                           >
                             <div className="w-full aspect-square bg-black rounded-lg overflow-hidden border border-[rgba(255,255,255,0.05)] relative">
                               <img src={imageUrl} alt="Person crop" className="w-full h-full object-cover" />
                               <div className="absolute bottom-1 right-1 text-[0.65rem] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono">
                                 ID:{crop.trackId}
                               </div>
+                              {crop.identityId && (
+                                <div className="absolute top-1 left-1 text-[0.6rem] bg-secondary/80 text-white px-1.5 py-0.5 rounded font-bold">
+                                  Person
+                                </div>
+                              )}
+                              {isMergeSelected && (
+                                <div className="absolute inset-0 bg-secondary/20 border-2 border-secondary rounded-lg" />
+                              )}
                             </div>
 
                             <div className="flex flex-col min-w-0">
@@ -1875,12 +1997,14 @@ function App({ onLogout }: AppProps) {
                               </div>
                             </div>
 
-                            <button
-                              onClick={(e) => handleDeleteReidDetection(crop.id, e)}
-                              className="absolute top-1 right-1 p-1 bg-black/40 text-text-muted hover:text-danger rounded border-none hover:bg-black/80"
-                            >
-                              <Trash2 size={12} />
-                            </button>
+                            {!mergeMode && (
+                              <button
+                                onClick={(e) => handleDeleteReidDetection(crop.id, e)}
+                                className="absolute top-1 right-1 p-1 bg-black/40 text-text-muted hover:text-danger rounded border-none hover:bg-black/80"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -1918,6 +2042,11 @@ function App({ onLogout }: AppProps) {
                             <span className="text-[0.7rem] text-text-muted flex items-center gap-1">
                               <Clock size={12} /> {new Date(selectedReidCrop.timestamp).toLocaleString()}
                             </span>
+                            {selectedReidCrop.identityId && (
+                              <span className="text-[0.65rem] text-secondary font-medium mt-0.5 inline-block">
+                                Linked identity — feedback will improve future matches
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1933,8 +2062,11 @@ function App({ onLogout }: AppProps) {
                             <div className="relative border-l-2 border-primary/25 ml-7 pl-6 flex flex-col gap-6">
                               {reidMatches.map((match) => {
                                 const matchPercentage = Math.round(match.scores.finalScore * 100);
+                                const confirmKey = `confirm:${selectedReidCrop.id}:${match.id}`;
+                                const rejectKey = `reject:${selectedReidCrop.id}:${match.id}`;
+                                const isConfirmPending = feedbackPending === confirmKey;
+                                const isRejectPending = feedbackPending === rejectKey;
 
-                                // Calculate elapsed time from query node
                                 const currentT = new Date(match.timestamp).getTime();
                                 const queryT = new Date(selectedReidCrop.timestamp).getTime();
                                 const diffSec = Math.abs(currentT - queryT) / 1000;
@@ -1944,7 +2076,6 @@ function App({ onLogout }: AppProps) {
 
                                 return (
                                   <div key={match.id} className="relative">
-                                    {/* Bullet point node */}
                                     <div className="absolute -left-[31px] top-4 bg-primary border-2 border-[#090d16] w-4 h-4 rounded-full flex items-center justify-center shadow-[0_0_8px_rgba(124,58,237,0.6)]" />
 
                                     <div className="glass-panel p-3.5 flex gap-4 items-center bg-[rgba(255,255,255,0.02)] border-border-glass rounded-xl relative hover:border-primary/30 transition-all duration-200">
@@ -1976,6 +2107,31 @@ function App({ onLogout }: AppProps) {
                                           <span>Time: {Math.round(match.scores.timeScore * 100)}%</span>
                                           <span>•</span>
                                           <span>Topo: {Math.round(match.scores.topologyScore * 100)}%</span>
+                                          {match.feedbackBoost && (
+                                            <>
+                                              <span>•</span>
+                                              <span className="text-primary">Feedback +{Math.round(match.feedbackBoost * 100)}%</span>
+                                            </>
+                                          )}
+                                        </div>
+
+                                        <div className="flex gap-2 mt-2">
+                                          <button
+                                            onClick={() => handleReidFeedback('confirm', selectedReidCrop.id, match.id)}
+                                            disabled={!!feedbackPending}
+                                            className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded flex items-center gap-1 border-none hover:text-green-400"
+                                            title="Correct match — same person"
+                                          >
+                                            <ThumbsUp size={11} className={isConfirmPending ? 'animate-pulse' : ''} /> Correct
+                                          </button>
+                                          <button
+                                            onClick={() => handleReidFeedback('reject', selectedReidCrop.id, match.id)}
+                                            disabled={!!feedbackPending}
+                                            className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded flex items-center gap-1 border-none hover:text-danger"
+                                            title="Incorrect match — not the same person"
+                                          >
+                                            <ThumbsDown size={11} className={isRejectPending ? 'animate-pulse' : ''} /> Wrong
+                                          </button>
                                         </div>
                                       </div>
                                     </div>

@@ -305,6 +305,53 @@ export async function deleteReidVectors(mongoIds: string[]) {
   }
 }
 
+export async function updateReidPayload(mongoId: string, payloadUpdate: Record<string, unknown>) {
+  const qdrantId = mongoIdToUuid(mongoId);
+  try {
+    await qdrant.setPayload(REID_COLLECTION_NAME, {
+      wait: true,
+      payload: payloadUpdate,
+      points: [qdrantId],
+    });
+  } catch (error) {
+    console.error(`Error updating ReID payload for ${mongoId}:`, error);
+  }
+}
+
+export async function updateReidPayloadBatch(mongoIds: string[], payloadUpdate: Record<string, unknown>) {
+  if (mongoIds.length === 0) return;
+  const qdrantIds = mongoIds.map(mongoIdToUuid);
+  try {
+    await qdrant.setPayload(REID_COLLECTION_NAME, {
+      wait: true,
+      payload: payloadUpdate,
+      points: qdrantIds,
+    });
+  } catch (error) {
+    console.error(`Error batch updating ReID payloads:`, error);
+  }
+}
+
+export async function retrieveReidVectors(mongoIds: string[]): Promise<{ mongoId: string; vector: number[] }[]> {
+  if (mongoIds.length === 0) return [];
+  const qdrantIds = mongoIds.map(mongoIdToUuid);
+  try {
+    const points = await qdrant.retrieve(REID_COLLECTION_NAME, {
+      ids: qdrantIds,
+      with_vector: true,
+    });
+    return points
+      .filter((p) => p.vector && (p.payload as any)?.mongoId)
+      .map((p) => ({
+        mongoId: (p.payload as any).mongoId as string,
+        vector: p.vector as number[],
+      }));
+  } catch (error) {
+    console.error('Error retrieving ReID vectors from Qdrant:', error);
+    return [];
+  }
+}
+
 export async function searchReidVectors(
   vector: number[],
   limit = 20,
