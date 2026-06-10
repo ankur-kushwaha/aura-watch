@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import { deleteClipVector, deleteClipVectors } from '../services/qdrant';
-import { getClipObjectDetections } from '../services/clipDetections';
+import { getClipDetectionsResponse } from '../services/clipDetections';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -69,8 +69,8 @@ router.get('/:id/detections', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Clip not found' });
     }
 
-    const objects = await getClipObjectDetections(id);
-    res.json(objects);
+    const result = await getClipDetectionsResponse(id);
+    res.json(result);
   } catch (error) {
     console.error('Error fetching clip detections:', error);
     res.status(500).json({ error: 'Failed to fetch clip detections' });

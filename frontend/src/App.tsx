@@ -60,6 +60,24 @@ interface ClipObjectDetection {
   matchScore?: number;
 }
 
+interface ClipReidLogEntry {
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+interface ClipReidLog {
+  trackEventsReceived: number;
+  reidDetectionsLinked?: number;
+  cropsExtracted?: number;
+  trackingEnabled?: boolean;
+  entries: ClipReidLogEntry[];
+}
+
+interface ClipDetectionsResponse {
+  objects: ClipObjectDetection[];
+  reidLog: ClipReidLog;
+}
+
 interface PersonClipReference {
   id: string;
   cameraName: string;
@@ -402,6 +420,7 @@ function App({ onLogout }: AppProps) {
   const [deletingAllClips, setDeletingAllClips] = useState<boolean>(false);
   const [selectedClip, setSelectedClip] = useState<VideoClip | null>(null);
   const [clipDetections, setClipDetections] = useState<ClipObjectDetection[]>([]);
+  const [clipReidLog, setClipReidLog] = useState<ClipReidLog | null>(null);
   const [loadingClipDetections, setLoadingClipDetections] = useState<boolean>(false);
   const [personRefsModal, setPersonRefsModal] = useState<ClipObjectDetection | null>(null);
   const [personRefs, setPersonRefs] = useState<PersonClipReference[]>([]);
@@ -679,6 +698,7 @@ function App({ onLogout }: AppProps) {
   useEffect(() => {
     if (!selectedClip) {
       setClipDetections([]);
+      setClipReidLog(null);
       return;
     }
 
@@ -686,13 +706,23 @@ function App({ onLogout }: AppProps) {
     setLoadingClipDetections(true);
 
     fetch(`${API_BASE}/clips/${selectedClip.id}/detections`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data: ClipObjectDetection[]) => {
-        if (!cancelled) setClipDetections(Array.isArray(data) ? data : []);
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: ClipDetectionsResponse | ClipObjectDetection[] | null) => {
+        if (cancelled || !data) return;
+        if (Array.isArray(data)) {
+          setClipDetections(data);
+          setClipReidLog(null);
+        } else {
+          setClipDetections(Array.isArray(data.objects) ? data.objects : []);
+          setClipReidLog(data.reidLog ?? null);
+        }
       })
       .catch((err) => {
         console.error('Failed to fetch clip detections', err);
-        if (!cancelled) setClipDetections([]);
+        if (!cancelled) {
+          setClipDetections([]);
+          setClipReidLog(null);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingClipDetections(false);
@@ -912,7 +942,12 @@ function App({ onLogout }: AppProps) {
     const detRes = await fetch(`${API_BASE}/clips/${selectedClip.id}/detections`);
     if (detRes.ok) {
       const updated = await detRes.json();
-      setClipDetections(Array.isArray(updated) ? updated : []);
+      if (Array.isArray(updated)) {
+        setClipDetections(updated);
+      } else {
+        setClipDetections(Array.isArray(updated.objects) ? updated.objects : []);
+        setClipReidLog(updated.reidLog ?? null);
+      }
     }
   };
 
@@ -2221,15 +2256,19 @@ function App({ onLogout }: AppProps) {
                             </p>
                             <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{selectedClip.summary}</p>
                           </div>
-                          {(loadingClipDetections || clipDetections.length > 0) && (
+                          {(loadingClipDetections || clipDetections.length > 0 || clipReidLog) && (
                             <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
                               <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
                                 <Fingerprint size={12} />Detected Objects
                               </p>
                               {loadingClipDetections ? (
                                 <p className="text-[0.75rem] text-text-muted">Loading detections…</p>
+                              ) : clipDetections.length === 0 ? (
+                                <p className="text-[0.75rem] text-text-muted mb-2">
+                                  No objects tracked during this clip.
+                                </p>
                               ) : (
-                                <div className="flex flex-col gap-1.5">
+                                <div className="flex flex-col gap-1.5 mb-2">
                                   {clipDetections.map((obj) => {
                                     const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
                                     return (
@@ -2279,6 +2318,29 @@ function App({ onLogout }: AppProps) {
                                       </button>
                                     );
                                   })}
+                                </div>
+                              )}
+                              {!loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
+                                <div className="pt-2 mt-1 border-t border-[rgba(56,189,248,0.12)]">
+                                  <p className="text-[0.65rem] font-bold text-text-muted uppercase mb-1.5 tracking-wider flex items-center gap-1">
+                                    <ScrollText size={11} />ReID Log
+                                  </p>
+                                  <div className="flex flex-col gap-1">
+                                    {clipReidLog.entries.map((entry, idx) => (
+                                      <p
+                                        key={idx}
+                                        className={`text-[0.72rem] leading-snug ${
+                                          entry.level === 'warn'
+                                            ? 'text-amber-400'
+                                            : entry.level === 'error'
+                                              ? 'text-red-400'
+                                              : 'text-text-muted'
+                                        }`}
+                                      >
+                                        {entry.message}
+                                      </p>
+                                    ))}
+                                  </div>
                                 </div>
                               )}
                             </div>

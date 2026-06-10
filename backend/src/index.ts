@@ -15,7 +15,7 @@ import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from 
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR, processReidTrackEventsFromClip, ReidTrackEvent } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
-import { aggregateTrackEvents } from './services/clipDetections';
+import { aggregateTrackEvents, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
 import { resolveCropImageBuffer } from './services/cropResolve';
 import { registerEdgeFileFetcher } from './services/edgeFileFetch';
@@ -377,12 +377,56 @@ async function processVideoClipInBackground(
           frameWidth,
           frameHeight,
         )
-      : Promise.resolve(0);
+      : Promise.resolve({ succeeded: 0, failures: [] as { trackId: number; error: string }[] });
 
     const summary = await summarizeVideo(summaryPath, cameraName);
-    const reidCropsExtracted = await reidFromClipPromise;
+    const reidResult = await reidFromClipPromise;
+    const reidCropsExtracted = reidResult.succeeded;
 
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Gemini summary generated successfully.`);
+
+    const reidLogEntries: ClipReidLogEntry[] = [];
+    if (!stream?.trackingEnabled) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'Object tracking was disabled on this camera stream when the clip was processed.',
+      });
+    }
+    if (trackEvents.length === 0) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'No track events were bundled with this clip. ReID requires a person to be tracked for at least ~1 second during recording.',
+      });
+    } else {
+      reidLogEntries.push({
+        level: 'info',
+        message: `Edge device bundled ${trackEvents.length} track event(s) with the clip upload.`,
+      });
+      for (const failure of reidResult.failures) {
+        reidLogEntries.push({
+          level: 'warn',
+          message: `Track ${failure.trackId}: crop extraction failed — ${failure.error}`,
+        });
+      }
+      if (reidCropsExtracted > 0) {
+        reidLogEntries.push({
+          level: 'info',
+          message: `Created ${reidCropsExtracted} ReID profile(s) from the clip.`,
+        });
+      } else if (reidResult.failures.length === 0) {
+        reidLogEntries.push({
+          level: 'warn',
+          message: 'Track events were received but no ReID profiles could be created.',
+        });
+      }
+    }
+
+    const reidLog: ClipReidLog = {
+      trackEventsReceived: trackEvents.length,
+      cropsExtracted: reidCropsExtracted,
+      trackingEnabled: stream?.trackingEnabled ?? false,
+      entries: reidLogEntries,
+    };
 
     if (trackEvents.length > 0) {
       if (reidCropsExtracted > 0) {
@@ -412,6 +456,7 @@ async function processVideoClipInBackground(
         deviceId: deviceId,
         streamId: streamId,
         detectedObjects: detectedObjects as object,
+        reidLog: reidLog as object,
       }
     });
     await linkDetectionsToClip(clipDb.id, filename);

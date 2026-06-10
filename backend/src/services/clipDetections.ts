@@ -22,6 +22,24 @@ export interface ClipObjectDisplay {
   matchScore?: number;
 }
 
+export interface ClipReidLogEntry {
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+export interface ClipReidLog {
+  trackEventsReceived: number;
+  reidDetectionsLinked?: number;
+  cropsExtracted?: number;
+  trackingEnabled?: boolean;
+  entries: ClipReidLogEntry[];
+}
+
+export interface ClipDetectionsResponse {
+  objects: ClipObjectDisplay[];
+  reidLog: ClipReidLog;
+}
+
 export function aggregateTrackEvents(trackEvents: ReidTrackEvent[]): ClipDetectedObjectInput[] {
   const byTrack = new Map<number, ClipDetectedObjectInput>();
 
@@ -172,4 +190,126 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
   }
 
   return results;
+}
+
+export async function buildClipReidLog(
+  clipId: string,
+  objects: ClipObjectDisplay[],
+): Promise<ClipReidLog> {
+  const clip = await prisma.videoClip.findUnique({ where: { id: clipId } });
+  if (!clip) {
+    return {
+      trackEventsReceived: 0,
+      entries: [{ level: 'error', message: 'Clip not found.' }],
+    };
+  }
+
+  const storedLog = clip.reidLog as ClipReidLog | null;
+  const entries: ClipReidLogEntry[] = storedLog?.entries?.length
+    ? [...storedLog.entries]
+    : [];
+
+  const reidDetectionsLinked = await prisma.reidDetection.count({
+    where: {
+      OR: [{ clipId: clip.id }, { clipFilename: clip.filename }],
+    },
+  });
+
+  const trackEventsReceived = Array.isArray(clip.detectedObjects)
+    ? (clip.detectedObjects as unknown as ClipDetectedObjectInput[]).length
+    : 0;
+
+  if (!storedLog?.entries?.length) {
+    const stream = clip.streamId
+      ? await prisma.cameraStream.findUnique({ where: { streamId: clip.streamId } })
+      : null;
+
+    if (stream && !stream.trackingEnabled) {
+      entries.push({
+        level: 'info',
+        message: 'Object tracking is disabled on this camera stream.',
+      });
+    }
+
+    if (trackEventsReceived === 0 && reidDetectionsLinked === 0) {
+      entries.push({
+        level: 'info',
+        message: 'No person tracks were recorded with this clip. Enable tracking and ensure a person is visible for at least ~1 second during recording.',
+      });
+    } else if (trackEventsReceived > 0) {
+      entries.push({
+        level: 'info',
+        message: `${trackEventsReceived} object track(s) detected during recording.`,
+      });
+    }
+
+    if (trackEventsReceived > 0 && reidDetectionsLinked === 0) {
+      entries.push({
+        level: 'warn',
+        message: 'Tracks were detected but no ReID profiles were stored. Crop extraction may have failed during processing.',
+      });
+    } else if (reidDetectionsLinked > 0) {
+      entries.push({
+        level: 'info',
+        message: `${reidDetectionsLinked} ReID detection(s) linked to this clip.`,
+      });
+    }
+  }
+
+  for (const obj of objects) {
+    if (obj.className !== 'person') continue;
+
+    if (!obj.detectionId) {
+      entries.push({
+        level: 'warn',
+        message: `Track ${obj.trackId}: detected during clip but no ReID profile was stored.`,
+      });
+      continue;
+    }
+
+    if (obj.labelStatus === 'confirmed' && obj.label) {
+      entries.push({
+        level: 'info',
+        message: `Track ${obj.trackId}: identified as "${obj.label}".`,
+      });
+    } else if (obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null) {
+      entries.push({
+        level: 'info',
+        message: `Track ${obj.trackId}: ${Math.round(obj.matchScore * 100)}% match with "${obj.label}" (suggested).`,
+      });
+    } else {
+      entries.push({
+        level: 'info',
+        message: `Track ${obj.trackId}: ReID profile created, no identity match yet.`,
+      });
+    }
+
+    if (obj.cropFilename && !cropExistsLocally(obj.cropFilename)) {
+      entries.push({
+        level: 'info',
+        message: `Track ${obj.trackId}: crop image not cached — will be fetched from edge or regenerated from clip.`,
+      });
+    }
+  }
+
+  if (entries.length === 0) {
+    entries.push({
+      level: 'info',
+      message: 'No ReID activity recorded for this clip.',
+    });
+  }
+
+  return {
+    trackEventsReceived: storedLog?.trackEventsReceived ?? trackEventsReceived,
+    reidDetectionsLinked,
+    cropsExtracted: storedLog?.cropsExtracted,
+    trackingEnabled: storedLog?.trackingEnabled,
+    entries,
+  };
+}
+
+export async function getClipDetectionsResponse(clipId: string): Promise<ClipDetectionsResponse> {
+  const objects = await getClipObjectDetections(clipId);
+  const reidLog = await buildClipReidLog(clipId, objects);
+  return { objects, reidLog };
 }

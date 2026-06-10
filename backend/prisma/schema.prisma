@@ -19,6 +19,7 @@ model VideoClip {
   deviceId        String?
   streamId        String?
   detectedObjects Json?
+  reidLog           Json?
   stream          CameraStream?   @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
   detections      ReidDetection[]
 }

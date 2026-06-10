@@ -140,10 +140,11 @@ export async function processReidTrackEventsFromClip(
   trackEvents: ReidTrackEvent[],
   frameWidth?: number,
   frameHeight?: number,
-): Promise<number> {
-  if (!trackEvents.length) return 0;
+): Promise<{ succeeded: number; failures: { trackId: number; error: string }[] }> {
+  if (!trackEvents.length) return { succeeded: 0, failures: [] };
 
   let succeeded = 0;
+  const failures: { trackId: number; error: string }[] = [];
   for (const event of trackEvents) {
     const timestamp = new Date(clipStartMs + event.offsetMs);
     const filename = `crop_${timestamp.getTime()}_${deviceId}_${event.trackId}.jpg`;
@@ -174,6 +175,7 @@ export async function processReidTrackEventsFromClip(
         `[ReID Router] Extracted ReID crop from clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
       );
     } catch (err: any) {
+      failures.push({ trackId: event.trackId, error: err.message });
       console.error(
         `[ReID Router] Failed to extract ReID from clip for track ${event.trackId} @ ${event.offsetMs}ms:`,
         err.message,
@@ -181,7 +183,7 @@ export async function processReidTrackEventsFromClip(
     }
   }
 
-  return succeeded;
+  return { succeeded, failures };
 }
 
 /**
