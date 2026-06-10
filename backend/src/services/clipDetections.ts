@@ -1,6 +1,7 @@
 import prisma from './db';
 import { retrieveReidVectors, searchIdentityPrototypes } from './qdrant';
 import { defaultPersonLabel } from './reidPeople';
+import { cropExistsLocally } from './cropResolve';
 import type { ReidTrackEvent } from '../routes/reid';
 
 export interface ClipDetectedObjectInput {
@@ -91,6 +92,29 @@ async function resolveIdentityLabel(
   return { labelStatus: 'none' };
 }
 
+type ReidDetectionRow = Awaited<ReturnType<typeof prisma.reidDetection.findMany>>[number];
+
+function pickBestDetectionForTrack(
+  detections: ReidDetectionRow[],
+  clipId: string,
+): ReidDetectionRow | undefined {
+  if (detections.length === 0) return undefined;
+
+  const linkedToClip = detections.filter(
+    (d) => d.clipId === clipId && d.clipOffsetMs != null,
+  );
+  const candidates = linkedToClip.length > 0 ? linkedToClip : detections;
+
+  for (const detection of [...candidates].reverse()) {
+    if (cropExistsLocally(detection.filename)) return detection;
+  }
+
+  const withOffset = [...candidates].reverse().find((d) => d.clipOffsetMs != null);
+  if (withOffset) return withOffset;
+
+  return candidates[candidates.length - 1];
+}
+
 export async function getClipObjectDetections(clipId: string): Promise<ClipObjectDisplay[]> {
   const clip = await prisma.videoClip.findUnique({ where: { id: clipId } });
   if (!clip) return [];
@@ -110,25 +134,28 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
     include: { identity: { select: { id: true, label: true } } },
   });
 
-  const reidByTrack = new Map<number, typeof reidDetections[number]>();
+  const reidByTrack = new Map<number, ReidDetectionRow[]>();
   for (const detection of reidDetections) {
-    if (!reidByTrack.has(detection.trackId)) {
-      reidByTrack.set(detection.trackId, detection);
-    }
+    const list = reidByTrack.get(detection.trackId) ?? [];
+    list.push(detection);
+    reidByTrack.set(detection.trackId, list);
   }
 
   const objectSeeds: ClipDetectedObjectInput[] = storedObjects.length > 0
     ? storedObjects
-    : [...reidByTrack.values()].map((detection) => ({
-        trackId: detection.trackId,
-        className: detection.className,
-        confidence: 0,
-      }));
+    : [...reidByTrack.entries()].map(([trackId, detections]) => {
+        const best = pickBestDetectionForTrack(detections, clip.id) ?? detections[0];
+        return {
+          trackId,
+          className: best.className,
+          confidence: 0,
+        };
+      });
 
   const results: ClipObjectDisplay[] = [];
 
   for (const object of objectSeeds) {
-    const detection = reidByTrack.get(object.trackId);
+    const detection = pickBestDetectionForTrack(reidByTrack.get(object.trackId) ?? [], clip.id);
     const identityInfo = object.className === 'person' && detection
       ? await resolveIdentityLabel(detection.id, detection.identityId, clip.camera, object.trackId)
       : { labelStatus: 'none' as const };
