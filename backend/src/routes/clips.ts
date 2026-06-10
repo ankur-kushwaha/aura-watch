@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import { deleteClipVector, deleteClipVectors } from '../services/qdrant';
+import { getClipObjectDetections } from '../services/clipDetections';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -17,19 +18,62 @@ const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../s
 
 /**
  * GET /api/clips
- * Retrieve all video clips from database ordered by timestamp descending.
+ * Retrieve video clips ordered by timestamp descending.
+ * Optional query params: limit, offset — returns { clips, total, hasMore }.
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
+    const limitParam = req.query.limit;
+    const offsetParam = req.query.offset;
+
+    if (limitParam !== undefined) {
+      const limit = Math.min(Math.max(parseInt(String(limitParam), 10) || 10, 1), 100);
+      const offset = Math.max(parseInt(String(offsetParam ?? '0'), 10) || 0, 0);
+
+      const [clips, total] = await Promise.all([
+        prisma.videoClip.findMany({
+          orderBy: { timestamp: 'desc' },
+          take: limit,
+          skip: offset,
+        }),
+        prisma.videoClip.count(),
+      ]);
+
+      res.json({
+        clips,
+        total,
+        hasMore: offset + clips.length < total,
+      });
+      return;
+    }
+
     const clips = await prisma.videoClip.findMany({
-      orderBy: {
-        timestamp: 'desc',
-      },
+      orderBy: { timestamp: 'desc' },
     });
     res.json(clips);
   } catch (error) {
     console.error('Error fetching clips:', error);
     res.status(500).json({ error: 'Failed to fetch clips' });
+  }
+});
+
+/**
+ * GET /api/clips/:id/detections
+ * Detected objects for a clip with confirmed labels or embedding match scores.
+ */
+router.get('/:id/detections', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const clip = await prisma.videoClip.findUnique({ where: { id } });
+    if (!clip) {
+      return res.status(404).json({ error: 'Clip not found' });
+    }
+
+    const objects = await getClipObjectDetections(id);
+    res.json(objects);
+  } catch (error) {
+    console.error('Error fetching clip detections:', error);
+    res.status(500).json({ error: 'Failed to fetch clip detections' });
   }
 });
 

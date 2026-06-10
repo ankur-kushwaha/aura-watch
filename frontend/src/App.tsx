@@ -49,6 +49,15 @@ interface VideoClip {
   deviceId?: string;
 }
 
+interface ClipObjectDetection {
+  trackId: number;
+  className: string;
+  confidence?: number;
+  labelStatus: 'confirmed' | 'suggested' | 'none';
+  label?: string;
+  matchScore?: number;
+}
+
 interface EdgeDevice {
   id: string;
   deviceId: string;
@@ -152,6 +161,7 @@ interface ReidRoute {
 }
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
+const CLIPS_PAGE_SIZE = 10;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 const HUB_HTTP = import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
 
@@ -311,7 +321,7 @@ function App({ onLogout }: AppProps) {
   const [journalLogs, setJournalLogs] = useState<string>('');
   const [loadingJournalLogs, setLoadingJournalLogs] = useState<boolean>(false);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'events' | 'reid'>('events');
+  const [activeTab, setActiveTab] = useState<'events' | 'ai' | 'reid'>('events');
 
   // ReID States
   const [reidPeople, setReidPeople] = useState<ReidPerson[]>([]);
@@ -369,9 +379,13 @@ function App({ onLogout }: AppProps) {
   const [motionRatio, setMotionRatio] = useState<number>(0);
   const [logs, setLogs] = useState<{ message: string; timestamp: string }[]>([]);
   const [clips, setClips] = useState<VideoClip[]>([]);
+  const [clipsTotal, setClipsTotal] = useState<number>(0);
   const [loadingClips, setLoadingClips] = useState<boolean>(false);
+  const [loadingMoreClips, setLoadingMoreClips] = useState<boolean>(false);
   const [deletingAllClips, setDeletingAllClips] = useState<boolean>(false);
   const [selectedClip, setSelectedClip] = useState<VideoClip | null>(null);
+  const [clipDetections, setClipDetections] = useState<ClipObjectDetection[]>([]);
+  const [loadingClipDetections, setLoadingClipDetections] = useState<boolean>(false);
 
   // RAG Q&A states
   const [query, setQuery] = useState<string>('');
@@ -421,12 +435,13 @@ function App({ onLogout }: AppProps) {
   const fetchClips = useCallback(async () => {
     setLoadingClips(true);
     try {
-      const res = await fetch(`${API_BASE}/clips`);
+      const res = await fetch(`${API_BASE}/clips?limit=${CLIPS_PAGE_SIZE}&offset=0`);
       const data = await res.json();
-      setClips(data);
+      setClips(data.clips);
+      setClipsTotal(data.total);
       setSelectedClip((prevSelected) => {
-        if (data.length > 0 && !prevSelected) {
-          return data[0];
+        if (data.clips.length > 0 && !prevSelected) {
+          return data.clips[0];
         }
         return prevSelected;
       });
@@ -436,6 +451,21 @@ function App({ onLogout }: AppProps) {
       setLoadingClips(false);
     }
   }, []);
+
+  const loadMoreClips = useCallback(async () => {
+    if (loadingMoreClips || clips.length >= clipsTotal) return;
+    setLoadingMoreClips(true);
+    try {
+      const res = await fetch(`${API_BASE}/clips?limit=${CLIPS_PAGE_SIZE}&offset=${clips.length}`);
+      const data = await res.json();
+      setClips((prev) => [...prev, ...data.clips]);
+      setClipsTotal(data.total);
+    } catch (err) {
+      console.error('Failed to load more clips', err);
+    } finally {
+      setLoadingMoreClips(false);
+    }
+  }, [clips.length, clipsTotal, loadingMoreClips]);
 
   const connectWS = useCallback(function connect() {
     if (
@@ -531,6 +561,7 @@ function App({ onLogout }: AppProps) {
         }
         case 'new_clip':
           setClips((prev) => [data.clip, ...prev]);
+          setClipsTotal((prev) => prev + 1);
           setSelectedClip(data.clip);
           break;
         case 'new_reid_crop':
@@ -585,6 +616,33 @@ function App({ onLogout }: AppProps) {
       fetchClips();
     });
   }, [fetchDevices, fetchClips]);
+
+  useEffect(() => {
+    if (!selectedClip) {
+      setClipDetections([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingClipDetections(true);
+
+    fetch(`${API_BASE}/clips/${selectedClip.id}/detections`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: ClipObjectDetection[]) => {
+        if (!cancelled) setClipDetections(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch clip detections', err);
+        if (!cancelled) setClipDetections([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingClipDetections(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClip?.id]);
 
   // Sync selected stream details when selectedStreamId or streams list changes
   useEffect(() => {
@@ -1205,6 +1263,7 @@ function App({ onLogout }: AppProps) {
       const res = await fetch(`${API_BASE}/clips/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setClips((prev) => prev.filter((c) => c.id !== id));
+        setClipsTotal((prev) => Math.max(0, prev - 1));
         if (selectedClip?.id === id) {
           setSelectedClip(null);
         }
@@ -1216,13 +1275,14 @@ function App({ onLogout }: AppProps) {
 
   const handleDeleteAllClips = async () => {
     if (clips.length === 0) return;
-    if (!confirm(`Are you sure you want to delete all ${clips.length} recorded clips? This cannot be undone.`)) return;
+    if (!confirm(`Are you sure you want to delete all ${clipsTotal} recorded clips? This cannot be undone.`)) return;
 
     setDeletingAllClips(true);
     try {
       const res = await fetch(`${API_BASE}/clips`, { method: 'DELETE' });
       if (res.ok) {
         setClips([]);
+        setClipsTotal(0);
         setSelectedClip(null);
       }
     } catch (err) {
@@ -1275,6 +1335,7 @@ function App({ onLogout }: AppProps) {
     const clip = clips.find(c => c.id === clipId);
     if (clip) {
       setSelectedClip(clip);
+      setActiveTab('events');
     }
   };
 
@@ -1282,6 +1343,8 @@ function App({ onLogout }: AppProps) {
     const date = new Date(dateStr);
     return date.toLocaleString();
   };
+
+  const clipsHasMore = clips.length < clipsTotal;
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
@@ -1324,7 +1387,16 @@ function App({ onLogout }: AppProps) {
             : 'text-text-secondary hover:text-text-primary bg-transparent'
             }`}
         >
-          <Video size={16} /> Archive & AI Analyst
+          <Video size={16} /> Event Archive
+        </button>
+        <button
+          onClick={() => setActiveTab('ai')}
+          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'ai'
+            ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+            : 'text-text-secondary hover:text-text-primary bg-transparent'
+            }`}
+        >
+          <Sparkles size={16} /> Ask Camera AI
         </button>
         <button
           onClick={() => setActiveTab('reid')}
@@ -1692,12 +1764,12 @@ function App({ onLogout }: AppProps) {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: CLIPS PLAYBACK & AI CHAT */}
+        {/* RIGHT COLUMN: TAB CONTENT */}
         <div className="lg:col-span-8 flex flex-col gap-6">
           {activeTab === 'events' ? (
             <>
               {/* EVENT ARCHIVE & PLAYBACK PANEL */}
-              <div className="glass-panel p-5 flex flex-col h-[480px]">
+              <div className="glass-panel p-5 flex flex-col h-[984px]">
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
                     <Video size={18} color="var(--color-primary)" /> Event Archive & Playback
@@ -1728,35 +1800,50 @@ function App({ onLogout }: AppProps) {
                         No clips recorded yet.
                       </div>
                     ) : (
-                      clips.map((c) => (
-                        <div
-                          key={c.id}
-                          onClick={() => setSelectedClip(c)}
-                          className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-center cursor-pointer transition-all duration-200 w-full min-w-0`}
-                        >
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0">
-                              <Play size={16} fill="currentColor" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex justify-between items-center mb-0.5">
-                                <span className="text-[0.85rem] font-semibold text-text-primary">{c.camera}</span>
-                                <span className="text-[0.7rem] text-text-muted">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              </div>
-                              <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
-                                {c.summary}
-                              </p>
-                            </div>
-                          </div>
-
-                          <button
-                            onClick={(e) => handleDeleteClip(c.id, e)}
-                            className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none"
+                      <>
+                        {clips.map((c) => (
+                          <div
+                            key={c.id}
+                            onClick={() => setSelectedClip(c)}
+                            className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-center cursor-pointer transition-all duration-200 w-full min-w-0`}
                           >
-                            <Trash2 size={14} />
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0">
+                                <Play size={16} fill="currentColor" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex justify-between items-center mb-0.5">
+                                  <span className="text-[0.85rem] font-semibold text-text-primary">{c.camera}</span>
+                                  <span className="text-[0.7rem] text-text-muted">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                </div>
+                                <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
+                                  {c.summary}
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={(e) => handleDeleteClip(c.id, e)}
+                              className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                        {clipsHasMore && (
+                          <button
+                            type="button"
+                            onClick={loadMoreClips}
+                            disabled={loadingMoreClips}
+                            className="btn btn-secondary w-full py-2 text-[0.8rem] rounded-lg flex items-center justify-center gap-1.5"
+                          >
+                            <RefreshCw size={12} className={loadingMoreClips ? 'animate-spin' : ''} />
+                            {loadingMoreClips
+                              ? 'Loading…'
+                              : `Load more (${clips.length} of ${clipsTotal})`}
                           </button>
-                        </div>
-                      ))
+                        )}
+                      </>
                     )}
                   </div>
 
@@ -1789,6 +1876,46 @@ function App({ onLogout }: AppProps) {
                             </p>
                             <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{selectedClip.summary}</p>
                           </div>
+                          {(loadingClipDetections || clipDetections.length > 0) && (
+                            <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
+                              <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
+                                <Fingerprint size={12} />Detected Objects
+                              </p>
+                              {loadingClipDetections ? (
+                                <p className="text-[0.75rem] text-text-muted">Loading detections…</p>
+                              ) : (
+                                <div className="flex flex-col gap-1.5">
+                                  {clipDetections.map((obj) => (
+                                    <div
+                                      key={obj.trackId}
+                                      className="flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary"
+                                    >
+                                      <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
+                                        {obj.className}
+                                        {obj.confidence != null && obj.confidence > 0 && (
+                                          <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
+                                        )}
+                                      </span>
+                                      {obj.trackId > 0 && (
+                                        <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
+                                      )}
+                                      {obj.labelStatus === 'confirmed' && obj.label && (
+                                        <span className="text-[0.72rem] text-green-400 font-medium">
+                                          {obj.label}
+                                          <span className="text-text-muted font-normal ml-1">(confirmed)</span>
+                                        </span>
+                                      )}
+                                      {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
+                                        <span className="text-[0.72rem] text-secondary">
+                                          {Math.round(obj.matchScore * 100)}% match · {obj.label}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -1801,9 +1928,9 @@ function App({ onLogout }: AppProps) {
                   </div>
                 </div>
               </div>
-
-              {/* AI ANALYST PANEL (RAG CHAT) */}
-              <div className="glass-panel p-5 flex flex-col h-[480px]">
+            </>
+          ) : activeTab === 'ai' ? (
+              <div className="glass-panel p-5 flex flex-col h-[984px]">
                 <div className="flex justify-between items-center mb-3">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
                     <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
@@ -2036,7 +2163,6 @@ function App({ onLogout }: AppProps) {
                   </button>
                 </form>
               </div>
-            </>
           ) : reidView === 'people' ? (
             <div className="flex flex-col gap-6 h-[984px]">
               <div className="glass-panel p-5 flex flex-col flex-1 min-h-0">

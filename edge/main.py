@@ -963,7 +963,6 @@ class EdgeAgent:
                     p_data["last_preview_sent_at"] = 0.0
                     p_data["preview_stalled"] = False
                     state = "enabled" if stream_state else "disabled"
-                    self.send_log(f"Low-latency preview streaming {state} for stream {stream_id}.")
 
             elif msg_type == "request_stream_file":
                 self._handle_stream_file_request(data["requestId"], data["filename"])

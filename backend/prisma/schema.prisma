@@ -9,16 +9,17 @@ generator client {
 }
 
 model VideoClip {
-  id        String        @id @default(auto()) @map("_id") @db.ObjectId
-  filepath  String
-  filename  String
-  timestamp DateTime      @default(now())
-  summary   String
-  duration  Float         @default(10.0)
-  camera    String
-  deviceId  String?
-  streamId  String?
-  stream    CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
+  id              String        @id @default(auto()) @map("_id") @db.ObjectId
+  filepath        String
+  filename        String
+  timestamp       DateTime      @default(now())
+  summary         String
+  duration        Float         @default(10.0)
+  camera          String
+  deviceId        String?
+  streamId        String?
+  detectedObjects Json?
+  stream          CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
 }
 
 model EdgeDevice {

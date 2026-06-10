@@ -15,6 +15,7 @@ import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from 
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR, processReidTrackEventsFromClip, ReidTrackEvent } from './routes/reid';
 import { initQdrant, upsertClipVector } from './services/qdrant';
+import { aggregateTrackEvents } from './services/clipDetections';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import { transcodeForGemini } from './services/videoTranscode';
@@ -357,6 +358,8 @@ async function processVideoClipInBackground(
       );
     }
 
+    const detectedObjects = trackEvents.length > 0 ? aggregateTrackEvents(trackEvents) : undefined;
+
     // 2. Save metadata to MongoDB via Prisma
     const clipDb = await prisma.videoClip.create({
       data: {
@@ -368,6 +371,7 @@ async function processVideoClipInBackground(
         camera: cameraName,
         deviceId: deviceId,
         streamId: streamId,
+        detectedObjects: detectedObjects as object,
       }
     });
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
