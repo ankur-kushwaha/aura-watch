@@ -2141,7 +2141,9 @@ function App({ onLogout }: AppProps) {
                             <h4 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-2">Likely Transitions & Timeline</h4>
 
                             <div className="relative border-l-2 border-primary/25 ml-7 pl-6 flex flex-col gap-6">
-                              {reidMatches.map((match) => {
+                              {[...reidMatches]
+                                .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+                                .map((match) => {
                                 const matchPercentage = Math.round(match.scores.finalScore * 100);
                                 const confirmKey = `confirm:${selectedReidCrop.id}:${match.id}`;
                                 const rejectKey = `reject:${selectedReidCrop.id}:${match.id}`;
