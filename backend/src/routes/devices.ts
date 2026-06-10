@@ -285,28 +285,8 @@ router.post('/:deviceId/command/reboot', async (req: Request, res: Response) => 
 });
 
 /**
- * POST /api/devices/:deviceId/command/restart-service
- * Restart the aura-watch-edge systemd service on the device
- */
-router.post('/:deviceId/command/restart-service', async (req: Request, res: Response) => {
-  const { deviceId } = req.params;
-  try {
-    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    if (!device) {
-      return res.status(404).json({ error: 'Device not found' });
-    }
-
-    const result = await sendDeviceCommand(deviceId, 'restart_service');
-    res.json({ message: result.message || 'Service restart initiated', ...result });
-  } catch (error: any) {
-    const status = error.message === 'Device is offline' ? 503 : 500;
-    res.status(status).json({ error: error.message || 'Failed to restart service' });
-  }
-});
-
-/**
  * POST /api/devices/:deviceId/command/update-service
- * git pull, refresh Python deps + systemd unit, then restart the edge agent on the device
+ * Force git pull, refresh Python deps + systemd unit, then restart the edge agent on the device
  */
 router.post('/:deviceId/command/update-service', async (req: Request, res: Response) => {
   const { deviceId } = req.params;

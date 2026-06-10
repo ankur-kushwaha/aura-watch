@@ -25,7 +25,6 @@ import {
   Copy,
   Check,
   Power,
-  RotateCcw,
   ScrollText,
   Download,
   AlertTriangle,
@@ -1484,30 +1483,11 @@ function App({ onLogout }: AppProps) {
     }
   };
 
-  const handleRestartService = async (deviceId: string, deviceName: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(`Restart aura-watch-edge service on "${deviceName}"?`)) return;
-
-    setDeviceCommandPending(`${deviceId}:restart`);
-    try {
-      const res = await fetch(`${API_BASE}/devices/${deviceId}/command/restart-service`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to restart service');
-      }
-    } catch (err) {
-      console.error('Failed to restart service', err);
-      alert('Failed to restart service');
-    } finally {
-      setDeviceCommandPending(null);
-    }
-  };
-
   const handleUpdateService = async (deviceId: string, deviceName: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (
       !confirm(
-        `Update "${deviceName}"?\n\nThis will git pull, refresh dependencies and the systemd service, then restart the edge agent.`
+        `Update "${deviceName}"?\n\nThis will force-pull the latest code, refresh dependencies and the systemd service, then restart the edge agent. Local changes on the device will be discarded.`
       )
     ) {
       return;
@@ -1869,19 +1849,10 @@ function App({ onLogout }: AppProps) {
                           {deviceCommandPending === `${dev.deviceId}:reboot` ? 'Rebooting...' : 'Reboot'}
                         </button>
                         <button
-                          onClick={(e) => handleRestartService(dev.deviceId, dev.name, e)}
-                          disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:restart`}
-                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
-                          title="Restart aura-watch-edge Service"
-                        >
-                          <RotateCcw size={11} />
-                          {deviceCommandPending === `${dev.deviceId}:restart` ? 'Restarting...' : 'Restart Service'}
-                        </button>
-                        <button
                           onClick={(e) => handleUpdateService(dev.deviceId, dev.name, e)}
                           disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:update`}
                           className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
-                          title="Run git pull on the edge device"
+                          title="Force-pull latest code on the edge device"
                         >
                           <Download size={11} />
                           {deviceCommandPending === `${dev.deviceId}:update` ? 'Updating...' : 'Update'}

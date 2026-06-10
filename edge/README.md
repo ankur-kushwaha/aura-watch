@@ -198,7 +198,7 @@ sudo systemctl restart aura-watch-edge.service
 sudo journalctl -u aura-watch-edge.service -f
 ```
 
-**Remote update from the cloud dashboard** runs `git pull`, refreshes Python dependencies, re-installs the systemd unit from `scripts/aura-watch-edge.service.template`, and restarts the agent. Devices that were installed before this feature need a **one-time** re-run of `./scripts/setup-service.sh` on the Pi so passwordless `refresh-systemd-service.sh` is allowed in sudoers.
+**Remote update from the cloud dashboard** force-pulls the latest code (`git fetch` + `git reset --hard`), refreshes Python dependencies, re-installs the systemd unit from `scripts/aura-watch-edge.service.template`, and restarts the agent. Devices that were installed before this feature need a **one-time** re-run of `./scripts/setup-service.sh` on the Pi so passwordless `refresh-systemd-service.sh` is allowed in sudoers.
 
 ---
 

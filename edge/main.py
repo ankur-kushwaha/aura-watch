@@ -654,14 +654,26 @@ class EdgeAgent:
             if p_data_curr and not p_data_curr["stop_event"].is_set():
                 self.send_status(stream_id, "Monitoring" if (config and config.tracking_enabled) else "Idle")
 
-    def _schedule_service_restart(self, delay: float = 0.5):
-        """Exit with failure so systemd restarts the service (no sudo)."""
+    # --- Remote device commands (cloud dashboard) ---
 
-        def do_restart():
+    def _send_command_response(self, request_id: str, success: bool, **fields: Any) -> None:
+        self._ws_send(
+            {
+                "type": "response_device_command",
+                "requestId": request_id,
+                "success": success,
+                **fields,
+            }
+        )
+
+    def _schedule_graceful_exit(self, delay: float = 1.0) -> None:
+        """Shut down cleanly so systemd restarts the agent after a remote update."""
+
+        def _exit():
             self.shutdown()
-            os._exit(1)
+            os._exit(0)
 
-        threading.Timer(delay, do_restart).start()
+        threading.Timer(delay, _exit).start()
 
     def _find_repo_root(self) -> str:
         parent = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -671,24 +683,35 @@ class EdgeAgent:
             return BASE_DIR
         return BASE_DIR
 
-    def _git_pull(self, repo_root: str) -> tuple[bool, str]:
-        pull_result = subprocess.run(
-            ["git", "pull"],
+    def _run_git(self, repo_root: str, args: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
             cwd=repo_root,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
         )
-        output_parts: list[str] = []
-        if pull_result.stdout.strip():
-            output_parts.append(pull_result.stdout.strip())
-        if pull_result.stderr.strip():
-            output_parts.append(pull_result.stderr.strip())
-        if pull_result.returncode != 0:
-            return False, "\n".join(output_parts) or "git pull failed"
+
+    def _git_force_pull(self, repo_root: str) -> tuple[bool, str]:
+        branch_result = self._run_git(repo_root, ["symbolic-ref", "--short", "HEAD"], timeout=30)
+        if branch_result.returncode != 0:
+            detail = (branch_result.stderr or branch_result.stdout or "").strip()
+            return False, detail or "Could not determine current git branch"
+
+        branch = branch_result.stdout.strip()
+        fetch_result = self._run_git(repo_root, ["fetch", "origin", branch])
+        output_parts = [line for line in (fetch_result.stdout, fetch_result.stderr) if line.strip()]
+        if fetch_result.returncode != 0:
+            return False, "\n".join(output_parts) or "git fetch failed"
+
+        reset_result = self._run_git(repo_root, ["reset", "--hard", f"origin/{branch}"])
+        output_parts.extend(line for line in (reset_result.stdout, reset_result.stderr) if line.strip())
+        if reset_result.returncode != 0:
+            return False, "\n".join(output_parts) or "git reset failed"
+
         return True, "\n".join(output_parts)
 
-    def _run_script_with_logs(self, cmd: list[str], cwd: str, timeout_sec: float) -> tuple[bool, str]:
+    def _run_logged_command(self, cmd: list[str], cwd: str, timeout_sec: float) -> tuple[bool, str]:
         proc = subprocess.Popen(
             cmd,
             cwd=cwd,
@@ -739,56 +762,38 @@ class EdgeAgent:
             if line.strip():
                 self.send_log(line.strip())
         if result.returncode != 0:
-            hint = (
-                "Run ./scripts/setup-service.sh once on the device to grant passwordless systemd refresh."
-            )
+            hint = "Run ./scripts/setup-service.sh once on the device to grant passwordless systemd refresh."
             if "password" in output.lower() or result.returncode == 1:
                 return False, f"{output}\n{hint}".strip()
             return False, output or "Failed to refresh systemd service"
         return True, output or "Systemd unit refreshed."
 
-    def _run_update_service(self, request_id: str):
-        def respond(success: bool, message: str = "", **extra: Any):
-            self._ws_send(
-                {
-                    "type": "response_device_command",
-                    "requestId": request_id,
-                    "success": success,
-                    "message": message,
-                    **extra,
-                }
-            )
+    def _run_update(self, request_id: str) -> None:
+        def respond(success: bool, message: str = "", **extra: Any) -> None:
+            self._send_command_response(request_id, success, message=message, **extra)
 
         try:
             repo_root = self._find_repo_root()
             if not os.path.isdir(os.path.join(repo_root, ".git")):
-                respond(
-                    False,
-                    error=f"No git repository found at {repo_root}. Install via install.sh first.",
-                )
+                respond(False, error=f"No git repository found at {repo_root}. Install via install.sh first.")
                 return
 
-            self.send_log(f"Running git pull in {repo_root}...")
-
-            pull_ok, pull_output = self._git_pull(repo_root)
-
+            self.send_log(f"Force-pulling latest code in {repo_root}...")
+            pull_ok, pull_output = self._git_force_pull(repo_root)
             if not pull_ok:
-                respond(
-                    False,
-                    error="git pull failed",
-                    output=pull_output,
-                )
+                respond(False, error="git force pull failed", output=pull_output)
                 return
 
-            self.send_log(f"git pull complete: {pull_output.splitlines()[-1] if pull_output else 'done'}")
+            summary = pull_output.splitlines()[-1] if pull_output else "done"
+            self.send_log(f"Force pull complete: {summary}")
 
             edge_dir = os.path.join(repo_root, "edge") if os.path.isdir(os.path.join(repo_root, "edge")) else repo_root
-            venv_script = os.path.join(edge_dir, "scripts", "setup-venv.sh")
             update_output = [pull_output]
 
+            venv_script = os.path.join(edge_dir, "scripts", "setup-venv.sh")
             if os.path.isfile(venv_script):
                 self.send_log("Updating Python dependencies...")
-                venv_ok, venv_output = self._run_script_with_logs(
+                venv_ok, venv_output = self._run_logged_command(
                     ["sh", venv_script, edge_dir, "python3"],
                     cwd=edge_dir,
                     timeout_sec=600,
@@ -806,16 +811,12 @@ class EdgeAgent:
             if systemd_output:
                 update_output.append(systemd_output)
             if not systemd_ok:
-                respond(
-                    False,
-                    error="Systemd service refresh failed",
-                    output="\n\n".join(update_output),
-                )
+                respond(False, error="Systemd service refresh failed", output="\n\n".join(update_output))
                 return
 
             combined_output = "\n\n".join(part for part in update_output if part)
-            respond(True, "Update complete. Restarting edge service...", output=combined_output)
-            self._schedule_service_restart()
+            respond(True, message="Update complete. Restarting edge agent...", output=combined_output)
+            self._schedule_graceful_exit()
         except subprocess.TimeoutExpired:
             respond(False, error="Update timed out.")
         except FileNotFoundError as exc:
@@ -823,22 +824,18 @@ class EdgeAgent:
         except Exception as exc:
             respond(False, error=f"Update failed: {exc}")
 
-    def _handle_device_command(self, request_id: str, command: str, params: dict[str, Any]):
-        def respond(success: bool, message: str = "", **extra: Any):
-            self._ws_send(
-                {
-                    "type": "response_device_command",
-                    "requestId": request_id,
-                    "success": success,
-                    "message": message,
-                    **extra,
-                }
-            )
+    def _reboot_device(self) -> None:
+        self.shutdown()
+        subprocess.run(["sudo", "-n", "reboot"], check=False)
+
+    def _handle_device_command(self, request_id: str, command: str, params: dict[str, Any]) -> None:
+        def respond(success: bool, message: str = "", **extra: Any) -> None:
+            self._send_command_response(request_id, success, message=message, **extra)
 
         if command == "update_service":
-            self.send_log("Edge service update requested from cloud dashboard.")
+            self.send_log("Edge update requested from cloud dashboard.")
             threading.Thread(
-                target=self._run_update_service,
+                target=self._run_update,
                 args=(request_id,),
                 name="edge-update",
                 daemon=True,
@@ -847,22 +844,12 @@ class EdgeAgent:
 
         if command == "reboot":
             self.send_log("Device reboot requested from cloud dashboard.")
-            respond(True, "Device reboot initiated.")
-            threading.Timer(
-                1.0,
-                lambda: subprocess.run(["sudo", "reboot"], check=False),
-            ).start()
-            return
-
-        if command == "restart_service":
-            self.send_log("aura-watch-edge service restart requested from cloud dashboard.")
-            respond(True, "aura-watch-edge.service restart initiated.")
-            self._schedule_service_restart()
+            respond(True, message="Device reboot initiated.")
+            threading.Timer(1.0, self._reboot_device).start()
             return
 
         if command == "fetch_logs":
-            lines = int(params.get("lines", 200))
-            lines = max(10, min(lines, 2000))
+            lines = max(10, min(int(params.get("lines", 200)), 2000))
             try:
                 result = subprocess.run(
                     [
@@ -882,10 +869,7 @@ class EdgeAgent:
                     logs = "No journal logs available for aura-watch-edge.service."
                 respond(True, logs=logs)
             except FileNotFoundError:
-                respond(
-                    False,
-                    error="journalctl not found on this device.",
-                )
+                respond(False, error="journalctl not found on this device.")
             except Exception as exc:
                 respond(False, error=f"Failed to fetch logs: {exc}")
             return
