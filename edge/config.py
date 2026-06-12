@@ -63,7 +63,7 @@ class DeviceRuntimeConfig:
     preview_jpeg_quality: int = field(default_factory=lambda: _env_int("PREVIEW_JPEG_QUALITY", 70))
     preview_stall_timeout_sec: float = field(default_factory=lambda: _env_float("PREVIEW_STALL_TIMEOUT_SEC", 5.0))
     recording_max_sec: float = field(default_factory=lambda: _env_float("RECORDING_MAX_SEC", 60.0))
-    recording_end_grace_sec: float = field(default_factory=lambda: _env_float("RECORDING_END_GRACE_SEC", 2.0))
+    recording_end_grace_sec: float = field(default_factory=lambda: _env_float("RECORDING_END_GRACE_SEC", 5.0))
     recording_cooldown_sec: float = field(default_factory=lambda: _env_float("RECORDING_COOLDOWN_SEC", 45.0))
     min_upload_duration_sec: float = field(default_factory=lambda: _env_float("MIN_UPLOAD_DURATION_SEC", 2.0))
     reid_confidence_threshold: float = field(default_factory=lambda: _env_float("REID_CONFIDENCE_THRESHOLD", 0.65))

@@ -2119,7 +2119,7 @@ function App() {
     const seekToOffset = () => {
       const detectionSec = timelineVideo.offsetMs / 1000;
       video.currentTime = Math.max(0, detectionSec - 1);
-      video.pause();
+      // video.pause();
     };
 
     video.addEventListener('loadedmetadata', seekToOffset);
