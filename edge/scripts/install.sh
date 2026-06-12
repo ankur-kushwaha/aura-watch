@@ -288,9 +288,15 @@ else
 fi
 
 # Create .env config file
+ENROLLMENT_TOKEN_LINE=""
+if [ -n "${ENROLLMENT_TOKEN:-}" ]; then
+    ENROLLMENT_TOKEN_LINE="ENROLLMENT_TOKEN=$ENROLLMENT_TOKEN"
+fi
+
 cat <<EOT > .env
 CLOUD_URL=$CLOUD_URL
 DEVICE_NAME="$DEVICE_NAME"
+${ENROLLMENT_TOKEN_LINE}
 LOCAL_VIDEO_DIR=./storage/temp_clips
 
 # Gemini Video Upload Optimization Settings

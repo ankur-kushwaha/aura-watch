@@ -315,7 +315,8 @@ router.get('/identities/:id/matches', async (req: Request, res: Response) => {
   const { id } = req.params;
   const limit = parseInt(req.query.limit as string || '8', 10);
   try {
-    const matches = await findSimilarPeople(id, limit);
+    const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
+    const matches = await findSimilarPeople(id, limit, onlineDeviceIds);
     res.json(matches);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { generateTextEmbedding, answerWithTools } from '../services/ai';
 import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
 import prisma from '../services/db';
-import { getOrgDeviceIds, getOrgOnlineDeviceIds } from '../services/orgScope';
+import { getOrgOnlineDeviceIds } from '../services/orgScope';
 
 const router = Router();
 
@@ -25,10 +25,10 @@ router.post('/query', async (req: Request, res: Response) => {
   try {
     console.log(`[RAG] Received query: "${question}" with history size: ${history.length}, filters:`, { startTime, endTime, deviceId, streamId });
 
-    const onlineDeviceIds = new Set(await getOrgOnlineDeviceIds(req.auth.orgId));
-    const orgDeviceIds = await getOrgDeviceIds(req.auth.orgId);
+    const onlineDeviceIdList = await getOrgOnlineDeviceIds(req.auth.orgId);
+    const onlineDeviceIds = new Set(onlineDeviceIdList);
     const isFromOnlineDevice = (detDeviceId?: string | null) =>
-      !detDeviceId || onlineDeviceIds.has(detDeviceId);
+      !!detDeviceId && onlineDeviceIds.has(detDeviceId);
 
     // Call AI service with tools
     const { answer, clips, reidDetections } = await answerWithTools(
@@ -52,7 +52,7 @@ router.post('/query', async (req: Request, res: Response) => {
           endTime: finalEndTime, 
           deviceId,
           streamId,
-          orgDeviceIds: deviceId ? undefined : orgDeviceIds,
+          orgDeviceIds: deviceId ? undefined : onlineDeviceIdList,
         });
 
         if (searchResults.length === 0) {
@@ -62,7 +62,7 @@ router.post('/query', async (req: Request, res: Response) => {
             endTime: finalEndTime, 
             deviceId,
             streamId,
-            orgDeviceIds: deviceId ? undefined : orgDeviceIds,
+            orgDeviceIds: deviceId ? undefined : onlineDeviceIdList,
           });
         }
 
@@ -128,6 +128,7 @@ router.post('/query', async (req: Request, res: Response) => {
         summary: payload.summary,
         filepath: payload.filepath,
         filename: filename,
+        deviceId: payload.deviceId ?? null,
         score: result.score || 1.0,
       };
     });
@@ -142,6 +143,7 @@ router.post('/query', async (req: Request, res: Response) => {
       timestamp: det.timestamp instanceof Date ? det.timestamp.toISOString() : det.timestamp,
       filename: det.filename,
       className: det.className,
+      deviceId: det.deviceId ?? null,
       bbox: det.bbox,
     }));
 

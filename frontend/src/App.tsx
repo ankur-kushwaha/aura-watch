@@ -143,6 +143,7 @@ interface RagResponseClip {
   summary: string;
   filepath: string;
   filename?: string;
+  deviceId?: string | null;
   score: number;
 }
 
@@ -220,6 +221,74 @@ function mediaUrl(path: string) {
   const token = getToken();
   const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
   return `${API_BASE}${path}${qs}`;
+}
+
+function OrgInfoBadge({
+  org,
+  availableOrgs,
+  switchingOrg,
+  onSwitchOrg,
+}: {
+  org: AuthOrg;
+  availableOrgs: AuthOrg[];
+  switchingOrg: boolean;
+  onSwitchOrg: (orgId: string) => void;
+}) {
+  const [showTip, setShowTip] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyId = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(org.id).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div
+      className="relative flex items-center gap-2"
+      onMouseEnter={() => setShowTip(true)}
+      onMouseLeave={() => setShowTip(false)}
+    >
+      <Building2 size={14} className="text-text-muted" />
+      {availableOrgs.length > 1 ? (
+        <select
+          value={org.id}
+          onChange={(e) => onSwitchOrg(e.target.value)}
+          disabled={switchingOrg}
+          className="text-[0.8rem] bg-transparent border border-border-glass rounded-md py-1 px-2"
+        >
+          {availableOrgs.map((o) => (
+            <option key={o.id} value={o.id}>{o.name}</option>
+          ))}
+        </select>
+      ) : (
+        <span className="text-[0.8rem] text-text-secondary cursor-default">{org.name}</span>
+      )}
+
+      {showTip && (
+        <div className="absolute top-full right-0 mt-2 z-[100] w-72 rounded-lg border border-border-glass bg-[rgba(15,17,26,0.98)] p-3 shadow-xl backdrop-blur-md">
+          <p className="text-[0.65rem] font-semibold uppercase tracking-wide text-text-muted mb-1.5">
+            Organization ID
+          </p>
+          <div className="flex items-start gap-2">
+            <code className="flex-1 text-[0.68rem] font-mono text-sky-400 break-all leading-relaxed">
+              {org.id}
+            </code>
+            <button
+              type="button"
+              onClick={handleCopyId}
+              title="Copy organization ID"
+              className="btn btn-secondary p-1.5 shrink-0"
+            >
+              {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Promise<string> }) {
@@ -510,7 +579,7 @@ function App({ onLogout }: AppProps) {
 
   // RAG Q&A states
   const [query, setQuery] = useState<string>('');
-  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; clips?: RagResponseClip[]; reidDetections?: { id: string; cameraName: string; trackId: number; timestamp: string; filename: string; className: string }[] }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; clips?: RagResponseClip[]; reidDetections?: { id: string; cameraName: string; trackId: number; timestamp: string; filename: string; className: string; deviceId?: string | null }[] }[]>([]);
   const [isAsking, setIsAsking] = useState<boolean>(false);
   const [filterStartTime, setFilterStartTime] = useState<string>('');
   const [filterEndTime, setFilterEndTime] = useState<string>('');
@@ -535,15 +604,32 @@ function App({ onLogout }: AppProps) {
     [devices],
   );
 
+  const hasOnlineDevices = onlineDeviceIds.size > 0;
+
   const isClipFromOnlineDevice = useCallback((clip: VideoClip) => {
-    if (!clip.deviceId) return true;
+    if (!clip.deviceId) return hasOnlineDevices;
     return onlineDeviceIds.has(clip.deviceId);
-  }, [onlineDeviceIds]);
+  }, [onlineDeviceIds, hasOnlineDevices]);
 
   const visibleClips = useMemo(
     () => clips.filter(isClipFromOnlineDevice),
     [clips, isClipFromOnlineDevice],
   );
+
+  const visibleClipIds = useMemo(
+    () => new Set(visibleClips.map((c) => c.id)),
+    [visibleClips],
+  );
+
+  const isRagClipFromOnlineDevice = useCallback((clip: RagResponseClip) => {
+    if (!clip.deviceId) return visibleClipIds.has(clip.id);
+    return onlineDeviceIds.has(clip.deviceId);
+  }, [onlineDeviceIds, visibleClipIds]);
+
+  const isReidDetectionFromOnlineDevice = useCallback((det: { deviceId?: string | null }) => {
+    if (!det.deviceId) return hasOnlineDevices;
+    return onlineDeviceIds.has(det.deviceId);
+  }, [onlineDeviceIds, hasOnlineDevices]);
 
   useEffect(() => {
     onlineDeviceIdsRef.current = onlineDeviceIds;
@@ -556,6 +642,15 @@ function App({ onLogout }: AppProps) {
     });
     setSelectedClip((prev) => (prev && isClipFromOnlineDevice(prev) ? prev : null));
   }, [isClipFromOnlineDevice]);
+
+  const onlineDevicesInitializedRef = useRef(false);
+  useEffect(() => {
+    if (!onlineDevicesInitializedRef.current) {
+      onlineDevicesInitializedRef.current = true;
+      return;
+    }
+    fetchClipsRef.current();
+  }, [onlineDeviceIds]);
 
   const fetchDevices = useCallback(async (selectFirst = false) => {
     try {
@@ -1466,8 +1561,32 @@ function App({ onLogout }: AppProps) {
   }, [activeTab, fetchReidPeople, fetchTopology]);
 
   useEffect(() => {
+    if (!hasOnlineDevices && (activeTab === 'events' || activeTab === 'reid')) {
+      setActiveTab('ai');
+    }
+    if (!hasOnlineDevices && reidView === 'person') {
+      setReidView('people');
+      setSelectedPerson(null);
+      setPersonTimeline([]);
+      setPersonSuggestions([]);
+      setTimelineVideo(null);
+      setShowIdentitySuggestions(false);
+    }
+  }, [hasOnlineDevices, activeTab, reidView]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      fetchDevices();
+    }, 30_000);
+    return () => clearInterval(intervalId);
+  }, [fetchDevices]);
+
+  useEffect(() => {
     if (activeTab === 'reid') {
       fetchReidPeople();
+      if (reidView === 'person' && selectedPerson) {
+        openPersonDetail(selectedPerson);
+      }
     }
   }, [onlineDeviceIds, activeTab, fetchReidPeople]);
 
@@ -1832,7 +1951,7 @@ function App({ onLogout }: AppProps) {
   };
 
   const selectAndPlayClip = (clipId: string) => {
-    const clip = clips.find(c => c.id === clipId);
+    const clip = visibleClips.find((c) => c.id === clipId);
     if (clip) {
       setSelectedClip(clip);
       setActiveTab('events');
@@ -1863,23 +1982,12 @@ function App({ onLogout }: AppProps) {
 
         <div className="flex items-center gap-4">
           {currentOrg && (
-            <div className="flex items-center gap-2">
-              <Building2 size={14} className="text-text-muted" />
-              {availableOrgs.length > 1 ? (
-                <select
-                  value={currentOrg.id}
-                  onChange={(e) => handleSwitchOrg(e.target.value)}
-                  disabled={switchingOrg}
-                  className="text-[0.8rem] bg-transparent border border-border-glass rounded-md py-1 px-2"
-                >
-                  {availableOrgs.map((org) => (
-                    <option key={org.id} value={org.id}>{org.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <span className="text-[0.8rem] text-text-secondary">{currentOrg.name}</span>
-              )}
-            </div>
+            <OrgInfoBadge
+              org={currentOrg}
+              availableOrgs={availableOrgs}
+              switchingOrg={switchingOrg}
+              onSwitchOrg={handleSwitchOrg}
+            />
           )}
           {selectedDeviceId && (
             <div className={`status-indicator ${status.toLowerCase().replace(' ', '')}`}>
@@ -1899,15 +2007,17 @@ function App({ onLogout }: AppProps) {
 
       {/* NAVIGATION TABS */}
       <div className="flex gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-fit">
-        <button
-          onClick={() => setActiveTab('events')}
-          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'events'
-            ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
-            : 'text-text-secondary hover:text-text-primary bg-transparent'
-            }`}
-        >
-          <Video size={16} /> Event Archive
-        </button>
+        {hasOnlineDevices && (
+          <button
+            onClick={() => setActiveTab('events')}
+            className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'events'
+              ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+              : 'text-text-secondary hover:text-text-primary bg-transparent'
+              }`}
+          >
+            <Video size={16} /> Event Archive
+          </button>
+        )}
         <button
           onClick={() => setActiveTab('ai')}
           className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'ai'
@@ -1917,15 +2027,17 @@ function App({ onLogout }: AppProps) {
         >
           <Sparkles size={16} /> Ask Camera AI
         </button>
-        <button
-          onClick={() => setActiveTab('reid')}
-          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'reid'
-            ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
-            : 'text-text-secondary hover:text-text-primary bg-transparent'
-            }`}
-        >
-          <Fingerprint size={16} /> Cross-Camera ReID Tracker
-        </button>
+        {hasOnlineDevices && (
+          <button
+            onClick={() => setActiveTab('reid')}
+            className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'reid'
+              ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+              : 'text-text-secondary hover:text-text-primary bg-transparent'
+              }`}
+          >
+            <Fingerprint size={16} /> Cross-Camera ReID Tracker
+          </button>
+        )}
       </div>
 
       {/* DASHBOARD LAYOUT */}
@@ -2276,7 +2388,7 @@ function App({ onLogout }: AppProps) {
 
         {/* RIGHT COLUMN: TAB CONTENT */}
         <div className="lg:col-span-8 flex flex-col gap-6">
-          {activeTab === 'events' ? (
+          {activeTab === 'events' && hasOnlineDevices ? (
             <>
               {/* EVENT ARCHIVE & PLAYBACK PANEL */}
               <div className="glass-panel p-5 flex flex-col h-[984px]">
@@ -2490,8 +2602,8 @@ function App({ onLogout }: AppProps) {
                 </div>
               </div>
             </>
-          ) : activeTab === 'ai' ? (
-              <div className="glass-panel p-5 flex flex-col h-[984px]">
+          ) : activeTab === 'ai' || !hasOnlineDevices ? (
+              <div className="glass-panel p-5 flex flex-col h-[800px]">
                 <div className="flex justify-between items-center mb-3">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
                     <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
@@ -2588,14 +2700,14 @@ function App({ onLogout }: AppProps) {
                         </div>
 
                         {/* Cited references when assistant responds */}
-                        {chat.role === 'assistant' && chat.clips && chat.clips.length > 0 && (
+                        {chat.role === 'assistant' && chat.clips && chat.clips.filter(isRagClipFromOnlineDevice).length > 0 && (
                           <div className="mt-2 w-full flex flex-col gap-1.5">
                             <div className="flex items-center gap-1.5 text-[0.75rem] text-text-muted">
                               <Video size={12} color="var(--color-primary)" />
                               <span>Cited Video Footage:</span>
                             </div>
                             <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
-                              {chat.clips.map((c, cIdx) => {
+                              {chat.clips.filter(isRagClipFromOnlineDevice).map((c, cIdx) => {
                                 const filename = c.filename || c.filepath.split(/[/\\]/).pop() || '';
                                 const videoUrl = mediaUrl(`/videos/${filename}`);
                                 const matchPercentage = c.score ? Math.round(c.score * 100) : null;
@@ -2649,14 +2761,14 @@ function App({ onLogout }: AppProps) {
                         )}
 
                         {/* Cited REID detections when assistant responds */}
-                        {chat.role === 'assistant' && chat.reidDetections && chat.reidDetections.length > 0 && (
+                        {chat.role === 'assistant' && chat.reidDetections && chat.reidDetections.filter(isReidDetectionFromOnlineDevice).length > 0 && (
                           <div className="mt-2 w-full flex flex-col gap-1.5">
                             <div className="flex items-center gap-1.5 text-[0.75rem] text-text-muted">
                               <Fingerprint size={12} color="var(--color-secondary)" />
                               <span>Cited REID Detections:</span>
                             </div>
                             <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
-                              {chat.reidDetections.map((det, dIdx) => {
+                              {chat.reidDetections.filter(isReidDetectionFromOnlineDevice).map((det, dIdx) => {
                                 const imageUrl = mediaUrl(`/crops/${det.filename}`);
                                 return (
                                   <div
@@ -2724,7 +2836,7 @@ function App({ onLogout }: AppProps) {
                   </button>
                 </form>
               </div>
-          ) : reidView === 'people' ? (
+          ) : activeTab === 'reid' && hasOnlineDevices && reidView === 'people' ? (
             <div className="flex flex-col gap-6 h-[984px]">
               <div className="glass-panel p-5 flex flex-col flex-1 min-h-0">
                 <div className="flex justify-between items-center mb-5">
@@ -2780,9 +2892,11 @@ function App({ onLogout }: AppProps) {
                   ) : reidPeople.length === 0 ? (
                     <div className="h-full flex flex-col justify-center items-center text-text-muted text-[0.85rem] py-12">
                       <UserCircle size={40} className="mb-3 opacity-50" />
-                      <span>No people detected yet.</span>
+                      <span>{hasOnlineDevices ? 'No people detected yet.' : 'No online devices.'}</span>
                       <span className="text-[0.75rem] mt-1 text-center max-w-[280px]">
-                        Each camera track is auto-grouped. Crops appear here once a person is visible for &gt;1s.
+                        {hasOnlineDevices
+                          ? 'Each camera track is auto-grouped. Crops appear here once a person is visible for >1s.'
+                          : 'ReID detections are hidden while all edge devices are offline because video playback is unavailable.'}
                       </span>
                     </div>
                   ) : (

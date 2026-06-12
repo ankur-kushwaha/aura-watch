@@ -146,43 +146,54 @@ export async function cleanupEmptyIdentities(): Promise<number> {
   return ids.length;
 }
 
-async function resolveStreamTracksForIdentity(identityId: string) {
+async function resolveStreamTracksForIdentity(identityId: string, onlineDeviceIds?: string[]) {
   const fromDetections = await prisma.reidDetection.groupBy({
     by: ['streamId', 'trackId', 'cameraName'],
     where: { identityId, streamId: { not: null } },
     _count: { id: true },
   });
 
+  let tracks: { streamId: string; trackId: number; cameraName: string; cropCount: number }[];
+
   if (fromDetections.length > 0) {
-    return fromDetections.map(st => ({
+    tracks = fromDetections.map(st => ({
       streamId: st.streamId!,
       trackId: st.trackId,
       cameraName: st.cameraName,
       cropCount: st._count.id,
     }));
+  } else {
+    const mappings = await prisma.reidStreamTrackMapping.findMany({
+      where: { identityId },
+    });
+
+    tracks = [];
+    for (const m of mappings) {
+      const stream = await prisma.cameraStream.findUnique({
+        where: { streamId: m.streamId },
+        select: { name: true },
+      });
+      const cropCount = await prisma.reidDetection.count({
+        where: { identityId, streamId: m.streamId, trackId: m.trackId },
+      });
+      tracks.push({
+        streamId: m.streamId,
+        trackId: m.trackId,
+        cameraName: stream?.name ?? 'Unknown Camera',
+        cropCount,
+      });
+    }
   }
 
-  const mappings = await prisma.reidStreamTrackMapping.findMany({
-    where: { identityId },
+  if (onlineDeviceIds === undefined) return tracks;
+
+  const onlineSet = new Set(onlineDeviceIds);
+  const streams = await prisma.cameraStream.findMany({
+    where: { streamId: { in: tracks.map((t) => t.streamId) } },
+    select: { streamId: true, deviceId: true },
   });
-
-  const tracks = [];
-  for (const m of mappings) {
-    const stream = await prisma.cameraStream.findUnique({
-      where: { streamId: m.streamId },
-      select: { name: true },
-    });
-    const cropCount = await prisma.reidDetection.count({
-      where: { identityId, streamId: m.streamId, trackId: m.trackId },
-    });
-    tracks.push({
-      streamId: m.streamId,
-      trackId: m.trackId,
-      cameraName: stream?.name ?? 'Unknown Camera',
-      cropCount,
-    });
-  }
-  return tracks;
+  const streamDeviceMap = new Map(streams.map((s) => [s.streamId, s.deviceId]));
+  return tracks.filter((t) => onlineSet.has(streamDeviceMap.get(t.streamId) ?? ''));
 }
 export async function listPeople(limit = 50, onlineDeviceIds?: string[], orgId?: string) {
   const detectionFilter = onlineDeviceIds !== undefined
@@ -223,7 +234,7 @@ export async function listPeople(limit = 50, onlineDeviceIds?: string[], orgId?:
 
   const people = await Promise.all(identities.map(async (identity) => {
     const cover = rankCoverCandidates(identity.detections)[0];
-    const streamTracks = await resolveStreamTracksForIdentity(identity.id);
+    const streamTracks = await resolveStreamTracksForIdentity(identity.id, onlineDeviceIds);
 
     const primaryTrack = streamTracks[0];
     const displayName = identity.label
@@ -251,7 +262,7 @@ export async function listPeople(limit = 50, onlineDeviceIds?: string[], orgId?:
   });
 }
 
-export async function findSimilarPeople(identityId: string, limit = 8) {
+export async function findSimilarPeople(identityId: string, limit = 8, onlineDeviceIds?: string[]) {
   const identity = await prisma.reidIdentity.findUnique({
     where: { id: identityId },
     include: {
@@ -316,10 +327,19 @@ export async function findSimilarPeople(identityId: string, limit = 8) {
 
   if (sortedIds.length === 0) return [];
 
+  const detectionFilter = onlineDeviceIds !== undefined
+    ? (onlineDeviceIds.length > 0
+      ? { some: { deviceId: { in: onlineDeviceIds } } }
+      : { some: { deviceId: { in: [] as string[] } } })
+    : { some: {} };
+
   const similar = await prisma.reidIdentity.findMany({
-    where: { id: { in: sortedIds }, detections: { some: {} } },
+    where: { id: { in: sortedIds }, detections: detectionFilter },
     include: {
       detections: {
+        where: onlineDeviceIds !== undefined
+          ? { deviceId: { in: onlineDeviceIds } }
+          : undefined,
         orderBy: { timestamp: 'desc' },
         take: 20,
         select: {

@@ -142,7 +142,7 @@ class EdgeAgent:
     def register_device(self) -> dict[str, Any]:
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/register"
         # Backwards compatible parameters if hub expects single-stream fields
-        payload = {
+        payload: dict[str, Any] = {
             "deviceId": self.device_id,
             "name": DEVICE_NAME,
             "cameraType": "webcam",
@@ -152,6 +152,9 @@ class EdgeAgent:
             "pixelChangeThreshold": 0.02,
             "status": "Idle",
         }
+        enrollment_token = os.getenv("ENROLLMENT_TOKEN", "").strip()
+        if enrollment_token:
+            payload["enrollmentToken"] = enrollment_token
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
         return response.json()

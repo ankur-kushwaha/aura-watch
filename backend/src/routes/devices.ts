@@ -104,14 +104,14 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 
   try {
-    const existing = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    let orgId = existing?.orgId ?? null;
+    const existing = await prisma.edgeDevice.findUnique({
+      where: { deviceId },
+      include: { org: { select: { slug: true } } },
+    });
 
-    if (!orgId) {
-      if (!enrollmentToken) {
-        return res.status(400).json({ error: 'enrollmentToken is required for new devices' });
-      }
+    let tokenOrgId: string | null = null;
 
+    if (enrollmentToken) {
       const tokenRecord = await prisma.deviceEnrollmentToken.findUnique({
         where: { token: enrollmentToken },
       });
@@ -124,20 +124,35 @@ router.post('/register', async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Enrollment token has expired' });
       }
 
-      orgId = tokenRecord.orgId;
+      tokenOrgId = tokenRecord.orgId;
+    }
+
+    let orgId: string;
+    if (existing?.orgId) {
+      const isDefaultOrg = existing.org?.slug === 'default';
+      if (tokenOrgId && (isDefaultOrg || existing.orgId === tokenOrgId)) {
+        orgId = tokenOrgId;
+      } else {
+        orgId = existing.orgId;
+      }
+    } else if (tokenOrgId) {
+      orgId = tokenOrgId;
+    } else {
+      return res.status(400).json({ error: 'enrollmentToken is required for new devices' });
     }
 
     const device = await prisma.edgeDevice.upsert({
       where: { deviceId },
       update: {
         name,
+        orgId,
         status: status || 'Idle',
         lastHeartbeat: new Date(),
       },
       create: {
         deviceId,
         name,
-        orgId: orgId!,
+        orgId,
         status: status || 'Idle',
         lastHeartbeat: new Date(),
       },
