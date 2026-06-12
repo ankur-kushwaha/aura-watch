@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Camera,
   Settings,
@@ -223,20 +224,22 @@ function mediaUrl(path: string) {
 
 function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Promise<string> }) {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [copiedToken, setCopiedToken] = useState(false);
   const [enrollmentToken, setEnrollmentToken] = useState<string>('');
   const [generatingToken, setGeneratingToken] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
   }, [open]);
 
   const installCmd = buildInstallCmd(enrollmentToken);
@@ -253,134 +256,124 @@ function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Prom
     }
   };
 
-  const handleCopy = () => {
+  const handleCopyCmd = () => {
     navigator.clipboard.writeText(installCmd).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedCmd(true);
+      setTimeout(() => setCopiedCmd(false), 2000);
+    });
+  };
+
+  const handleCopyToken = () => {
+    if (!enrollmentToken) return;
+    navigator.clipboard.writeText(enrollmentToken).then(() => {
+      setCopiedToken(true);
+      setTimeout(() => setCopiedToken(false), 2000);
     });
   };
 
   return (
-    <div ref={ref} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+    <>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(true)}
         title="How to add a new device"
-        style={{
-          background: 'none',
-          border: 'none',
-          padding: '2px',
-          cursor: 'pointer',
-          color: 'var(--color-text-muted)',
-          display: 'flex',
-          alignItems: 'center',
-          transition: 'color 0.2s',
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-primary)')}
-        onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-text-muted)')}
+        className="inline-flex items-center p-0.5 text-text-muted hover:text-primary transition-colors bg-transparent border-none cursor-pointer"
       >
         <Info size={15} />
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 10px)',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 999,
-            width: '340px',
-            background: 'rgba(15, 17, 26, 0.97)',
-            border: '1px solid rgba(124, 58, 237, 0.35)',
-            borderRadius: '12px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(124,58,237,0.15)',
-            backdropFilter: 'blur(16px)',
-            padding: '14px 16px',
-          }}
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="device-install-title"
         >
-          {/* Arrow */}
-          <div style={{
-            position: 'absolute',
-            top: '-6px',
-            left: '50%',
-            transform: 'translateX(-50%) rotate(45deg)',
-            width: '10px',
-            height: '10px',
-            background: 'rgba(15, 17, 26, 0.97)',
-            border: '1px solid rgba(124, 58, 237, 0.35)',
-            borderRight: 'none',
-            borderBottom: 'none',
-          }} />
-
-          <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '6px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            ➕ Add a New Edge Device
-          </p>
-          <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '10px', lineHeight: 1.5 }}>
-            Generate an enrollment token, then run this command on the target device (Linux / macOS):
-          </p>
-
           <button
             type="button"
-            onClick={handleGenerateToken}
-            disabled={generatingToken}
-            className="btn btn-secondary w-full mb-2 text-[0.72rem] py-1.5"
-          >
-            {generatingToken ? 'Generating…' : enrollmentToken ? 'Regenerate token' : 'Generate enrollment token'}
-          </button>
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm border-none cursor-default"
+            onClick={() => setOpen(false)}
+            aria-label="Close dialog"
+          />
 
-          {enrollmentToken && (
-            <p style={{ fontSize: '0.67rem', color: '#10b981', marginBottom: '8px', wordBreak: 'break-all' }}>
-              Token: {enrollmentToken.slice(0, 12)}…
-            </p>
-          )}
+          <div className="glass-panel relative z-[10000] w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3
+                  id="device-install-title"
+                  className="text-[0.95rem] font-bold text-primary flex items-center gap-2"
+                >
+                  <Plus size={16} /> Add a New Edge Device
+                </h3>
+                <p className="text-[0.8rem] text-text-secondary mt-1 leading-relaxed">
+                  Generate an enrollment token, then run the install command on your target device (Linux / macOS).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="btn btn-secondary p-1.5 rounded-md shrink-0"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-          <div style={{
-            background: 'rgba(0,0,0,0.5)',
-            borderRadius: '8px',
-            border: '1px solid rgba(255,255,255,0.08)',
-            padding: '10px 12px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '8px',
-          }}>
-            <code style={{
-              flex: 1,
-              fontSize: '0.68rem',
-              color: '#38bdf8',
-              fontFamily: 'monospace',
-              wordBreak: 'break-all',
-              lineHeight: 1.6,
-            }}>
-              {installCmd}
-            </code>
             <button
               type="button"
-              onClick={handleCopy}
-              title="Copy command"
-              style={{
-                background: copied ? 'rgba(16,185,129,0.15)' : 'rgba(124,58,237,0.15)',
-                border: `1px solid ${copied ? 'rgba(16,185,129,0.4)' : 'rgba(124,58,237,0.4)'}`,
-                borderRadius: '6px',
-                padding: '4px 6px',
-                cursor: 'pointer',
-                color: copied ? '#10b981' : 'var(--color-primary)',
-                flexShrink: 0,
-                display: 'flex',
-                alignItems: 'center',
-                transition: 'all 0.2s',
-              }}
+              onClick={handleGenerateToken}
+              disabled={generatingToken}
+              className="btn btn-primary w-full mb-4"
             >
-              {copied ? <Check size={13} /> : <Copy size={13} />}
+              {generatingToken ? 'Generating…' : enrollmentToken ? 'Regenerate token' : 'Generate enrollment token'}
             </button>
-          </div>
 
-          <p style={{ fontSize: '0.67rem', color: 'var(--color-text-muted)', marginTop: '8px', lineHeight: 1.4 }}>
-            Installs, starts the agent, and registers it with this dashboard automatically via WebSocket.
-          </p>
-        </div>
+            {enrollmentToken && (
+              <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                <p className="text-[0.7rem] font-semibold text-emerald-400 mb-1.5 uppercase tracking-wide">
+                  Enrollment token
+                </p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 text-[0.72rem] text-emerald-300 font-mono break-all leading-relaxed">
+                    {enrollmentToken}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={handleCopyToken}
+                    title="Copy token"
+                    className="btn btn-secondary p-1.5 shrink-0"
+                  >
+                    {copiedToken ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[0.75rem] font-semibold text-text-secondary mb-2">Install command</p>
+            <div className="rounded-lg border border-border-glass bg-black/40 p-3 flex items-start gap-2">
+              <code className="flex-1 text-[0.7rem] text-sky-400 font-mono break-all leading-relaxed">
+                {enrollmentToken ? installCmd : 'Generate a token first to get the install command.'}
+              </code>
+              {enrollmentToken && (
+                <button
+                  type="button"
+                  onClick={handleCopyCmd}
+                  title="Copy command"
+                  className="btn btn-secondary p-1.5 shrink-0"
+                >
+                  {copiedCmd ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                </button>
+              )}
+            </div>
+
+            <p className="text-[0.72rem] text-text-muted mt-4 leading-relaxed">
+              The command installs the edge agent, connects via WebSocket, and registers the device with your organization.
+            </p>
+          </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 

@@ -366,6 +366,8 @@ export async function backfillStreamTrackIdentities(): Promise<void> {
   });
 
   let created = 0;
+  const identitiesToRecompute = new Set<string>();
+
   for (const group of groups) {
     if (!group.streamId) continue;
     const before = await prisma.reidStreamTrackMapping.findUnique({
@@ -374,10 +376,16 @@ export async function backfillStreamTrackIdentities(): Promise<void> {
     const identityId = await ensureIdentityForStreamTrack(group.streamId, group.trackId);
     if (!before) created++;
 
-    await prisma.reidDetection.updateMany({
+    const { count } = await prisma.reidDetection.updateMany({
       where: { streamId: group.streamId, trackId: group.trackId, identityId: null },
       data: { identityId },
     });
+    if (count > 0) {
+      identitiesToRecompute.add(identityId);
+    }
+  }
+
+  for (const identityId of identitiesToRecompute) {
     await recomputeIdentityCentroid(identityId);
   }
 
