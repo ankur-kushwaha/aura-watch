@@ -1,5 +1,5 @@
 import React from 'react';
-import type { EffectiveEdgeDeviceConfig, EffectiveStreamSettings } from './edgeConfig';
+import type { EffectiveEdgeDeviceConfig } from './edgeConfig';
 
 function NumberField({
   label,
@@ -148,112 +148,6 @@ export function DeviceConfigFields({
         />
         Verbose debug logs
       </label>
-    </div>
-  );
-}
-
-export function StreamAdvancedFields({
-  settings,
-  onChange,
-  isRtsp,
-}: {
-  settings: EffectiveStreamSettings;
-  onChange: (next: EffectiveStreamSettings) => void;
-  isRtsp: boolean;
-}) {
-  const set = <K extends keyof EffectiveStreamSettings>(key: K, value: EffectiveStreamSettings[K]) => {
-    onChange({ ...settings, [key]: value });
-  };
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-[0.72rem] text-text-muted leading-relaxed">
-        Stream overrides take priority over device settings. Leave unchanged to inherit from the device or edge <code>.env</code>.
-      </p>
-
-      {isRtsp && (
-        <Section title="RTSP">
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-[0.72rem] text-text-secondary font-medium">Transport</label>
-            <select value={settings.rtspTransport} onChange={(e) => set('rtspTransport', e.target.value)}>
-              <option value="tcp">tcp</option>
-              <option value="udp">udp</option>
-              <option value="auto">auto</option>
-            </select>
-          </div>
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-[0.72rem] text-text-secondary font-medium">Local bind address</label>
-            <input
-              type="text"
-              value={settings.rtspLocalAddr}
-              onChange={(e) => set('rtspLocalAddr', e.target.value)}
-              placeholder="Optional, e.g. 192.168.1.10"
-            />
-          </div>
-        </Section>
-      )}
-
-      <Section title="Capture override">
-        <NumberField label="Width (px)" value={settings.cameraWidth} onChange={(v) => set('cameraWidth', v)} min={160} max={3840} />
-        <NumberField label="Height (px)" value={settings.cameraHeight} onChange={(v) => set('cameraHeight', v)} min={120} max={2160} />
-        <NumberField label="FPS" value={settings.cameraFps} onChange={(v) => set('cameraFps', v)} min={1} max={60} />
-      </Section>
-
-      <Section title="Detection override">
-        <NumberField label="Confidence" value={settings.yoloConfidence} onChange={(v) => set('yoloConfidence', v)} min={0.05} max={1} step={0.05} />
-        <NumberField label="Image size" value={settings.yoloImgsz} onChange={(v) => set('yoloImgsz', v)} min={320} max={1280} step={32} />
-        <NumberField label="Detect interval" value={settings.yoloDetectInterval} onChange={(v) => set('yoloDetectInterval', v)} min={1} max={30} />
-      </Section>
-
-      <Section title="Preview override">
-        <NumberField label="Stream FPS" value={settings.frameStreamFps} onChange={(v) => set('frameStreamFps', v)} min={1} max={30} step={0.5} />
-        <NumberField label="JPEG quality" value={settings.previewJpegQuality} onChange={(v) => set('previewJpegQuality', v)} min={30} max={95} />
-        <NumberField
-          label="Report frozen preview after (sec)"
-          value={settings.previewStallTimeoutSec}
-          onChange={(v) => set('previewStallTimeoutSec', v)}
-          min={1}
-          max={60}
-          hint="Alert the dashboard when live preview frames stop updating."
-        />
-      </Section>
-
-      <Section title="Recording override">
-        <NumberField label="Encode FPS" value={settings.clipEncodeFps} onChange={(v) => set('clipEncodeFps', v)} min={1} max={30} />
-        <NumberField label="Max clip (sec)" value={settings.recordingMaxSec} onChange={(v) => set('recordingMaxSec', v)} min={5} max={300} />
-        <NumberField
-          label="End grace (sec)"
-          value={settings.recordingEndGraceSec}
-          onChange={(v) => set('recordingEndGraceSec', v)}
-          min={0}
-          max={30}
-          step={0.5}
-          hint="Stop recording after objects leave the frame for this long."
-        />
-        <NumberField
-          label="Wait before next clip (sec)"
-          value={settings.recordingCooldownSec}
-          onChange={(v) => set('recordingCooldownSec', v)}
-          min={0}
-          max={300}
-          hint="Minimum gap between clip uploads after one finishes."
-        />
-        <NumberField
-          label="Min upload duration (sec)"
-          value={settings.minUploadDurationSec}
-          onChange={(v) => set('minUploadDurationSec', v)}
-          min={0}
-          max={120}
-          step={0.5}
-          hint="Skip cloud upload for clips shorter than this (0 = disabled)."
-        />
-      </Section>
-
-      <Section title="ReID override">
-        <NumberField label="Confidence" value={settings.reidConfidenceThreshold} onChange={(v) => set('reidConfidenceThreshold', v)} min={0.1} max={1} step={0.05} />
-        <NumberField label="Min bbox (px²)" value={settings.reidMinBboxSize} onChange={(v) => set('reidMinBboxSize', v)} min={500} max={50000} step={100} />
-        <NumberField label="Visible (sec)" value={settings.reidVisibleSec} onChange={(v) => set('reidVisibleSec', v)} min={0.1} max={10} step={0.1} />
-      </Section>
     </div>
   );
 }

@@ -38,28 +38,6 @@ type EdgeDeviceConfig {
   debugLogs               Boolean?
 }
 
-type StreamSettings {
-  cameraWidth             Int?
-  cameraHeight            Int?
-  cameraFps               Int?
-  rtspTransport           String?
-  rtspLocalAddr           String?
-  clipEncodeFps           Int?
-  recordingMaxSec         Float?
-  recordingEndGraceSec    Float?
-  recordingCooldownSec    Float?
-  minUploadDurationSec    Float?
-  yoloConfidence          Float?
-  yoloImgsz               Int?
-  yoloDetectInterval      Int?
-  frameStreamFps          Float?
-  previewJpegQuality      Int?
-  previewStallTimeoutSec  Float?
-  reidConfidenceThreshold Float?
-  reidMinBboxSize         Int?
-  reidVisibleSec          Float?
-}
-
 model Organization {
   id               String                 @id @default(auto()) @map("_id") @db.ObjectId
   name             String
@@ -147,7 +125,6 @@ model CameraStream {
   detectPerson         Boolean         @default(true)
   detectVehicle        Boolean         @default(true)
   streamHost           String          @default("")
-  settings             StreamSettings?
   lastHeartbeat        DateTime        @default(now())
   clips                VideoClip[]
   detections           ReidDetection[]

@@ -6,12 +6,6 @@ import {
   getOnlineDeviceIds,
   isDeviceOnline,
 } from '../services/deviceStatus';
-import {
-  extractStreamSettingsPatch,
-  mergeStreamSettings,
-  mergeStreamSettingsUpdate,
-  withEffectiveStreamSettings,
-} from '../services/edgeConfig';
 
 const router = Router();
 
@@ -42,23 +36,17 @@ router.get('/', async (req: Request, res: Response) => {
   }
 
   try {
-    const [streams, onlineDeviceIds, devices] = await Promise.all([
+    const [streams, onlineDeviceIds] = await Promise.all([
       prisma.cameraStream.findMany({
         where: { device: { orgId: req.auth.orgId } },
         orderBy: { lastHeartbeat: 'desc' },
-        include: { device: { select: { config: true } } },
       }),
       getOnlineDeviceIds(),
-      prisma.edgeDevice.findMany({
-        where: { orgId: req.auth.orgId },
-        select: { deviceId: true, config: true },
-      }),
     ]);
     const onlineSet = new Set(onlineDeviceIds);
-    const deviceConfigById = new Map(devices.map((d) => [d.deviceId, d.config]));
     res.json(
       streams.map((stream) => ({
-        ...withEffectiveStreamSettings(stream, stream.device.config ?? deviceConfigById.get(stream.deviceId)),
+        ...stream,
         status: getEffectiveStreamStatus(
           stream.status,
           onlineSet.has(stream.deviceId),
@@ -89,7 +77,7 @@ router.get('/device/:deviceId', async (req: Request, res: Response) => {
 
     const device = await prisma.edgeDevice.findUnique({
       where: { deviceId },
-      select: { status: true, lastHeartbeat: true, config: true },
+      select: { status: true, lastHeartbeat: true },
     });
     const deviceOnline = device
       ? isDeviceOnline(device.status, device.lastHeartbeat)
@@ -101,7 +89,7 @@ router.get('/device/:deviceId', async (req: Request, res: Response) => {
     });
     res.json(
       streams.map((stream) => ({
-        ...withEffectiveStreamSettings(stream, device?.config),
+        ...stream,
         status: getEffectiveStreamStatus(
           stream.status,
           deviceOnline,
@@ -130,7 +118,6 @@ router.post('/', async (req: Request, res: Response) => {
     pixelChangeThreshold,
     detectPerson,
     detectVehicle,
-    settings,
   } = req.body;
 
   if (!deviceId || !name) {
@@ -162,7 +149,6 @@ router.post('/', async (req: Request, res: Response) => {
         detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : true,
         detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : true,
         streamHost: '',
-        settings: settings ? mergeStreamSettingsUpdate(null, settings) : undefined,
       },
     });
 
@@ -195,7 +181,6 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
     detectVehicle,
     status,
     streamHost,
-    settings,
   } = req.body;
 
   if (!req.auth) {
@@ -211,12 +196,6 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Camera stream not found' });
     }
 
-    const settingsPatch = settings !== undefined ? extractStreamSettingsPatch(settings) : {};
-    const updatedSettings =
-      settings !== undefined
-        ? mergeStreamSettingsUpdate(existing.settings, settingsPatch)
-        : existing.settings;
-
     const updatedStream = await prisma.cameraStream.update({
       where: { streamId },
       data: {
@@ -230,9 +209,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
         detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : existing.detectVehicle,
         status: status !== undefined ? status : existing.status,
         streamHost: streamHost !== undefined ? streamHost : existing.streamHost,
-        settings: updatedSettings,
       },
-      include: { device: { select: { config: true } } },
     });
 
     console.log(`[Cloud Hub] Config updated for stream ${streamId}`);
@@ -242,8 +219,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
 
     res.json({
       message: 'Stream configuration updated successfully',
-      config: withEffectiveStreamSettings(updatedStream, updatedStream.device.config),
-      effectiveSettings: mergeStreamSettings(updatedStream.settings, updatedStream.device.config),
+      config: updatedStream,
     });
   } catch (error) {
     console.error('Error updating stream configuration:', error);

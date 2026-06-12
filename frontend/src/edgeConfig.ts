@@ -21,34 +21,11 @@ export interface EdgeDeviceConfig {
   debugLogs?: boolean | null;
 }
 
-export interface StreamSettings {
-  cameraWidth?: number | null;
-  cameraHeight?: number | null;
-  cameraFps?: number | null;
-  rtspTransport?: string | null;
-  rtspLocalAddr?: string | null;
-  clipEncodeFps?: number | null;
-  recordingMaxSec?: number | null;
-  recordingEndGraceSec?: number | null;
-  recordingCooldownSec?: number | null;
-  minUploadDurationSec?: number | null;
-  yoloConfidence?: number | null;
-  yoloImgsz?: number | null;
-  yoloDetectInterval?: number | null;
-  frameStreamFps?: number | null;
-  previewJpegQuality?: number | null;
-  previewStallTimeoutSec?: number | null;
-  reidConfidenceThreshold?: number | null;
-  reidMinBboxSize?: number | null;
-  reidVisibleSec?: number | null;
-}
-
 type EffectiveConfig<T> = {
   [K in keyof T]-?: NonNullable<T[K]>;
 };
 
 export type EffectiveEdgeDeviceConfig = EffectiveConfig<EdgeDeviceConfig>;
-export type EffectiveStreamSettings = EffectiveConfig<StreamSettings>;
 
 export const DEFAULT_DEVICE_CONFIG: EffectiveEdgeDeviceConfig = {
   yoloConfidence: 0.25,
@@ -73,32 +50,6 @@ export const DEFAULT_DEVICE_CONFIG: EffectiveEdgeDeviceConfig = {
   debugLogs: true,
 };
 
-export const DEFAULT_STREAM_SETTINGS: EffectiveStreamSettings = {
-  cameraWidth: 640,
-  cameraHeight: 480,
-  cameraFps: 15,
-  rtspTransport: 'tcp',
-  rtspLocalAddr: '',
-  clipEncodeFps: 10,
-  recordingMaxSec: 60,
-  recordingEndGraceSec: 5,
-  recordingCooldownSec: 45,
-  minUploadDurationSec: 2,
-  yoloConfidence: 0.25,
-  yoloImgsz: 416,
-  yoloDetectInterval: 3,
-  frameStreamFps: 12,
-  previewJpegQuality: 70,
-  previewStallTimeoutSec: 5,
-  reidConfidenceThreshold: 0.65,
-  reidMinBboxSize: 2500,
-  reidVisibleSec: 1.0,
-};
-
 export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {
   return { ...DEFAULT_DEVICE_CONFIG };
-}
-
-export function createDefaultStreamSettings(): EffectiveStreamSettings {
-  return { ...DEFAULT_STREAM_SETTINGS };
 }

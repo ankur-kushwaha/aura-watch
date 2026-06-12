@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from config import DeviceRuntimeConfig, StreamRuntimeSettings
+from config import DeviceRuntimeConfig, rtsp_local_addr_value, rtsp_transport_value
 
 import requests
 import websocket
@@ -77,10 +77,9 @@ class EdgeConfig:
     pixel_change_threshold: float = 0.02
     detect_person: bool = True
     detect_vehicle: bool = True
-    stream_settings: StreamRuntimeSettings = field(default_factory=StreamRuntimeSettings)
 
     def runtime(self, device: DeviceRuntimeConfig) -> DeviceRuntimeConfig:
-        return self.stream_settings.effective(device)
+        return device
 
     def detection_classes(self) -> list[str]:
         classes = class_names_from_flags(self.detect_person, self.detect_vehicle)
@@ -232,7 +231,6 @@ class EdgeAgent:
                 pixel_change_threshold=float(s.get("pixelChangeThreshold", 0.02)),
                 detect_person=bool(s.get("detectPerson", True)),
                 detect_vehicle=bool(s.get("detectVehicle", True)),
-                stream_settings=StreamRuntimeSettings.from_db(s.get("settings")),
             )
 
             existing = self.streams_config.get(stream_id)
@@ -243,7 +241,6 @@ class EdgeAgent:
                 or existing.detect_vehicle != config.detect_vehicle
                 or existing.motion_threshold != config.motion_threshold
                 or existing.pixel_change_threshold != config.pixel_change_threshold
-                or existing.stream_settings.affects_pipeline(config.stream_settings)
             )
             tracking_changed = not existing or existing.tracking_enabled != config.tracking_enabled
 
@@ -350,8 +347,8 @@ class EdgeAgent:
                 width=runtime.camera_width,
                 height=runtime.camera_height,
                 fps=runtime.camera_fps,
-                rtsp_transport=config.stream_settings.rtsp_transport_value(),
-                rtsp_local_addr=config.stream_settings.rtsp_local_addr_value(),
+                rtsp_transport=rtsp_transport_value(),
+                rtsp_local_addr=rtsp_local_addr_value(),
             )
             if not camera.open():
                 consecutive_failures += 1

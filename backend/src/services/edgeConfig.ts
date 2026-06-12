@@ -1,4 +1,4 @@
-import type { CameraStream, EdgeDevice, EdgeDeviceConfig, StreamSettings } from '@prisma/client';
+import type { CameraStream, EdgeDevice, EdgeDeviceConfig } from '@prisma/client';
 
 /** Defaults matching edge/.env.example — used for API effective-value display. */
 export const EDGE_DEVICE_CONFIG_DEFAULTS: Required<{
@@ -45,50 +45,7 @@ export const EDGE_DEVICE_CONFIG_DEFAULTS: Required<{
   debugLogs: true,
 };
 
-export const STREAM_SETTINGS_DEFAULTS: Required<{
-  cameraWidth: number;
-  cameraHeight: number;
-  cameraFps: number;
-  rtspTransport: string;
-  rtspLocalAddr: string;
-  clipEncodeFps: number;
-  recordingMaxSec: number;
-  recordingEndGraceSec: number;
-  recordingCooldownSec: number;
-  minUploadDurationSec: number;
-  yoloConfidence: number;
-  yoloImgsz: number;
-  yoloDetectInterval: number;
-  frameStreamFps: number;
-  previewJpegQuality: number;
-  previewStallTimeoutSec: number;
-  reidConfidenceThreshold: number;
-  reidMinBboxSize: number;
-  reidVisibleSec: number;
-}> = {
-  cameraWidth: EDGE_DEVICE_CONFIG_DEFAULTS.cameraWidth,
-  cameraHeight: EDGE_DEVICE_CONFIG_DEFAULTS.cameraHeight,
-  cameraFps: EDGE_DEVICE_CONFIG_DEFAULTS.cameraFps,
-  rtspTransport: 'tcp',
-  rtspLocalAddr: '',
-  clipEncodeFps: EDGE_DEVICE_CONFIG_DEFAULTS.clipEncodeFps,
-  recordingMaxSec: EDGE_DEVICE_CONFIG_DEFAULTS.recordingMaxSec,
-  recordingEndGraceSec: EDGE_DEVICE_CONFIG_DEFAULTS.recordingEndGraceSec,
-  recordingCooldownSec: EDGE_DEVICE_CONFIG_DEFAULTS.recordingCooldownSec,
-  minUploadDurationSec: EDGE_DEVICE_CONFIG_DEFAULTS.minUploadDurationSec,
-  yoloConfidence: EDGE_DEVICE_CONFIG_DEFAULTS.yoloConfidence,
-  yoloImgsz: EDGE_DEVICE_CONFIG_DEFAULTS.yoloImgsz,
-  yoloDetectInterval: EDGE_DEVICE_CONFIG_DEFAULTS.yoloDetectInterval,
-  frameStreamFps: EDGE_DEVICE_CONFIG_DEFAULTS.frameStreamFps,
-  previewJpegQuality: EDGE_DEVICE_CONFIG_DEFAULTS.previewJpegQuality,
-  previewStallTimeoutSec: EDGE_DEVICE_CONFIG_DEFAULTS.previewStallTimeoutSec,
-  reidConfidenceThreshold: EDGE_DEVICE_CONFIG_DEFAULTS.reidConfidenceThreshold,
-  reidMinBboxSize: EDGE_DEVICE_CONFIG_DEFAULTS.reidMinBboxSize,
-  reidVisibleSec: EDGE_DEVICE_CONFIG_DEFAULTS.reidVisibleSec,
-};
-
 export type EffectiveEdgeDeviceConfig = typeof EDGE_DEVICE_CONFIG_DEFAULTS;
-export type EffectiveStreamSettings = typeof STREAM_SETTINGS_DEFAULTS;
 
 function pickDefined<T extends Record<string, unknown>>(input: T): Partial<T> {
   const out: Partial<T> = {};
@@ -121,36 +78,6 @@ export function mergeDeviceConfig(
   return applyDefinedDefaults(EDGE_DEVICE_CONFIG_DEFAULTS, stored as Record<string, unknown> | null);
 }
 
-export function mergeStreamSettings(
-  stored: StreamSettings | null | undefined,
-  deviceConfig?: EdgeDeviceConfig | null,
-): EffectiveStreamSettings {
-  const deviceMerged = mergeDeviceConfig(deviceConfig);
-  return applyDefinedDefaults(
-    {
-      ...STREAM_SETTINGS_DEFAULTS,
-      cameraWidth: deviceMerged.cameraWidth,
-      cameraHeight: deviceMerged.cameraHeight,
-      cameraFps: deviceMerged.cameraFps,
-      clipEncodeFps: deviceMerged.clipEncodeFps,
-      recordingMaxSec: deviceMerged.recordingMaxSec,
-      recordingEndGraceSec: deviceMerged.recordingEndGraceSec,
-      recordingCooldownSec: deviceMerged.recordingCooldownSec,
-      minUploadDurationSec: deviceMerged.minUploadDurationSec,
-      yoloConfidence: deviceMerged.yoloConfidence,
-      yoloImgsz: deviceMerged.yoloImgsz,
-      yoloDetectInterval: deviceMerged.yoloDetectInterval,
-      frameStreamFps: deviceMerged.frameStreamFps,
-      previewJpegQuality: deviceMerged.previewJpegQuality,
-      previewStallTimeoutSec: deviceMerged.previewStallTimeoutSec,
-      reidConfidenceThreshold: deviceMerged.reidConfidenceThreshold,
-      reidMinBboxSize: deviceMerged.reidMinBboxSize,
-      reidVisibleSec: deviceMerged.reidVisibleSec,
-    },
-    stored as Record<string, unknown> | null,
-  );
-}
-
 export function mergeDeviceConfigUpdate(
   existing: EdgeDeviceConfig | null | undefined,
   patch: Record<string, unknown>,
@@ -166,23 +93,7 @@ export function mergeDeviceConfigUpdate(
   return next as EdgeDeviceConfig;
 }
 
-export function mergeStreamSettingsUpdate(
-  existing: StreamSettings | null | undefined,
-  patch: Record<string, unknown>,
-): StreamSettings {
-  const next: Record<string, unknown> = { ...(existing ?? {}) };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null || value === '') {
-      delete next[key];
-    } else if (value !== undefined) {
-      next[key] = value;
-    }
-  }
-  return next as StreamSettings;
-}
-
 export const DEVICE_CONFIG_KEYS = Object.keys(EDGE_DEVICE_CONFIG_DEFAULTS);
-export const STREAM_SETTINGS_KEYS = Object.keys(STREAM_SETTINGS_DEFAULTS);
 
 export function extractDeviceConfigPatch(body: Record<string, unknown>): Partial<EdgeDeviceConfig> {
   return pickDefined(
@@ -190,14 +101,6 @@ export function extractDeviceConfigPatch(body: Record<string, unknown>): Partial
       DEVICE_CONFIG_KEYS.filter((key) => key in body).map((key) => [key, body[key]]),
     ),
   ) as Partial<EdgeDeviceConfig>;
-}
-
-export function extractStreamSettingsPatch(body: Record<string, unknown>): Partial<StreamSettings> {
-  return pickDefined(
-    Object.fromEntries(
-      STREAM_SETTINGS_KEYS.filter((key) => key in body).map((key) => [key, body[key]]),
-    ),
-  ) as Partial<StreamSettings>;
 }
 
 export function buildConfigurePayload(
@@ -217,7 +120,6 @@ export function buildConfigurePayload(
       pixelChangeThreshold: stream.pixelChangeThreshold,
       detectPerson: stream.detectPerson,
       detectVehicle: stream.detectVehicle,
-      settings: stream.settings ?? {},
     })),
   };
 }
@@ -226,15 +128,5 @@ export function withEffectiveDeviceConfig<T extends EdgeDevice>(device: T) {
   return {
     ...device,
     effectiveConfig: mergeDeviceConfig(device.config),
-  };
-}
-
-export function withEffectiveStreamSettings<T extends CameraStream>(
-  stream: T,
-  deviceConfig?: EdgeDeviceConfig | null,
-) {
-  return {
-    ...stream,
-    effectiveSettings: mergeStreamSettings(stream.settings, deviceConfig),
   };
 }

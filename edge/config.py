@@ -48,6 +48,14 @@ def _pick(data: dict[str, Any], key: str, env_default: Any, cast=None):
     return env_default
 
 
+def rtsp_transport_value() -> str:
+    return os.getenv("RTSP_TRANSPORT", "tcp").lower()
+
+
+def rtsp_local_addr_value() -> str:
+    return os.getenv("RTSP_LOCAL_ADDR", "").strip()
+
+
 @dataclass
 class DeviceRuntimeConfig:
     yolo_confidence: float = field(default_factory=lambda: _env_float("YOLO_CONFIDENCE", 0.25))
@@ -99,110 +107,4 @@ class DeviceRuntimeConfig:
         )
 
     def affects_pipeline(self, other: DeviceRuntimeConfig) -> bool:
-        return self != other
-
-
-@dataclass
-class StreamRuntimeSettings:
-    camera_width: Optional[int] = None
-    camera_height: Optional[int] = None
-    camera_fps: Optional[int] = None
-    rtsp_transport: Optional[str] = None
-    rtsp_local_addr: Optional[str] = None
-    clip_encode_fps: Optional[int] = None
-    recording_max_sec: Optional[float] = None
-    recording_end_grace_sec: Optional[float] = None
-    recording_cooldown_sec: Optional[float] = None
-    min_upload_duration_sec: Optional[float] = None
-    yolo_confidence: Optional[float] = None
-    yolo_imgsz: Optional[int] = None
-    yolo_detect_interval: Optional[int] = None
-    frame_stream_fps: Optional[float] = None
-    preview_jpeg_quality: Optional[int] = None
-    preview_stall_timeout_sec: Optional[float] = None
-    reid_confidence_threshold: Optional[float] = None
-    reid_min_bbox_size: Optional[int] = None
-    reid_visible_sec: Optional[float] = None
-
-    @classmethod
-    def from_db(cls, data: Optional[dict[str, Any]]) -> StreamRuntimeSettings:
-        if not data:
-            return cls()
-        return cls(
-            camera_width=data.get("cameraWidth"),
-            camera_height=data.get("cameraHeight"),
-            camera_fps=data.get("cameraFps"),
-            rtsp_transport=data.get("rtspTransport"),
-            rtsp_local_addr=data.get("rtspLocalAddr"),
-            clip_encode_fps=data.get("clipEncodeFps"),
-            recording_max_sec=data.get("recordingMaxSec"),
-            recording_end_grace_sec=data.get("recordingEndGraceSec"),
-            recording_cooldown_sec=data.get("recordingCooldownSec"),
-            min_upload_duration_sec=data.get("minUploadDurationSec"),
-            yolo_confidence=data.get("yoloConfidence"),
-            yolo_imgsz=data.get("yoloImgsz"),
-            yolo_detect_interval=data.get("yoloDetectInterval"),
-            frame_stream_fps=data.get("frameStreamFps"),
-            preview_jpeg_quality=data.get("previewJpegQuality"),
-            preview_stall_timeout_sec=data.get("previewStallTimeoutSec"),
-            reid_confidence_threshold=data.get("reidConfidenceThreshold"),
-            reid_min_bbox_size=data.get("reidMinBboxSize"),
-            reid_visible_sec=data.get("reidVisibleSec"),
-        )
-
-    def effective(self, device: DeviceRuntimeConfig) -> DeviceRuntimeConfig:
-        return DeviceRuntimeConfig(
-            yolo_confidence=self.yolo_confidence if self.yolo_confidence is not None else device.yolo_confidence,
-            yolo_device=device.yolo_device,
-            yolo_imgsz=self.yolo_imgsz if self.yolo_imgsz is not None else device.yolo_imgsz,
-            yolo_detect_interval=(
-                max(self.yolo_detect_interval, 1)
-                if self.yolo_detect_interval is not None
-                else device.yolo_detect_interval
-            ),
-            camera_width=self.camera_width if self.camera_width is not None else device.camera_width,
-            camera_height=self.camera_height if self.camera_height is not None else device.camera_height,
-            camera_fps=max(self.camera_fps, 1) if self.camera_fps is not None else device.camera_fps,
-            clip_encode_fps=max(self.clip_encode_fps, 1) if self.clip_encode_fps is not None else device.clip_encode_fps,
-            camera_stall_timeout_sec=device.camera_stall_timeout_sec,
-            frame_stream_fps=self.frame_stream_fps if self.frame_stream_fps is not None else device.frame_stream_fps,
-            preview_jpeg_quality=(
-                self.preview_jpeg_quality if self.preview_jpeg_quality is not None else device.preview_jpeg_quality
-            ),
-            preview_stall_timeout_sec=(
-                self.preview_stall_timeout_sec
-                if self.preview_stall_timeout_sec is not None
-                else device.preview_stall_timeout_sec
-            ),
-            recording_max_sec=self.recording_max_sec if self.recording_max_sec is not None else device.recording_max_sec,
-            recording_end_grace_sec=(
-                self.recording_end_grace_sec if self.recording_end_grace_sec is not None else device.recording_end_grace_sec
-            ),
-            recording_cooldown_sec=(
-                self.recording_cooldown_sec if self.recording_cooldown_sec is not None else device.recording_cooldown_sec
-            ),
-            min_upload_duration_sec=(
-                self.min_upload_duration_sec
-                if self.min_upload_duration_sec is not None
-                else device.min_upload_duration_sec
-            ),
-            reid_confidence_threshold=(
-                self.reid_confidence_threshold
-                if self.reid_confidence_threshold is not None
-                else device.reid_confidence_threshold
-            ),
-            reid_min_bbox_size=(
-                self.reid_min_bbox_size if self.reid_min_bbox_size is not None else device.reid_min_bbox_size
-            ),
-            reid_visible_sec=self.reid_visible_sec if self.reid_visible_sec is not None else device.reid_visible_sec,
-            debug_logs=device.debug_logs,
-        )
-
-    def rtsp_transport_value(self) -> str:
-        return (self.rtsp_transport or os.getenv("RTSP_TRANSPORT", "tcp")).lower()
-
-    def rtsp_local_addr_value(self) -> str:
-        return (self.rtsp_local_addr or os.getenv("RTSP_LOCAL_ADDR", "")).strip()
-
-    def affects_pipeline(self, other: StreamRuntimeSettings) -> bool:
         return self != other

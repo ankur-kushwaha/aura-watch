@@ -54,13 +54,10 @@ import { clearLoggedIn } from './auth';
 import { exitImpersonation, isImpersonating } from './adminApi';
 import OrgSettingsPage from './OrgSettings';
 import {
-  DEFAULT_STREAM_SETTINGS,
   createDefaultDeviceConfig,
-  createDefaultStreamSettings,
   type EffectiveEdgeDeviceConfig,
-  type EffectiveStreamSettings,
 } from './edgeConfig';
-import { DeviceConfigFields, StreamAdvancedFields } from './EdgeConfigForms';
+import { DeviceConfigFields } from './EdgeConfigForms';
 
 type DashboardTab = 'events' | 'ai' | 'reid';
 
@@ -170,8 +167,6 @@ interface CameraStream {
   detectPerson: boolean;
   detectVehicle: boolean;
   streamHost: string;
-  settings?: Record<string, unknown> | null;
-  effectiveSettings?: EffectiveStreamSettings;
 }
 
 interface CameraConfig {
@@ -183,7 +178,6 @@ interface CameraConfig {
   pixelChangeThreshold?: number;
   detectPerson: boolean;
   detectVehicle: boolean;
-  streamSettings: EffectiveStreamSettings;
 }
 
 interface RagResponseClip {
@@ -794,7 +788,6 @@ function App() {
   const [deviceConfigDeviceId, setDeviceConfigDeviceId] = useState<string | null>(null);
   const [deviceConfig, setDeviceConfig] = useState<EffectiveEdgeDeviceConfig>(createDefaultDeviceConfig());
   const [deviceConfigName, setDeviceConfigName] = useState('');
-  const [showStreamAdvanced, setShowStreamAdvanced] = useState(false);
   // When non-null, the dialog is in "add" mode and this is the target deviceId
   const [addingStreamForDeviceId, setAddingStreamForDeviceId] = useState<string | null>(null);
   const [deviceLogsModal, setDeviceLogsModal] = useState<{ deviceId: string; name: string } | null>(null);
@@ -888,7 +881,6 @@ function App() {
     pixelChangeThreshold: 0.02,
     detectPerson: true,
     detectVehicle: true,
-    streamSettings: createDefaultStreamSettings(),
   });
   const [status, setStatus] = useState<string>('Offline');
   const [motionActive, setMotionActive] = useState<boolean>(false);
@@ -1204,7 +1196,7 @@ function App() {
               setStatus(data.status);
               if (data.cameraConfig) {
                 const cfg = data.cameraConfig;
-                setConfig((prev) => ({
+                setConfig({
                   name: cfg.name,
                   type: cfg.cameraType,
                   streamUrl: cfg.streamUrl,
@@ -1213,8 +1205,7 @@ function App() {
                   pixelChangeThreshold: cfg.pixelChangeThreshold,
                   detectPerson: cfg.detectPerson ?? true,
                   detectVehicle: cfg.detectVehicle ?? true,
-                  streamSettings: cfg.effectiveSettings ?? prev.streamSettings,
-                }));
+                });
               }
             }
           }
@@ -1377,7 +1368,6 @@ function App() {
           pixelChangeThreshold: stream.pixelChangeThreshold,
           detectPerson: stream.detectPerson ?? true,
           detectVehicle: stream.detectVehicle ?? true,
-          streamSettings: stream.effectiveSettings ?? { ...DEFAULT_STREAM_SETTINGS },
         });
         setStatus(stream.status);
         setSelectedDeviceId(stream.deviceId);
@@ -2184,7 +2174,6 @@ function App() {
           pixelChangeThreshold: config.pixelChangeThreshold !== undefined ? Number(config.pixelChangeThreshold) : 0.02,
           detectPerson: config.detectPerson,
           detectVehicle: config.detectVehicle,
-          settings: config.streamSettings,
         }),
       });
       const data = await res.json();
@@ -2197,7 +2186,6 @@ function App() {
         pixelChangeThreshold: data.config.pixelChangeThreshold,
         detectPerson: data.config.detectPerson ?? true,
         detectVehicle: data.config.detectVehicle ?? true,
-        streamSettings: data.config.effectiveSettings ?? data.effectiveSettings ?? { ...DEFAULT_STREAM_SETTINGS },
       });
       fetchDevices();
     } catch (err) {
@@ -2245,9 +2233,7 @@ function App() {
       pixelChangeThreshold: 0.02,
       detectPerson: true,
       detectVehicle: true,
-      streamSettings: createDefaultStreamSettings(),
     });
-    setShowStreamAdvanced(false);
     setAddingStreamForDeviceId(deviceId);
     setShowConfigDialog(true);
   };
@@ -2868,7 +2854,6 @@ function App() {
                                       e.stopPropagation();
                                       setSelectedStreamId(stream.streamId);
                                       setSelectedDeviceId(dev.deviceId);
-                                      setShowStreamAdvanced(false);
                                       setShowConfigDialog(true);
                                     }}
                                     className="btn p-1 bg-transparent text-text-muted hover:text-primary border-none shrink-0 transition-colors duration-200"
@@ -4608,7 +4593,6 @@ function App() {
                   pixelChangeThreshold: config.pixelChangeThreshold ?? 0.02,
                   detectPerson: config.detectPerson,
                   detectVehicle: config.detectVehicle,
-                  settings: config.streamSettings,
                 }),
               });
               if (res.ok) {
@@ -4635,7 +4619,7 @@ function App() {
             onClick={closeDialog}
           >
             <div
-              className={`glass-panel w-full ${showStreamAdvanced ? 'max-w-[720px]' : 'max-w-[480px]'} p-6 flex flex-col gap-5 relative animate-[slideUp_0.22s_ease-out max-h-[90vh] overflow-hidden`}
+              className="glass-panel w-full max-w-[480px] p-6 flex flex-col gap-5 relative animate-[slideUp_0.22s_ease-out max-h-[90vh] overflow-hidden"
               style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -4729,23 +4713,6 @@ function App() {
                     Vehicle includes cars, trucks, buses, motorcycles, and bicycles.
                   </p>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowStreamAdvanced((v) => !v)}
-                  className="btn btn-secondary py-2 px-3 text-[0.8rem] flex items-center gap-2 self-start"
-                >
-                  <SlidersHorizontal size={14} />
-                  {showStreamAdvanced ? 'Hide advanced settings' : 'Advanced settings'}
-                </button>
-
-                {showStreamAdvanced && (
-                  <StreamAdvancedFields
-                    settings={config.streamSettings}
-                    onChange={(streamSettings) => setConfig({ ...config, streamSettings })}
-                    isRtsp={config.type === 'rtsp'}
-                  />
-                )}
 
                 {/* Footer Actions */}
                 <div className="flex gap-2.5 justify-end pt-1">
