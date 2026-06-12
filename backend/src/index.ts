@@ -28,6 +28,7 @@ import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './service
 import { summarizeVideo, generateTextEmbedding } from './services/ai';
 import { transcodeForGemini } from './services/videoTranscode';
 import prisma from './services/db';
+import { getEffectiveStreamStatus } from './services/deviceStatus';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
 
 const app = express();
@@ -419,7 +420,7 @@ async function processVideoClipInBackground(
       if (reidCropsExtracted > 0) {
         reidLogEntries.push({
           level: 'info',
-          message: `Created ${reidCropsExtracted} ReID profile(s) from the clip.`,
+          message: `Stored ${reidCropsExtracted} ReID detection(s) from the clip.`,
         });
       } else if (reidResult.failures.length === 0) {
         reidLogEntries.push({
@@ -606,6 +607,10 @@ wss.on('connection', async (ws: WebSocket, req) => {
             if (data.streamId) {
               const streamRow = await prisma.cameraStream.findUnique({ where: { streamId: data.streamId } });
               let reportedStatus = data.status as string;
+              // Pipeline restarts call stop_stream_pipeline which reports Offline; ignore while device WS is up.
+              if (reportedStatus === 'Offline' && activeDevices.has(deviceId)) {
+                break;
+              }
               // Edge may briefly report Recording/Monitoring with stale in-memory config after tracking was disabled in DB.
               if (
                 streamRow &&
@@ -722,7 +727,11 @@ wss.on('connection', async (ws: WebSocket, req) => {
           const isOnline = activeDevices.has(targetDeviceId);
 
           for (const stream of streams) {
-            const currentStatus = isOnline ? (stream.status || 'Idle') : 'Offline';
+            const currentStatus = getEffectiveStreamStatus(
+              stream.status || 'Offline',
+              isOnline,
+              stream.trackingEnabled,
+            );
             ws.send(JSON.stringify({
               type: 'status',
               streamId: stream.streamId,
@@ -741,7 +750,11 @@ wss.on('connection', async (ws: WebSocket, req) => {
           if (stream) {
             streamDeviceCache.set(targetStreamId, stream.deviceId);
             const isOnline = activeDevices.has(stream.deviceId);
-            const currentStatus = isOnline ? (stream.status || 'Idle') : 'Offline';
+            const currentStatus = getEffectiveStreamStatus(
+              stream.status || 'Offline',
+              isOnline,
+              stream.trackingEnabled,
+            );
 
             ws.send(JSON.stringify({
               type: 'status',

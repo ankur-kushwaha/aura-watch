@@ -23,6 +23,21 @@ export function isDeviceOnline(
   return getEffectiveDeviceStatus(status, lastHeartbeat, now) !== 'Offline';
 }
 
+/** Reconcile stored stream status with whether the parent device is reachable. */
+export function getEffectiveStreamStatus(
+  storedStatus: string,
+  deviceOnline: boolean,
+  trackingEnabled: boolean,
+): string {
+  if (!deviceOnline) {
+    return 'Offline';
+  }
+  if (storedStatus === 'Offline') {
+    return trackingEnabled ? 'Monitoring' : 'Idle';
+  }
+  return storedStatus;
+}
+
 export async function getOnlineDeviceIds(now: Date = new Date()): Promise<string[]> {
   const devices = await prisma.edgeDevice.findMany({
     select: { deviceId: true, status: true, lastHeartbeat: true },

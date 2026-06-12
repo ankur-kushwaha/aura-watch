@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import { assertDeviceInOrg } from '../services/orgScope';
+import {
+  getEffectiveStreamStatus,
+  getOnlineDeviceIds,
+  isDeviceOnline,
+} from '../services/deviceStatus';
 
 const router = Router();
 
@@ -31,11 +36,24 @@ router.get('/', async (req: Request, res: Response) => {
   }
 
   try {
-    const streams = await prisma.cameraStream.findMany({
-      where: { device: { orgId: req.auth.orgId } },
-      orderBy: { lastHeartbeat: 'desc' },
-    });
-    res.json(streams);
+    const [streams, onlineDeviceIds] = await Promise.all([
+      prisma.cameraStream.findMany({
+        where: { device: { orgId: req.auth.orgId } },
+        orderBy: { lastHeartbeat: 'desc' },
+      }),
+      getOnlineDeviceIds(),
+    ]);
+    const onlineSet = new Set(onlineDeviceIds);
+    res.json(
+      streams.map((stream) => ({
+        ...stream,
+        status: getEffectiveStreamStatus(
+          stream.status,
+          onlineSet.has(stream.deviceId),
+          stream.trackingEnabled,
+        ),
+      })),
+    );
   } catch (error) {
     console.error('Error fetching streams:', error);
     res.status(500).json({ error: 'Failed to fetch camera streams' });
@@ -57,11 +75,28 @@ router.get('/device/:deviceId', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Device not found' });
     }
 
+    const device = await prisma.edgeDevice.findUnique({
+      where: { deviceId },
+      select: { status: true, lastHeartbeat: true },
+    });
+    const deviceOnline = device
+      ? isDeviceOnline(device.status, device.lastHeartbeat)
+      : false;
+
     const streams = await prisma.cameraStream.findMany({
       where: { deviceId },
       orderBy: { name: 'asc' },
     });
-    res.json(streams);
+    res.json(
+      streams.map((stream) => ({
+        ...stream,
+        status: getEffectiveStreamStatus(
+          stream.status,
+          deviceOnline,
+          stream.trackingEnabled,
+        ),
+      })),
+    );
   } catch (error) {
     console.error('Error fetching device streams:', error);
     res.status(500).json({ error: 'Failed to fetch device camera streams' });

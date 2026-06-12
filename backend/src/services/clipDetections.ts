@@ -66,26 +66,13 @@ async function resolveIdentityLabel(
   if (identityId) {
     const identity = await prisma.reidIdentity.findUnique({
       where: { id: identityId },
-      select: {
-        label: true,
-        detections: {
-          orderBy: { timestamp: 'desc' },
-          take: 1,
-          select: { cameraName: true, trackId: true },
-        },
-      },
+      select: { label: true },
     });
     const trimmed = identity?.label?.trim();
     if (trimmed) {
       return { labelStatus: 'confirmed', label: trimmed };
     }
-    const cover = identity?.detections[0];
-    return {
-      labelStatus: 'confirmed',
-      label: cover
-        ? defaultPersonLabel(cover.cameraName, cover.trackId)
-        : 'Linked identity',
-    };
+    // Linked to an identity the user has not named yet — treat as unassigned for display.
   }
 
   if (!detectionId) {
@@ -294,7 +281,7 @@ export async function buildClipReidLog(
     } else {
       entries.push({
         level: 'info',
-        message: `Track ${obj.trackId}: ReID profile created, no identity match yet.`,
+        message: `Track ${obj.trackId}: detection stored — assign an identity manually to link appearances.`,
       });
     }
 

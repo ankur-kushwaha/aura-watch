@@ -20,10 +20,11 @@ export function defaultPersonLabel(cameraName: string, trackId: number): string 
   return `${cameraName} · track ${trackId}`;
 }
 
-export async function ensureIdentityForStreamTrack(
+/** Lookup an existing user-created identity for a stream+track (never auto-creates). */
+export async function resolveIdentityForStreamTrack(
   streamId: string,
   trackId: number,
-): Promise<string> {
+): Promise<string | null> {
   const mapping = await prisma.reidStreamTrackMapping.findUnique({
     where: { streamId_trackId: { streamId, trackId } },
     select: { identityId: true },
@@ -39,6 +40,17 @@ export async function ensureIdentityForStreamTrack(
     await registerStreamTrackMapping(streamId, trackId, prior.identityId);
     return prior.identityId;
   }
+
+  return null;
+}
+
+/** Create or resolve identity — only for explicit user actions (label, assign, merge). */
+export async function ensureIdentityForStreamTrack(
+  streamId: string,
+  trackId: number,
+): Promise<string> {
+  const existing = await resolveIdentityForStreamTrack(streamId, trackId);
+  if (existing) return existing;
 
   const orgId = await getOrgIdForStream(streamId);
   const identity = await prisma.reidIdentity.create({
@@ -401,38 +413,32 @@ export async function findSimilarPeople(identityId: string, limit = 8, onlineDev
   });
 }
 
+/** Sync stream-track mappings from user-assigned detections only (no auto-create). */
 export async function backfillStreamTrackIdentities(): Promise<void> {
   const groups = await prisma.reidDetection.groupBy({
     by: ['streamId', 'trackId'],
-    where: { streamId: { not: null } },
+    where: { streamId: { not: null }, identityId: { not: null } },
   });
 
-  let created = 0;
-  const identitiesToRecompute = new Set<string>();
-
+  let synced = 0;
   for (const group of groups) {
     if (!group.streamId) continue;
+    const prior = await prisma.reidDetection.findFirst({
+      where: { streamId: group.streamId, trackId: group.trackId, identityId: { not: null } },
+      orderBy: { timestamp: 'desc' },
+      select: { identityId: true },
+    });
+    if (!prior?.identityId) continue;
+
     const before = await prisma.reidStreamTrackMapping.findUnique({
       where: { streamId_trackId: { streamId: group.streamId, trackId: group.trackId } },
     });
-    const identityId = await ensureIdentityForStreamTrack(group.streamId, group.trackId);
-    if (!before) created++;
-
-    const { count } = await prisma.reidDetection.updateMany({
-      where: { streamId: group.streamId, trackId: group.trackId, identityId: null },
-      data: { identityId },
-    });
-    if (count > 0) {
-      identitiesToRecompute.add(identityId);
-    }
+    await registerStreamTrackMapping(group.streamId, group.trackId, prior.identityId);
+    if (!before) synced++;
   }
 
-  for (const identityId of identitiesToRecompute) {
-    await recomputeIdentityCentroid(identityId);
-  }
-
-  if (created > 0) {
-    console.log(`[ReID] Auto-mapped ${created} stream+track group(s) to identities`);
+  if (synced > 0) {
+    console.log(`[ReID] Synced ${synced} user-assigned stream+track mapping(s)`);
   }
 
   await cleanupEmptyIdentities();

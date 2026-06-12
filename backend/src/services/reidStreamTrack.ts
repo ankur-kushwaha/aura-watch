@@ -1,7 +1,6 @@
 import prisma from './db';
 import { updateReidPayload } from './qdrant';
 import { recomputeIdentityCentroid } from './reidIdentity';
-import { ensureIdentityForStreamTrack } from './reidPeople';
 
 export function streamTrackKey(streamId: string, trackId: number): string {
   return `${streamId}:${trackId}`;
@@ -88,14 +87,16 @@ export async function inheritIdentityLabel(
   }
 }
 
-export async function autoLinkDetectionToIdentity(
+/** Link a detection to an identity only when the user has already assigned that stream+track. */
+export async function linkDetectionToExistingIdentity(
   detectionId: string,
   streamId: string | null | undefined,
   trackId: number,
-): Promise<{ identityId: string; autoLinked: boolean } | null> {
+): Promise<{ identityId: string } | null> {
   if (!streamId) return null;
 
-  const identityId = await ensureIdentityForStreamTrack(streamId, trackId);
+  const identityId = await resolveIdentityFromStreamTrack(streamId, trackId);
+  if (!identityId) return null;
 
   await prisma.reidDetection.update({
     where: { id: detectionId },
@@ -104,7 +105,7 @@ export async function autoLinkDetectionToIdentity(
   await updateReidPayload(detectionId, { identityId });
   await recomputeIdentityCentroid(identityId);
 
-  return { identityId, autoLinked: true };
+  return { identityId };
 }
 
 export async function removeStreamTrackMappingsForIdentity(identityId: string): Promise<void> {

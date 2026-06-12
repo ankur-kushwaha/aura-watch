@@ -284,7 +284,7 @@ class EdgeAgent:
 
         self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
-    def stop_stream_pipeline(self, stream_id: str):
+    def stop_stream_pipeline(self, stream_id: str, *, notify_offline: bool = True):
         pipeline_data = self.pipelines.pop(stream_id, None)
         if not pipeline_data:
             return
@@ -296,7 +296,8 @@ class EdgeAgent:
         thread = pipeline_data.get("thread")
         if thread and thread.is_alive():
             thread.join(timeout=10)
-        self.send_status(stream_id, "Offline")
+        if notify_offline:
+            self.send_status(stream_id, "Offline")
 
     def restart_stream_pipeline(self, stream_id: str):
         config = self.streams_config.get(stream_id)
@@ -304,7 +305,7 @@ class EdgeAgent:
         existing = self.pipelines.get(stream_id)
         was_streaming_preview = bool(existing and existing.get("stream_frames"))
         self.send_log(f"Restarting stream pipeline to apply new configuration for: {name}")
-        self.stop_stream_pipeline(stream_id)
+        self.stop_stream_pipeline(stream_id, notify_offline=False)
         self.start_stream_pipeline(stream_id)
         if was_streaming_preview:
             p_data = self.pipelines.get(stream_id)

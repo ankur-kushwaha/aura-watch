@@ -15,7 +15,7 @@ import {
 import { fetchFileFromEdge } from '../services/edgeFileFetch';
 import { rankCoverCandidates, resolveCropImageBuffer } from '../services/cropResolve';
 import {
-  autoLinkDetectionToIdentity,
+  linkDetectionToExistingIdentity,
   getStreamTrackKeysForIdentity,
   inheritIdentityLabel,
   registerStreamTrackMapping,
@@ -118,7 +118,7 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
     className,
   });
 
-  await autoLinkDetectionToIdentity(detection.id, streamId, trackId);
+  await linkDetectionToExistingIdentity(detection.id, streamId, trackId);
 
   const fullDetection = await prisma.reidDetection.findUnique({
     where: { id: detection.id },
@@ -737,12 +737,7 @@ router.post('/feedback', async (req: Request, res: Response) => {
       data: { type, sourceDetectionId, targetDetectionId },
     });
 
-    let identityId: string | null = null;
-    if (type === 'confirm' || type === 'same_person') {
-      identityId = await assignDetectionsToIdentity([sourceDetectionId, targetDetectionId]);
-    }
-
-    res.json({ success: true, feedback, identityId });
+    res.json({ success: true, feedback });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

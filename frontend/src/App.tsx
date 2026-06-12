@@ -224,54 +224,48 @@ const identityCoverUrl = (identityId: string) => {
   return `${API_BASE}/reid/identities/${identityId}/cover${qs}`;
 };
 
-function IdTooltipChip({
-  label,
-  value,
+function IdsInfoIcon({
+  ids,
   className = '',
 }: {
-  label: string;
-  value: string;
+  ids: { label: string; value: string }[];
   className?: string;
 }) {
   const [showTip, setShowTip] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const missing = !value || value === '—';
+  const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
+  const entries = ids.filter((id) => id.value && id.value !== '—');
 
   const stopBubble = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
   };
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = (e: React.MouseEvent, label: string, value: string) => {
     stopBubble(e);
     navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedLabel(label);
+      setTimeout(() => setCopiedLabel(null), 2000);
     });
   };
 
-  if (missing) {
-    return (
-      <span className={`text-[0.55rem] font-mono text-text-muted opacity-60 ${className}`}>
-        {label}: —
-      </span>
-    );
-  }
+  if (entries.length === 0) return null;
 
   return (
     <div
-      className={`relative inline-flex ${className}`}
+      className={`relative inline-flex shrink-0 ${className}`}
       onMouseEnter={() => setShowTip(true)}
       onMouseLeave={() => {
         setShowTip(false);
-        setCopied(false);
+        setCopiedLabel(null);
       }}
       onMouseDown={stopBubble}
       onClick={stopBubble}
     >
-      <span className="inline-flex items-center gap-0.5 text-[0.55rem] font-mono text-text-muted hover:text-sky-400 cursor-default select-none">
-        {label}
-        <Info size={10} className="shrink-0 opacity-70" />
+      <span
+        className="inline-flex items-center text-text-muted hover:text-sky-400 cursor-default select-none opacity-60 hover:opacity-100"
+        title="View IDs"
+      >
+        <Info size={11} />
       </span>
       {showTip && (
         <div
@@ -279,21 +273,31 @@ function IdTooltipChip({
           onMouseDown={stopBubble}
           onClick={stopBubble}
         >
-          <p className="text-[0.6rem] font-semibold uppercase tracking-wide text-text-muted mb-1">
-            {label}
-          </p>
-          <div className="flex items-start gap-1.5">
-            <code className="flex-1 text-[0.62rem] font-mono text-sky-400 break-all leading-relaxed">
-              {value}
-            </code>
-            <button
-              type="button"
-              onClick={handleCopy}
-              title={`Copy ${label}`}
-              className="btn btn-secondary p-1 shrink-0"
-            >
-              {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-            </button>
+          <div className="flex flex-col gap-2">
+            {entries.map((entry) => (
+              <div key={entry.label}>
+                <p className="text-[0.6rem] font-semibold uppercase tracking-wide text-text-muted mb-0.5">
+                  {entry.label}
+                </p>
+                <div className="flex items-start gap-1.5">
+                  <code className="flex-1 text-[0.62rem] font-mono text-sky-400 break-all leading-relaxed">
+                    {entry.value}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={(e) => handleCopy(e, entry.label, entry.value)}
+                    title={`Copy ${entry.label}`}
+                    className="btn btn-secondary p-1 shrink-0"
+                  >
+                    {copiedLabel === entry.label ? (
+                      <Check size={12} className="text-emerald-400" />
+                    ) : (
+                      <Copy size={12} />
+                    )}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -312,13 +316,12 @@ function EntityIds({
   clipId?: string | null;
   className?: string;
 }) {
-  return (
-    <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 ${className}`}>
-      <IdTooltipChip label="identity" value={identityId} />
-      {detectionId && <IdTooltipChip label="detection" value={detectionId} />}
-      <IdTooltipChip label="clip" value={clipId ?? '—'} />
-    </div>
-  );
+  const ids = [
+    { label: 'identity', value: identityId },
+    ...(detectionId ? [{ label: 'detection', value: detectionId }] : []),
+    ...(clipId ? [{ label: 'clip', value: clipId }] : []),
+  ];
+  return <IdsInfoIcon ids={ids} className={className} />;
 }
 
 function MatchScoreBreakdown({ scores }: { scores: MatchScores }) {
@@ -1317,44 +1320,37 @@ function App({ onLogout }: AppProps) {
     matchScore: scores?.finalScore,
   });
 
-  const mergePersonRefs = (
+  type TrackMatchRow = {
+    id: string;
+    cameraName: string;
+    timestamp: string;
+    filename: string;
+    clipFilename?: string;
+    clipOffsetMs?: number;
+    trackId?: number;
+    identityId?: string | null;
+    scores?: MatchScores;
+    feedbackBoost?: number;
+  };
+
+  const buildScoreBasedTimeline = (
     query: ReidDetection | undefined,
-    journeyDetections: ReidDetection[],
-    trackMatches: Array<{
-      id: string;
-      cameraName: string;
-      timestamp: string;
-      filename: string;
-      clipFilename?: string;
-      clipOffsetMs?: number;
-      trackId?: number;
-      identityId?: string | null;
-      scores?: MatchScores;
-      feedbackBoost?: number;
-    }>,
+    trackMatches: TrackMatchRow[],
   ): PersonClipReference[] => {
-    const refs = new Map<string, PersonClipReference>();
-
+    const refs: PersonClipReference[] = [];
     if (query) {
-      refs.set(query.id, mapDetectionToRef(query, 'query'));
+      refs.push(mapDetectionToRef(query, 'query'));
     }
 
-    for (const d of journeyDetections) {
-      refs.set(d.id, mapDetectionToRef(d, 'identity'));
-    }
+    const sortedMatches = [...trackMatches]
+      .filter((m) => !query || m.id !== query.id)
+      .sort((a, b) => (b.scores?.finalScore ?? 0) - (a.scores?.finalScore ?? 0));
 
-    for (const match of trackMatches) {
-      const existing = refs.get(match.id);
+    for (const match of sortedMatches) {
       const scores = match.scores
         ? { ...match.scores, feedbackBoost: match.feedbackBoost ?? match.scores.feedbackBoost }
         : undefined;
-      if (existing) {
-        if (scores && existing.source !== 'query') {
-          refs.set(match.id, { ...existing, scores, matchScore: scores.finalScore });
-        }
-        continue;
-      }
-      refs.set(match.id, {
+      refs.push({
         id: match.id,
         cameraName: match.cameraName,
         timestamp: match.timestamp,
@@ -1369,56 +1365,42 @@ function App({ onLogout }: AppProps) {
       });
     }
 
-    return [...refs.values()].sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-    );
+    return refs;
   };
 
-  const reloadPersonRefsJourney = async (identityId: string) => {
-    const journeyRes = await apiFetch(`/reid/identities/${identityId}/journey`);
-    if (!journeyRes.ok) return;
-    const journey = await journeyRes.json();
-    const identityLabel = journey.identity?.label?.trim() || '';
-    if (identityLabel) {
-      setPersonRefsLabelDraft(identityLabel);
-      setPersonRefsLabelConfirmed(true);
-      setShowPersonRefsSuggestions(false);
-    }
-    setPersonRefs((prev) => {
-      const trackMatches = prev
-        .filter((r) => r.source === 'match' && r.scores)
-        .map((r) => ({
-          id: r.id,
-          cameraName: r.cameraName,
-          timestamp: r.timestamp,
-          filename: r.filename,
-          clipFilename: r.clipFilename ?? undefined,
-          clipOffsetMs: r.clipOffsetMs ?? undefined,
-          trackId: r.trackId,
-          identityId: r.identityId,
-          scores: r.scores,
-        }));
-      const query = prev.find((r) => r.source === 'query');
-      return mergePersonRefs(
-        query
-          ? {
-              id: query.id,
-              deviceId: '',
-              cameraName: query.cameraName,
-              trackId: query.trackId ?? 0,
-              timestamp: query.timestamp,
-              filename: query.filename,
-              clipFilename: query.clipFilename,
-              clipOffsetMs: query.clipOffsetMs,
-              bbox: '',
-              className: 'person',
-              identityId: query.identityId,
-            }
-          : undefined,
-        journey.detections || [],
-        trackMatches,
-      );
+  const fetchTrackTimeline = async (detectionId: string) => {
+    const trackRes = await apiFetch('/reid/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ detectionId, limit: 30 }),
     });
+    if (!trackRes.ok) throw new Error('Failed to search similar detections');
+    const trackData = await trackRes.json();
+    return {
+      query: trackData.query as ReidDetection | undefined,
+      matches: (trackData.matches || []) as TrackMatchRow[],
+    };
+  };
+
+  const reloadPersonRefsTimeline = async () => {
+    const detectionId = personRefsModal?.detectionId
+      ?? personRefs.find((r) => r.source === 'query')?.id;
+    if (!detectionId) return;
+
+    try {
+      const { query, matches } = await fetchTrackTimeline(detectionId);
+      if (query?.identityId) {
+        setPersonRefsIdentityId(query.identityId);
+      }
+      if (query?.identity?.label?.trim()) {
+        setPersonRefsLabelDraft(query.identity.label.trim());
+        setPersonRefsLabelConfirmed(true);
+        setShowPersonRefsSuggestions(false);
+      }
+      setPersonRefs(buildScoreBasedTimeline(query, matches));
+    } catch (err) {
+      console.error('Failed to reload scored timeline', err);
+    }
   };
 
   const refreshClipDetectionsAfterLabel = async () => {
@@ -1460,32 +1442,7 @@ function App({ onLogout }: AppProps) {
     let resolvedIdentityId = obj.identityId ?? null;
 
     try {
-      const [trackRes, journeyRes] = await Promise.all([
-        apiFetch('/reid/track', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ detectionId: obj.detectionId, limit: 30 }),
-        }),
-        obj.identityId
-          ? apiFetch(`/reid/identities/${obj.identityId}/journey`)
-          : Promise.resolve(null),
-      ]);
-
-      if (!trackRes.ok) throw new Error('Failed to search similar detections');
-      const trackData = await trackRes.json();
-      const query = trackData.query as ReidDetection | undefined;
-      const matches = (trackData.matches || []) as Array<{
-        id: string;
-        cameraName: string;
-        timestamp: string;
-        filename: string;
-        clipFilename?: string;
-        clipOffsetMs?: number;
-        trackId?: number;
-        identityId?: string | null;
-        scores?: MatchScores;
-        feedbackBoost?: number;
-      }>;
+      const { query, matches } = await fetchTrackTimeline(obj.detectionId);
 
       if (query?.identityId) {
         setPersonRefsIdentityId(query.identityId);
@@ -1497,19 +1454,7 @@ function App({ onLogout }: AppProps) {
         setShowPersonRefsSuggestions(false);
       }
 
-      let journeyDetections: ReidDetection[] = [];
-      if (journeyRes && journeyRes.ok) {
-        const journey = await journeyRes.json();
-        const identityLabel = journey.identity?.label?.trim() || '';
-        if (identityLabel) {
-          setPersonRefsLabelDraft(identityLabel);
-          setPersonRefsLabelConfirmed(true);
-          setShowPersonRefsSuggestions(false);
-        }
-        journeyDetections = journey.detections || [];
-      }
-
-      setPersonRefs(mergePersonRefs(query, journeyDetections, matches));
+      setPersonRefs(buildScoreBasedTimeline(query, matches));
       await loadPersonRefsIdentitySuggestions(resolvedIdentityId);
     } catch (err) {
       console.error('Failed to load person references', err);
@@ -1540,7 +1485,7 @@ function App({ onLogout }: AppProps) {
       setPersonRefsLabelDraft(assignedLabel);
       setPersonRefsLabelConfirmed(!!suggestion.label?.trim());
       setShowPersonRefsSuggestions(false);
-      await reloadPersonRefsJourney(suggestion.id);
+      await reloadPersonRefsTimeline();
       await loadPersonRefsIdentitySuggestions(suggestion.id);
       await refreshClipDetectionsAfterLabel();
     } catch (err) {
@@ -1591,7 +1536,7 @@ function App({ onLogout }: AppProps) {
       }
       await refreshClipDetectionsAfterLabel();
       if (resolvedIdentityId) {
-        await reloadPersonRefsJourney(resolvedIdentityId);
+        await reloadPersonRefsTimeline();
         await loadPersonRefsIdentitySuggestions(resolvedIdentityId);
       }
     } catch (err) {
@@ -1665,6 +1610,35 @@ function App({ onLogout }: AppProps) {
       console.error('Failed to save person label', err);
     } finally {
       setSavingIdentityLabel(false);
+    }
+  };
+
+  const handleTimelineDetectionFeedback = async (
+    targetDetectionId: string,
+    type: 'confirm' | 'reject',
+  ) => {
+    const sourceDetectionId = personRefs.find((r) => r.source === 'query')?.id
+      ?? personRefsModal?.detectionId;
+    if (!sourceDetectionId || sourceDetectionId === targetDetectionId) return;
+
+    const key = `${type}:${sourceDetectionId}:${targetDetectionId}`;
+    setFeedbackPending(key);
+    try {
+      const res = await apiFetch('/reid/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, sourceDetectionId, targetDetectionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to save feedback');
+        return;
+      }
+      await reloadPersonRefsTimeline();
+    } catch (err) {
+      console.error('Failed to submit timeline feedback', err);
+    } finally {
+      setFeedbackPending(null);
     }
   };
 
@@ -2806,6 +2780,10 @@ function App({ onLogout }: AppProps) {
                                   {clipDetections.map((obj) => {
                                     const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
                                     const hasIdentity = !!obj.identityId;
+                                    const personIds = [
+                                      ...(obj.identityId ? [{ label: 'identity', value: obj.identityId }] : []),
+                                      ...(obj.detectionId ? [{ label: 'detection', value: obj.detectionId }] : []),
+                                    ];
                                     return (
                                       <button
                                         key={obj.trackId}
@@ -2849,24 +2827,25 @@ function App({ onLogout }: AppProps) {
                                               <div className="flex flex-wrap items-center gap-1.5">
                                                 <UserCircle size={12} className="text-green-400 shrink-0" />
                                                 <span className="text-[0.72rem] text-green-400 font-medium">{obj.label}</span>
-                                                {hasIdentity && (
-                                                  <IdTooltipChip label="identity" value={obj.identityId!} />
-                                                )}
+                                                <IdsInfoIcon ids={personIds} />
                                               </div>
                                             )}
                                             {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
-                                              <span className="text-[0.72rem] text-secondary">
-                                                Suggested: {Math.round(obj.matchScore * 100)}% match · {obj.label}
-                                                <span className="text-text-muted ml-1">— click to confirm or choose another</span>
-                                              </span>
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                <span className="text-[0.72rem] text-secondary">
+                                                  Suggested: {Math.round(obj.matchScore * 100)}% match · {obj.label}
+                                                  <span className="text-text-muted ml-1">— click to confirm or choose another</span>
+                                                </span>
+                                                <IdsInfoIcon ids={personIds} />
+                                              </div>
                                             )}
                                             {obj.labelStatus === 'none' && isClickablePerson && (
-                                              <span className="text-[0.72rem] text-amber-400">
-                                                Unassigned — click to create a new identity or link to existing
-                                              </span>
-                                            )}
-                                            {obj.detectionId && (
-                                              <IdTooltipChip label="detection" value={obj.detectionId} />
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                <span className="text-[0.72rem] text-amber-400">
+                                                  Unassigned — click to create a new identity or link to existing
+                                                </span>
+                                                <IdsInfoIcon ids={personIds} />
+                                              </div>
                                             )}
                                           </div>
                                         )}
@@ -3645,14 +3624,17 @@ function App({ onLogout }: AppProps) {
                         ? ' · linked identity'
                         : ' · unassigned'}
                   </p>
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
-                    {personRefsModal.detectionId && (
-                      <IdTooltipChip label="detection" value={personRefsModal.detectionId} />
-                    )}
-                    {personRefsIdentityId && (
-                      <IdTooltipChip label="identity" value={personRefsIdentityId} />
-                    )}
-                  </div>
+                  <IdsInfoIcon
+                    className="mt-1"
+                    ids={[
+                      ...(personRefsModal.detectionId
+                        ? [{ label: 'detection', value: personRefsModal.detectionId }]
+                        : []),
+                      ...(personRefsIdentityId
+                        ? [{ label: 'identity', value: personRefsIdentityId }]
+                        : []),
+                    ]}
+                  />
                 </div>
               </div>
               <button
@@ -3770,8 +3752,11 @@ function App({ onLogout }: AppProps) {
             <div className="h-px bg-[rgba(255,255,255,0.07)]" />
 
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-              <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider mb-2">
-                Timeline & possible matches
+              <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider mb-1">
+                Scored timeline
+              </p>
+              <p className="text-[0.65rem] text-text-muted mb-2">
+                Ranked by embedding, topology, and your past feedback. Confirm or reject matches to improve future results.
               </p>
               {loadingPersonRefs ? (
                 <div className="flex justify-center py-10 text-text-muted">
@@ -3785,62 +3770,93 @@ function App({ onLogout }: AppProps) {
                 <div className="relative border-l-2 border-[rgba(56,189,248,0.25)] ml-3 pl-5 flex flex-col gap-3">
                   {personRefs.map((ref) => {
                     const isCurrentClip = ref.clipFilename === selectedClip?.filename;
-                    const sourceLabel = ref.source === 'query'
-                      ? 'This detection'
-                      : ref.source === 'identity'
-                        ? 'Same identity'
-                        : 'Possible match';
-                    const sourceClass = ref.source === 'query'
+                    const isQuery = ref.source === 'query';
+                    const queryId = personRefs.find((r) => r.source === 'query')?.id;
+                    const sourceLabel = isQuery ? 'This detection' : 'Scored match';
+                    const sourceClass = isQuery
                       ? 'text-primary bg-primary/10 border-primary/20'
-                      : ref.source === 'identity'
-                        ? 'text-green-400 bg-green-400/10 border-green-400/20'
-                        : 'text-secondary bg-secondary/10 border-secondary/20';
+                      : 'text-secondary bg-secondary/10 border-secondary/20';
+                    const confirmKey = `confirm:${queryId}:${ref.id}`;
+                    const rejectKey = `reject:${queryId}:${ref.id}`;
 
                     return (
                       <div key={ref.id} className="relative">
                         <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#38bdf8] border-2 border-[#090d16]" />
-                        <button
-                          type="button"
-                          disabled={!ref.clipFilename}
-                          onClick={() => openClipFromReference(ref)}
-                          className={`glass-panel p-2.5 flex items-start gap-3 w-full text-left transition-all ${
-                            ref.clipFilename ? 'interactive cursor-pointer hover:border-primary/30' : 'opacity-60 cursor-default'
-                          } ${isCurrentClip ? 'border-primary/40' : ''}`}
+                        <div
+                          className={`glass-panel p-2.5 flex items-start gap-3 w-full ${
+                            isCurrentClip ? 'border-primary/40' : ''
+                          }`}
                         >
-                          <div className="w-12 h-12 rounded-md overflow-hidden border border-border-glass shrink-0 bg-black relative">
-                            <img
-                              src={mediaUrl(`/crops/${ref.filename}`)}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                            {ref.clipFilename && (
-                              <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                                <Play size={12} className="text-white" fill="white" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
-                              <span className={`text-[0.58rem] px-1.5 py-0.5 rounded-full border ${sourceClass}`}>
-                                {sourceLabel}
-                              </span>
-                              {isCurrentClip && (
-                                <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
-                              )}
-                              {ref.trackId != null && ref.trackId > 0 && (
-                                <span className="text-[0.6rem] text-text-muted">track {ref.trackId}</span>
+                          <button
+                            type="button"
+                            disabled={!ref.clipFilename}
+                            onClick={() => openClipFromReference(ref)}
+                            className={`flex items-start gap-3 flex-1 min-w-0 text-left bg-transparent border-none p-0 ${
+                              ref.clipFilename ? 'cursor-pointer' : 'opacity-60 cursor-default'
+                            }`}
+                          >
+                            <div className="w-12 h-12 rounded-md overflow-hidden border border-border-glass shrink-0 bg-black relative">
+                              <img
+                                src={mediaUrl(`/crops/${ref.filename}`)}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                              {ref.clipFilename && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                                  <Play size={12} className="text-white" fill="white" />
+                                </div>
                               )}
                             </div>
-                            <p className="text-[0.7rem] text-text-muted mt-0.5">
-                              {formatDate(ref.timestamp)}
-                            </p>
-                            {ref.scores && ref.source === 'match' && (
-                              <MatchScoreBreakdown scores={ref.scores} />
-                            )}
-                            <IdTooltipChip label="detection" value={ref.id} className="mt-1" />
-                          </div>
-                        </button>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
+                                <span className={`text-[0.58rem] px-1.5 py-0.5 rounded-full border ${sourceClass}`}>
+                                  {sourceLabel}
+                                </span>
+                                {isCurrentClip && (
+                                  <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
+                                )}
+                                {ref.trackId != null && ref.trackId > 0 && (
+                                  <span className="text-[0.6rem] text-text-muted">track {ref.trackId}</span>
+                                )}
+                                {ref.matchScore != null && !isQuery && (
+                                  <span className="text-[0.6rem] text-secondary font-semibold">
+                                    {Math.round(ref.matchScore * 100)}% match
+                                  </span>
+                                )}
+                                <IdsInfoIcon ids={[{ label: 'detection', value: ref.id }]} />
+                              </div>
+                              <p className="text-[0.7rem] text-text-muted mt-0.5">
+                                {formatDate(ref.timestamp)}
+                              </p>
+                              {ref.scores && !isQuery && (
+                                <MatchScoreBreakdown scores={ref.scores} />
+                              )}
+                            </div>
+                          </button>
+                          {!isQuery && (
+                            <div className="flex flex-col gap-1 shrink-0">
+                              <button
+                                type="button"
+                                title="Same person"
+                                disabled={!!feedbackPending}
+                                onClick={() => handleTimelineDetectionFeedback(ref.id, 'confirm')}
+                                className="btn btn-secondary p-1.5 border-none hover:text-green-400"
+                              >
+                                <ThumbsUp size={13} className={feedbackPending === confirmKey ? 'animate-pulse' : ''} />
+                              </button>
+                              <button
+                                type="button"
+                                title="Different person"
+                                disabled={!!feedbackPending}
+                                onClick={() => handleTimelineDetectionFeedback(ref.id, 'reject')}
+                                className="btn btn-secondary p-1.5 border-none hover:text-danger"
+                              >
+                                <ThumbsDown size={13} className={feedbackPending === rejectKey ? 'animate-pulse' : ''} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
