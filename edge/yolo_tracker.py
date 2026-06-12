@@ -146,6 +146,9 @@ class YoloByteTracker:
         device: str = "auto",
         class_names: Optional[list[str]] = None,
         imgsz: int = 416,
+        reid_confidence_threshold: Optional[float] = None,
+        reid_min_bbox_size: Optional[int] = None,
+        reid_visible_sec: Optional[float] = None,
     ):
         self.model_path = resolve_model_path(model_path)
         self.confidence = confidence
@@ -160,9 +163,19 @@ class YoloByteTracker:
         
         # Track states for ReID stabilization
         self._track_states: dict[int, dict[str, Any]] = {}
-        self.reid_confidence_threshold = float(os.getenv("REID_CONFIDENCE_THRESHOLD", "0.65"))
-        self.reid_min_bbox_size = int(os.getenv("REID_MIN_BBOX_SIZE", "2500"))
-        self.reid_visible_sec = float(os.getenv("REID_VISIBLE_SEC", "1.0"))
+        self.reid_confidence_threshold = (
+            reid_confidence_threshold
+            if reid_confidence_threshold is not None
+            else float(os.getenv("REID_CONFIDENCE_THRESHOLD", "0.65"))
+        )
+        self.reid_min_bbox_size = (
+            reid_min_bbox_size
+            if reid_min_bbox_size is not None
+            else int(os.getenv("REID_MIN_BBOX_SIZE", "2500"))
+        )
+        self.reid_visible_sec = (
+            reid_visible_sec if reid_visible_sec is not None else float(os.getenv("REID_VISIBLE_SEC", "1.0"))
+        )
 
     def process(
         self,

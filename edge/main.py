@@ -12,8 +12,10 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
+
+from config import DeviceRuntimeConfig, StreamRuntimeSettings
 
 import requests
 import websocket
@@ -73,6 +75,10 @@ class EdgeConfig:
     pixel_change_threshold: float = 0.02
     detect_person: bool = True
     detect_vehicle: bool = True
+    stream_settings: StreamRuntimeSettings = field(default_factory=StreamRuntimeSettings)
+
+    def runtime(self, device: DeviceRuntimeConfig) -> DeviceRuntimeConfig:
+        return self.stream_settings.effective(device)
 
     def detection_classes(self) -> list[str]:
         classes = class_names_from_flags(self.detect_person, self.detect_vehicle)
@@ -93,6 +99,7 @@ class EdgeAgent:
         self.shutdown_event = threading.Event()
 
         # Multi-stream configurations and pipelines
+        self.device_runtime_config = DeviceRuntimeConfig()
         self.streams_config: dict[str, EdgeConfig] = {}
         self.pipelines: dict[str, dict[str, Any]] = {}
 
@@ -199,6 +206,15 @@ class EdgeAgent:
 
         self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
+    def update_device_config(self, device_data: Optional[dict[str, Any]]) -> None:
+        new_config = DeviceRuntimeConfig.from_db(device_data)
+        if new_config == self.device_runtime_config:
+            return
+        self.device_runtime_config = new_config
+        self.send_log("Applying updated device configuration from cloud.")
+        for stream_id in list(self.streams_config.keys()):
+            self.restart_stream_pipeline(stream_id)
+
     def update_streams_config(self, streams_data: list[dict[str, Any]]):
         active_ids = set()
         for s in streams_data:
@@ -214,6 +230,7 @@ class EdgeAgent:
                 pixel_change_threshold=float(s.get("pixelChangeThreshold", 0.02)),
                 detect_person=bool(s.get("detectPerson", True)),
                 detect_vehicle=bool(s.get("detectVehicle", True)),
+                stream_settings=StreamRuntimeSettings.from_db(s.get("settings")),
             )
 
             existing = self.streams_config.get(stream_id)
@@ -224,6 +241,7 @@ class EdgeAgent:
                 or existing.detect_vehicle != config.detect_vehicle
                 or existing.motion_threshold != config.motion_threshold
                 or existing.pixel_change_threshold != config.pixel_change_threshold
+                or existing.stream_settings.affects_pipeline(config.stream_settings)
             )
             tracking_changed = not existing or existing.tracking_enabled != config.tracking_enabled
 
@@ -323,9 +341,15 @@ class EdgeAgent:
             if not config:
                 break
 
+            runtime = config.runtime(self.device_runtime_config)
             camera = CameraCapture(
                 camera_type=config.camera_type,
                 stream_url=config.stream_url,
+                width=runtime.camera_width,
+                height=runtime.camera_height,
+                fps=runtime.camera_fps,
+                rtsp_transport=config.stream_settings.rtsp_transport_value(),
+                rtsp_local_addr=config.stream_settings.rtsp_local_addr_value(),
             )
             if not camera.open():
                 consecutive_failures += 1
@@ -364,10 +388,13 @@ class EdgeAgent:
             consecutive_failures = 0
             detection_classes = config.detection_classes()
             tracker = YoloByteTracker(
-                confidence=YOLO_CONFIDENCE,
-                device=YOLO_DEVICE,
+                confidence=runtime.yolo_confidence,
+                device=runtime.yolo_device,
                 class_names=detection_classes,
-                imgsz=YOLO_IMGSZ,
+                imgsz=runtime.yolo_imgsz,
+                reid_confidence_threshold=runtime.reid_confidence_threshold,
+                reid_min_bbox_size=runtime.reid_min_bbox_size,
+                reid_visible_sec=runtime.reid_visible_sec,
             )
 
             pipeline_data = self.pipelines.get(stream_id)
@@ -382,7 +409,7 @@ class EdgeAgent:
 
             self.send_log(
                 f"[{config.name}] Detection targets: {', '.join(detection_classes)} | "
-                f"device={YOLO_DEVICE} imgsz={YOLO_IMGSZ} interval={YOLO_DETECT_INTERVAL}"
+                f"device={runtime.yolo_device} imgsz={runtime.yolo_imgsz} interval={runtime.yolo_detect_interval}"
             )
 
             self.send_log(
@@ -391,14 +418,16 @@ class EdgeAgent:
             self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
             settings = PipelineSettings(
-                detect_interval=YOLO_DETECT_INTERVAL,
-                encode_fps=CLIP_ENCODE_FPS,
-                process_fps=CAMERA_FPS,
-                stream_fps=FRAME_STREAM_FPS,
-                jpeg_quality=PREVIEW_JPEG_QUALITY,
+                detect_interval=runtime.yolo_detect_interval,
+                encode_fps=runtime.clip_encode_fps,
+                process_fps=runtime.camera_fps,
+                stream_fps=runtime.frame_stream_fps,
+                jpeg_quality=runtime.preview_jpeg_quality,
                 tracking_enabled=config.tracking_enabled,
+                camera_stall_timeout_sec=runtime.camera_stall_timeout_sec,
             )
             pipeline_data["settings"] = settings
+            pipeline_data["runtime"] = runtime
 
             def get_clip_encoder() -> Optional[ClipEncoder]:
                 p_data = self.pipelines.get(stream_id)
@@ -519,7 +548,13 @@ class EdgeAgent:
                 continue
 
             stalled_for = now - last_sent
-            if stalled_for >= PREVIEW_STALL_TIMEOUT_SEC:
+            runtime = p_data.get("runtime")
+            stall_timeout = (
+                runtime.preview_stall_timeout_sec
+                if runtime is not None
+                else PREVIEW_STALL_TIMEOUT_SEC
+            )
+            if stalled_for >= stall_timeout:
                 if not p_data.get("preview_stalled"):
                     p_data["preview_stalled"] = True
                     self._ws_send(
@@ -602,6 +637,13 @@ class EdgeAgent:
 
         config = self.streams_config.get(stream_id)
         name = config.name if config else stream_id
+        runtime = p_data.get("runtime")
+        if runtime is None and config is not None:
+            runtime = config.runtime(self.device_runtime_config)
+        recording_max_sec = runtime.recording_max_sec if runtime else RECORDING_MAX_SEC
+        recording_end_grace_sec = runtime.recording_end_grace_sec if runtime else RECORDING_END_GRACE_SEC
+        recording_cooldown_sec = runtime.recording_cooldown_sec if runtime else RECORDING_COOLDOWN_SEC
+        clip_encode_fps = runtime.clip_encode_fps if runtime else CLIP_ENCODE_FPS
 
         timestamp_ms = int(time.time() * 1000)
         p_data["recording_started_at_ms"] = timestamp_ms
@@ -614,11 +656,11 @@ class EdgeAgent:
 
         self.send_log(
             f"[{name}] Recording while objects are detected "
-            f"(max {int(RECORDING_MAX_SEC)}s @ {CLIP_ENCODE_FPS}fps)..."
+            f"(max {int(recording_max_sec)}s @ {clip_encode_fps}fps)..."
         )
 
         try:
-            clip_encoder = ClipEncoder(output_path, width, height, fps=CLIP_ENCODE_FPS)
+            clip_encoder = ClipEncoder(output_path, width, height, fps=clip_encode_fps)
             clip_encoder.start()
             with p_data["clip_encoder_lock"]:
                 p_data["clip_encoder"] = clip_encoder
@@ -639,13 +681,13 @@ class EdgeAgent:
                 with p_data["detection_lock"]:
                     last_detection_at = p_data["last_detection_at"]
 
-                if elapsed >= RECORDING_MAX_SEC:
-                    self.send_log(f"[{name}] Max clip length ({int(RECORDING_MAX_SEC)}s) reached.")
+                if elapsed >= recording_max_sec:
+                    self.send_log(f"[{name}] Max clip length ({int(recording_max_sec)}s) reached.")
                     break
 
                 if (
-                    elapsed >= RECORDING_END_GRACE_SEC
-                    and time.monotonic() - last_detection_at >= RECORDING_END_GRACE_SEC
+                    elapsed >= recording_end_grace_sec
+                    and time.monotonic() - last_detection_at >= recording_end_grace_sec
                 ):
                     self.send_log(f"[{name}] Objects left frame — finalizing clip.")
                     break
@@ -664,7 +706,7 @@ class EdgeAgent:
 
             actual_duration = get_video_duration_seconds(output_path)
             if actual_duration <= 0:
-                actual_duration = clip_encoder.frames_written / CLIP_ENCODE_FPS
+                actual_duration = clip_encoder.frames_written / clip_encode_fps
             self.send_log(f"[{name}] Clip encoded: {filename} ({actual_duration:.1f}s)")
 
             with p_data["clip_track_events_lock"]:
@@ -699,14 +741,14 @@ class EdgeAgent:
             self._stop_active_clip_encoder(p_data)
             with p_data["recording_lock"]:
                 p_data["is_recording"] = False
-                p_data["recording_cooldown_until"] = time.monotonic() + RECORDING_COOLDOWN_SEC
+                p_data["recording_cooldown_until"] = time.monotonic() + recording_cooldown_sec
             p_data["recording_started_at_mono"] = None
             p_data["recording_started_at_ms"] = None
             with p_data["clip_track_events_lock"]:
                 p_data["clip_track_events"] = []
-            if RECORDING_COOLDOWN_SEC > 0:
+            if recording_cooldown_sec > 0:
                 self.send_log(
-                    f"[{name}] Clip cooldown started ({int(RECORDING_COOLDOWN_SEC)}s before next clip can begin)."
+                    f"[{name}] Clip cooldown started ({int(recording_cooldown_sec)}s before next clip can begin)."
                 )
             tracker = p_data.get("tracker")
             if tracker:
@@ -996,6 +1038,9 @@ class EdgeAgent:
             msg_type = data.get("type")
 
             if msg_type == "configure":
+                device_config = data.get("deviceConfig")
+                if device_config is not None:
+                    self.update_device_config(device_config)
                 streams_data = data.get("streams", [])
                 self.send_log(f"Applying updated configuration with {len(streams_data)} stream(s).")
                 self.update_streams_config(streams_data)

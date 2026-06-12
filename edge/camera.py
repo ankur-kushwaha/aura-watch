@@ -67,6 +67,8 @@ class CameraCapture:
         width: Optional[int] = None,
         height: Optional[int] = None,
         fps: Optional[int] = None,
+        rtsp_transport: Optional[str] = None,
+        rtsp_local_addr: Optional[str] = None,
     ):
         width = width if width is not None else _env_int("CAMERA_WIDTH", 640)
         height = height if height is not None else _env_int("CAMERA_HEIGHT", 480)
@@ -76,6 +78,8 @@ class CameraCapture:
         self.width = width
         self.height = height
         self.fps = fps
+        self.rtsp_transport = (rtsp_transport or os.getenv("RTSP_TRANSPORT", "tcp")).lower()
+        self.rtsp_local_addr = (rtsp_local_addr or os.getenv("RTSP_LOCAL_ADDR", "")).strip()
         self._cap: Optional[cv2.VideoCapture] = None
         self._ffmpeg: Optional[_FfmpegFrameReader] = None
         self._last_error = ""
@@ -120,7 +124,7 @@ class CameraCapture:
             self._cap = None
 
     def _open_rtsp(self):
-        preferred = os.getenv("RTSP_TRANSPORT", "tcp").lower()
+        preferred = self.rtsp_transport
         transports: list[Optional[str]]
         if preferred == "auto":
             transports = ["tcp", "udp", None]
@@ -140,6 +144,7 @@ class CameraCapture:
                 self.height,
                 self.fps,
                 transport=transport,
+                local_addr=self.rtsp_local_addr,
             )
             if reader.start():
                 self._ffmpeg = reader
@@ -618,12 +623,14 @@ class _FfmpegFrameReader:
         height: int,
         fps: int,
         transport: Optional[str] = "tcp",
+        local_addr: str = "",
     ):
         self.stream_url = stream_url
         self.width = width
         self.height = height
         self.fps = fps
         self.transport = transport
+        self.local_addr = local_addr.strip()
         self.process: Optional[subprocess.Popen] = None
         self.last_error = ""
         self._frame_size = width * height * 3
@@ -638,9 +645,8 @@ class _FfmpegFrameReader:
             loglevel,
         ]
 
-        local_addr = os.getenv("RTSP_LOCAL_ADDR", "").strip()
-        if local_addr:
-            args += ["-localaddr", local_addr]
+        if self.local_addr:
+            args += ["-localaddr", self.local_addr]
 
         if self.transport in ("tcp", "udp"):
             args += ["-rtsp_transport", self.transport]

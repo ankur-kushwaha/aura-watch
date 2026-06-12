@@ -6,6 +6,12 @@ import { handleCropUpload, ReidTrackEvent } from './reid';
 import { sendDeviceCommand } from '../services/deviceCommands';
 import { getEffectiveDeviceStatus } from '../services/deviceStatus';
 import { assertDeviceInOrg } from '../services/orgScope';
+import {
+  extractDeviceConfigPatch,
+  mergeDeviceConfig,
+  mergeDeviceConfigUpdate,
+  withEffectiveDeviceConfig,
+} from '../services/edgeConfig';
 
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
@@ -24,6 +30,7 @@ export type ClipUploadCallback = (
 
 let onClipUploadedCallback: ClipUploadCallback | null = null;
 let onDevicesChangedCallback: (() => void) | null = null;
+let onDeviceConfigUpdatedCallback: ((deviceId: string) => Promise<void>) | null = null;
 
 export function registerOnClipUploaded(cb: ClipUploadCallback) {
   onClipUploadedCallback = cb;
@@ -31,6 +38,20 @@ export function registerOnClipUploaded(cb: ClipUploadCallback) {
 
 export function registerOnDevicesChanged(cb: () => void) {
   onDevicesChangedCallback = cb;
+}
+
+export function registerOnDeviceConfigUpdated(cb: (deviceId: string) => Promise<void>) {
+  onDeviceConfigUpdatedCallback = cb;
+}
+
+export async function triggerDeviceConfigUpdated(deviceId: string) {
+  if (onDeviceConfigUpdatedCallback) {
+    try {
+      await onDeviceConfigUpdatedCallback(deviceId);
+    } catch (err) {
+      console.error(`Error in onDeviceConfigUpdatedCallback for ${deviceId}:`, err);
+    }
+  }
 }
 
 function notifyDevicesChanged() {
@@ -54,7 +75,7 @@ router.get('/', async (req: Request, res: Response) => {
     
     const now = new Date();
     const sanitizedDevices = devices.map((device) => ({
-      ...device,
+      ...withEffectiveDeviceConfig(device),
       status: getEffectiveDeviceStatus(device.status, device.lastHeartbeat, now),
     }));
 
@@ -85,7 +106,7 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
     
     device.status = getEffectiveDeviceStatus(device.status, device.lastHeartbeat);
 
-    res.json(device);
+    res.json(withEffectiveDeviceConfig(device));
   } catch (error) {
     console.error('Error fetching device:', error);
     res.status(500).json({ error: 'Failed to fetch device details' });
@@ -189,6 +210,52 @@ router.post('/register', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error registering device:', error);
     res.status(500).json({ error: 'Failed to register device' });
+  }
+});
+
+/**
+ * POST /api/devices/:deviceId/config
+ * Update edge device runtime configuration (stored in DB; env on device is fallback)
+ */
+router.post('/:deviceId/config', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const { name } = req.body;
+
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    const existing = await prisma.edgeDevice.findFirst({
+      where: { deviceId, orgId: req.auth.orgId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const configPatch = extractDeviceConfigPatch(req.body);
+    const updatedConfig = mergeDeviceConfigUpdate(existing.config, configPatch);
+
+    const updatedDevice = await prisma.edgeDevice.update({
+      where: { deviceId },
+      data: {
+        ...(name !== undefined ? { name: String(name) } : {}),
+        config: updatedConfig,
+      },
+    });
+
+    console.log(`[Cloud Hub] Device config updated for ${deviceId}`);
+    await triggerDeviceConfigUpdated(deviceId);
+
+    res.json({
+      message: 'Device configuration updated successfully',
+      device: withEffectiveDeviceConfig(updatedDevice),
+      config: updatedDevice.config,
+      effectiveConfig: mergeDeviceConfig(updatedDevice.config),
+    });
+  } catch (error) {
+    console.error('Error updating device configuration:', error);
+    res.status(500).json({ error: 'Failed to update device configuration' });
   }
 });
 

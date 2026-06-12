@@ -15,6 +15,49 @@ type OrgSettings {
   reidProcessing   Boolean @default(true)
 }
 
+type EdgeDeviceConfig {
+  yoloConfidence          Float?
+  yoloDevice              String?
+  yoloImgsz               Int?
+  yoloDetectInterval      Int?
+  cameraWidth             Int?
+  cameraHeight            Int?
+  cameraFps               Int?
+  clipEncodeFps           Int?
+  cameraStallTimeoutSec   Float?
+  frameStreamFps          Float?
+  previewJpegQuality      Int?
+  previewStallTimeoutSec  Float?
+  recordingMaxSec         Float?
+  recordingEndGraceSec    Float?
+  recordingCooldownSec    Float?
+  reidConfidenceThreshold Float?
+  reidMinBboxSize         Int?
+  reidVisibleSec          Float?
+  debugLogs               Boolean?
+}
+
+type StreamSettings {
+  cameraWidth             Int?
+  cameraHeight            Int?
+  cameraFps               Int?
+  rtspTransport           String?
+  rtspLocalAddr           String?
+  clipEncodeFps           Int?
+  recordingMaxSec         Float?
+  recordingEndGraceSec    Float?
+  recordingCooldownSec    Float?
+  yoloConfidence          Float?
+  yoloImgsz               Int?
+  yoloDetectInterval      Int?
+  frameStreamFps          Float?
+  previewJpegQuality      Int?
+  previewStallTimeoutSec  Float?
+  reidConfidenceThreshold Float?
+  reidMinBboxSize         Int?
+  reidVisibleSec          Float?
+}
+
 model Organization {
   id               String                 @id @default(auto()) @map("_id") @db.ObjectId
   name             String
@@ -76,13 +119,14 @@ model VideoClip {
 }
 
 model EdgeDevice {
-  id            String         @id @default(auto()) @map("_id") @db.ObjectId
-  deviceId      String         @unique
+  id            String            @id @default(auto()) @map("_id") @db.ObjectId
+  deviceId      String            @unique
   name          String
-  status        String         @default("Offline") // "Offline", "Online"
-  lastHeartbeat DateTime       @default(now())
-  orgId         String?        @db.ObjectId
-  org           Organization?  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  status        String            @default("Offline") // "Offline", "Online"
+  lastHeartbeat DateTime          @default(now())
+  orgId         String?           @db.ObjectId
+  config        EdgeDeviceConfig?
+  org           Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   streams       CameraStream[]
 }
 
@@ -101,6 +145,7 @@ model CameraStream {
   detectPerson         Boolean         @default(true)
   detectVehicle        Boolean         @default(true)
   streamHost           String          @default("")
+  settings             StreamSettings?
   lastHeartbeat        DateTime        @default(now())
   clips                VideoClip[]
   detections           ReidDetection[]

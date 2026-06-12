@@ -27,6 +27,7 @@ class PipelineSettings:
     stream_fps: float = 12.0
     jpeg_quality: int = 70
     tracking_enabled: bool = False
+    camera_stall_timeout_sec: float = CAMERA_STALL_TIMEOUT_SEC
 
 
 FrameCallback = Callable[[np.ndarray], None]
@@ -81,7 +82,7 @@ class VisionPipeline:
                 frame = self._frame_queue.get(timeout=0.5)
             except queue.Empty:
                 stalled_for = time.monotonic() - last_frame_received_at
-                if stalled_for >= CAMERA_STALL_TIMEOUT_SEC:
+                if stalled_for >= self.settings.camera_stall_timeout_sec:
                     detail = self.camera.last_error or "no frames from camera"
                     raise RuntimeError(
                         f"Camera stream lost ({detail}; no frame for {stalled_for:.0f}s)"

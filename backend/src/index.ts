@@ -11,8 +11,13 @@ dotenv.config();
 
 import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
-import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from './routes/devices';
+import devicesRouter, {
+  registerOnClipUploaded,
+  registerOnDevicesChanged,
+  registerOnDeviceConfigUpdated,
+} from './routes/devices';
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
+import { buildConfigurePayload } from './services/edgeConfig';
 import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR, processReidTrackEventsFromClip, ReidTrackEvent } from './routes/reid';
 import authRouter from './routes/auth';
 import orgsRouter from './routes/orgs';
@@ -226,21 +231,32 @@ function broadcastLogToSubscribedUIs(deviceId: string, message: string) {
   }
 }
 
-// Register callbacks for stream configuration changes
-registerOnStreamsUpdated(async (deviceId) => {
-  const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
+async function pushDeviceConfigure(deviceId: string) {
+  const [device, streams] = await Promise.all([
+    prisma.edgeDevice.findUnique({ where: { deviceId } }),
+    prisma.cameraStream.findMany({ where: { deviceId } }),
+  ]);
+  if (!device) return;
+
   for (const stream of streams) {
     streamDeviceCache.set(stream.streamId, deviceId);
   }
 
   const deviceSocket = activeDevices.get(deviceId);
   if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-    console.log(`[WS Hub] Pushing configure command to edge device: ${deviceId} with ${streams.length} stream(s)`);
-    deviceSocket.send(JSON.stringify({ type: 'configure', streams }));
+    const payload = buildConfigurePayload(device, streams);
+    console.log(
+      `[WS Hub] Pushing configure command to edge device: ${deviceId} with ${streams.length} stream(s)`,
+    );
+    deviceSocket.send(JSON.stringify(payload));
   } else {
     console.log(`[WS Hub] Edge device ${deviceId} is currently offline. Config saved in DB.`);
   }
-});
+}
+
+// Register callbacks for device/stream configuration changes
+registerOnStreamsUpdated(pushDeviceConfigure);
+registerOnDeviceConfigUpdated(pushDeviceConfigure);
 
 registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight) => {
   await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight);
@@ -595,9 +611,13 @@ wss.on('connection', async (ws: WebSocket, req) => {
     broadcastDevicesChanged();
 
     // Re-sync stream config from DB on every connect/reconnect (edge may have missed configure while offline).
-    if (ws.readyState === WebSocket.OPEN && streams.length > 0) {
-      console.log(`[WS Hub] Syncing ${streams.length} stream config(s) to edge device: ${deviceId}`);
-      ws.send(JSON.stringify({ type: 'configure', streams }));
+    if (ws.readyState === WebSocket.OPEN) {
+      const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+      if (device) {
+        const payload = buildConfigurePayload(device, streams);
+        console.log(`[WS Hub] Syncing ${streams.length} stream config(s) to edge device: ${deviceId}`);
+        ws.send(JSON.stringify(payload));
+      }
     }
 
     // If there is already a UI client subscribed to any of the device's streams, toggle streaming for them
