@@ -3,6 +3,7 @@ import { generateTextEmbedding, answerWithTools } from '../services/ai';
 import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
 import prisma from '../services/db';
 import { getOrgOnlineDeviceIds } from '../services/orgScope';
+import { getOrgSettings } from '../services/orgSettings';
 
 const router = Router();
 
@@ -23,6 +24,11 @@ router.post('/query', async (req: Request, res: Response) => {
   }
 
   try {
+    const orgSettings = await getOrgSettings(req.auth.orgId);
+    if (!orgSettings.aiChat) {
+      return res.status(403).json({ error: 'AI chat is disabled for this organization.' });
+    }
+
     console.log(`[RAG] Received query: "${question}" with history size: ${history.length}, filters:`, { startTime, endTime, deviceId, streamId });
 
     const onlineDeviceIdList = await getOrgOnlineDeviceIds(req.auth.orgId);

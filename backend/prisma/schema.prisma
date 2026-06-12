@@ -8,10 +8,18 @@ generator client {
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
+type OrgSettings {
+  videoSummary     Boolean @default(true)
+  semanticSearch   Boolean @default(true)
+  aiChat           Boolean @default(true)
+  reidProcessing   Boolean @default(true)
+}
+
 model Organization {
   id               String                 @id @default(auto()) @map("_id") @db.ObjectId
   name             String
   slug             String                 @unique
+  settings         OrgSettings?
   createdAt        DateTime               @default(now())
   members          OrgMember[]
   devices          EdgeDevice[]

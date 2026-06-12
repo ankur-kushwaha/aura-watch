@@ -44,8 +44,12 @@ import {
   switchOrg,
   fetchMe,
   createEnrollmentToken,
+  DEFAULT_ORG_SETTINGS,
   type AuthOrg,
+  type AuthUser,
+  type OrgSettings,
 } from './api';
+import OrgSettingsPage from './OrgSettings';
 
 const PREVIEW_STALL_MS = 5000;
 
@@ -223,6 +227,85 @@ const identityCoverUrl = (identityId: string) => {
   const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
   return `${API_BASE}/reid/identities/${identityId}/cover${qs}`;
 };
+
+type CropClipPlayback = {
+  clipFilename?: string | null;
+  clipOffsetMs?: number | null;
+  cameraName: string;
+  detectionId?: string;
+};
+
+function CropThumbnail({
+  filename,
+  size = 'sm',
+  onPreview,
+  onPlayClip,
+  clipPlayback,
+}: {
+  filename: string;
+  size?: 'sm' | 'md';
+  onPreview: (filename: string) => void;
+  onPlayClip?: (opts: CropClipPlayback & { cropFilename: string }) => void | Promise<void>;
+  clipPlayback?: CropClipPlayback;
+}) {
+  const [hovering, setHovering] = useState(false);
+  const [hoverPos, setHoverPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const src = mediaUrl(`/crops/${filename}`);
+  const thumbClass = size === 'sm' ? 'w-10 h-10' : 'w-12 h-12';
+  const hasVideo = !!(clipPlayback?.clipFilename || clipPlayback?.detectionId);
+
+  const updateHoverPos = () => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const previewW = 224;
+    const left = rect.right + 8 + previewW > window.innerWidth
+      ? rect.left - previewW - 8
+      : rect.right + 8;
+    setHoverPos({ top: Math.max(8, rect.top), left: Math.max(8, left) });
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (hasVideo && onPlayClip && clipPlayback) {
+            void onPlayClip({ cropFilename: filename, ...clipPlayback });
+          } else {
+            onPreview(filename);
+          }
+        }}
+        onMouseEnter={() => {
+          updateHoverPos();
+          setHovering(true);
+        }}
+        onMouseLeave={() => setHovering(false)}
+        className={`${thumbClass} rounded-lg overflow-hidden border border-[rgba(56,189,248,0.2)] shrink-0 p-0 bg-black ${
+          hasVideo ? 'cursor-pointer hover:border-[#38bdf8]/60' : 'cursor-zoom-in hover:border-[#38bdf8]/60'
+        } transition-colors`}
+        title={hasVideo ? 'Hover to preview crop · Click to play clip' : 'Hover or click to enlarge'}
+      >
+        <img src={src} alt="" className="w-full h-full object-cover" />
+      </button>
+      {hovering && createPortal(
+        <div
+          className="fixed z-[10001] pointer-events-none"
+          style={{ top: hoverPos.top, left: hoverPos.left }}
+        >
+          <img
+            src={src}
+            alt=""
+            className="w-56 max-h-80 object-contain rounded-xl border border-[rgba(56,189,248,0.35)] shadow-2xl bg-black"
+          />
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
 
 function IdsInfoIcon({
   ids,
@@ -600,8 +683,11 @@ interface AppProps {
 
 function App({ onLogout }: AppProps) {
   const [currentOrg, setCurrentOrg] = useState<AuthOrg | null>(() => getStoredOrg());
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [availableOrgs, setAvailableOrgs] = useState<AuthOrg[]>([]);
   const [switchingOrg, setSwitchingOrg] = useState(false);
+  const [appView, setAppView] = useState<'dashboard' | 'settings'>('dashboard');
+  const [orgSettings, setOrgSettings] = useState<OrgSettings>(DEFAULT_ORG_SETTINGS);
 
   // App States
   const [devices, setDevices] = useState<EdgeDevice[]>([]);
@@ -643,8 +729,10 @@ function App({ onLogout }: AppProps) {
   useEffect(() => {
     fetchMe()
       .then((data) => {
+        setCurrentUser(data.user);
         if (data.org) setCurrentOrg(data.org);
         setAvailableOrgs(data.orgs);
+        if (data.settings) setOrgSettings(data.settings);
       })
       .catch(() => {});
   }, []);
@@ -724,6 +812,7 @@ function App({ onLogout }: AppProps) {
   const [showPersonRefsSuggestions, setShowPersonRefsSuggestions] = useState(true);
   const [loadingPersonRefs, setLoadingPersonRefs] = useState(false);
   const [savingPersonRefsLabel, setSavingPersonRefsLabel] = useState(false);
+  const [cropPreviewFilename, setCropPreviewFilename] = useState<string | null>(null);
 
   // RAG Q&A states
   const [query, setQuery] = useState<string>('');
@@ -758,6 +847,15 @@ function App({ onLogout }: AppProps) {
   );
 
   const hasOnlineDevices = onlineDeviceIds.size > 0;
+
+  useEffect(() => {
+    if (!orgSettings.aiChat && activeTab === 'ai') {
+      if (hasOnlineDevices) setActiveTab('events');
+    }
+    if (!hasOnlineDevices && (activeTab === 'events' || activeTab === 'reid')) {
+      if (orgSettings.aiChat) setActiveTab('ai');
+    }
+  }, [orgSettings.aiChat, activeTab, hasOnlineDevices]);
 
   const isClipFromOnlineDevice = useCallback((clip: VideoClip) => {
     if (!clip.deviceId) return hasOnlineDevices;
@@ -1338,15 +1436,13 @@ function App({ onLogout }: AppProps) {
     trackMatches: TrackMatchRow[],
   ): PersonClipReference[] => {
     const refs: PersonClipReference[] = [];
+
     if (query) {
       refs.push(mapDetectionToRef(query, 'query'));
     }
 
-    const sortedMatches = [...trackMatches]
-      .filter((m) => !query || m.id !== query.id)
-      .sort((a, b) => (b.scores?.finalScore ?? 0) - (a.scores?.finalScore ?? 0));
-
-    for (const match of sortedMatches) {
+    for (const match of trackMatches) {
+      if (query && match.id === query.id) continue;
       const scores = match.scores
         ? { ...match.scores, feedbackBoost: match.feedbackBoost ?? match.scores.feedbackBoost }
         : undefined;
@@ -1365,7 +1461,9 @@ function App({ onLogout }: AppProps) {
       });
     }
 
-    return refs;
+    return refs.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
   };
 
   const fetchTrackTimeline = async (detectionId: string) => {
@@ -1425,6 +1523,39 @@ function App({ onLogout }: AppProps) {
       closePersonRefsModal();
     }
   };
+
+  const playDetectionClip = useCallback(async (opts: CropClipPlayback & { cropFilename: string }) => {
+    let clipFilename = opts.clipFilename;
+    let clipOffsetMs = opts.clipOffsetMs ?? 0;
+
+    if (!clipFilename && opts.detectionId) {
+      try {
+        const res = await apiFetch(`/reid/detections/${opts.detectionId}/source-clip`);
+        if (!res.ok) {
+          setCropPreviewFilename(opts.cropFilename);
+          return;
+        }
+        const data = await res.json();
+        clipFilename = data.clipFilename;
+        clipOffsetMs = data.clipOffsetMs ?? 0;
+      } catch (err) {
+        console.error('Failed to resolve clip for detection', err);
+        setCropPreviewFilename(opts.cropFilename);
+        return;
+      }
+    }
+
+    if (clipFilename) {
+      setTimelineVideo({
+        filename: clipFilename,
+        offsetMs: clipOffsetMs,
+        cameraName: opts.cameraName,
+        cropFilename: opts.cropFilename,
+      });
+    } else {
+      setCropPreviewFilename(opts.cropFilename);
+    }
+  }, []);
 
   const openPersonRefsModal = async (obj: ClipObjectDetection) => {
     if (obj.className !== 'person' || !obj.detectionId) return;
@@ -1795,9 +1926,6 @@ function App({ onLogout }: AppProps) {
   }, [activeTab, fetchReidPeople, fetchTopology]);
 
   useEffect(() => {
-    if (!hasOnlineDevices && (activeTab === 'events' || activeTab === 'reid')) {
-      setActiveTab('ai');
-    }
     if (!hasOnlineDevices && reidView === 'person') {
       setReidView('people');
       setSelectedPerson(null);
@@ -1838,7 +1966,9 @@ function App({ onLogout }: AppProps) {
     if (!video || !timelineVideo) return;
 
     const seekToOffset = () => {
-      video.currentTime = Math.max(0, timelineVideo.offsetMs / 1000);
+      const detectionSec = timelineVideo.offsetMs / 1000;
+      video.currentTime = Math.max(0, detectionSec - 1);
+      video.pause();
     };
 
     video.addEventListener('loadedmetadata', seekToOffset);
@@ -2169,6 +2299,9 @@ function App({ onLogout }: AppProps) {
       });
 
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'AI chat request failed');
+      }
 
       setChatHistory((prev) => [
         ...prev,
@@ -2176,9 +2309,10 @@ function App({ onLogout }: AppProps) {
       ]);
     } catch (err) {
       console.error('RAG query failed', err);
+      const message = err instanceof Error ? err.message : 'Sorry, I encountered an error searching for matching footage summaries.';
       setChatHistory((prev) => [
         ...prev,
-        { role: 'assistant', content: 'Sorry, I encountered an error searching for matching footage summaries.' }
+        { role: 'assistant', content: message }
       ]);
     } finally {
       setIsAsking(false);
@@ -2224,11 +2358,24 @@ function App({ onLogout }: AppProps) {
               onSwitchOrg={handleSwitchOrg}
             />
           )}
-          {selectedDeviceId && (
+          {selectedDeviceId && appView === 'dashboard' && (
             <div className={`status-indicator ${status.toLowerCase().replace(' ', '')}`}>
               <span className="w-2 h-2 rounded-full bg-current inline-block"></span>
               {status}
             </div>
+          )}
+          {currentOrg && (
+            <button
+              type="button"
+              onClick={() => setAppView(appView === 'settings' ? 'dashboard' : 'settings')}
+              className={`btn py-1.5 px-3 text-[0.8rem] rounded-md flex items-center gap-1.5 ${
+                appView === 'settings'
+                  ? 'btn-primary'
+                  : 'btn-secondary'
+              }`}
+            >
+              <Settings size={14} /> Org settings
+            </button>
           )}
           <button
             type="button"
@@ -2240,9 +2387,19 @@ function App({ onLogout }: AppProps) {
         </div>
       </header>
 
+      {appView === 'settings' && currentOrg && currentUser ? (
+        <OrgSettingsPage
+          org={currentOrg}
+          currentUserId={currentUser.id}
+          onBack={() => setAppView('dashboard')}
+          onSettingsSaved={setOrgSettings}
+        />
+      ) : (
+        <>
       {/* NAVIGATION TABS */}
       <div className="flex gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-fit">
-      <button
+      {orgSettings.aiChat && (
+        <button
           onClick={() => setActiveTab('ai')}
           className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'ai'
             ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
@@ -2251,6 +2408,7 @@ function App({ onLogout }: AppProps) {
         >
           <Sparkles size={16} /> Ask Camera AI
         </button>
+      )}
         {hasOnlineDevices && (
           <button
             onClick={() => setActiveTab('events')}
@@ -2704,9 +2862,11 @@ function App({ onLogout }: AppProps) {
                                   <span className="text-[0.85rem] font-semibold text-text-primary">{c.camera}</span>
                                   <span className="text-[0.7rem] text-text-muted">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
-                                <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
-                                  {c.summary}
-                                </p>
+                                {orgSettings.videoSummary && c.summary && (
+                                  <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
+                                    {c.summary}
+                                  </p>
+                                )}
                               </div>
                             </div>
 
@@ -2758,13 +2918,17 @@ function App({ onLogout }: AppProps) {
                               <Clock size={12} /> {formatDate(selectedClip.timestamp)}
                             </span>
                           </div>
-                          <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
-                            <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
-                              <Sparkles size={12} />Video Summary
-                            </p>
-                            <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{selectedClip.summary}</p>
-                          </div>
-                          {(loadingClipDetections || clipDetections.length > 0 || clipReidLog) && (
+                          {orgSettings.videoSummary && (
+                            <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
+                              <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
+                                <Sparkles size={12} />Video Summary
+                              </p>
+                              <p className="text-[0.8rem] text-text-secondary leading-[1.4]">
+                                {selectedClip.summary || 'No summary available.'}
+                              </p>
+                            </div>
+                          )}
+                          {orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0 || clipReidLog) && (
                             <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
                               <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
                                 <Fingerprint size={12} />Detected Objects
@@ -2798,13 +2962,17 @@ function App({ onLogout }: AppProps) {
                                       >
                                         <div className="flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary">
                                           {obj.cropFilename && (
-                                            <div className="w-10 h-10 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.2)] shrink-0">
-                                              <img
-                                                src={mediaUrl(`/crops/${obj.cropFilename}`)}
-                                                alt=""
-                                                className="w-full h-full object-cover bg-black"
-                                              />
-                                            </div>
+                                            <CropThumbnail
+                                              filename={obj.cropFilename}
+                                              onPreview={setCropPreviewFilename}
+                                              onPlayClip={playDetectionClip}
+                                              clipPlayback={obj.detectionId ? {
+                                                clipFilename: selectedClip?.filename,
+                                                clipOffsetMs: 0,
+                                                cameraName: selectedClip?.camera ?? 'Camera',
+                                                detectionId: obj.detectionId,
+                                              } : undefined}
+                                            />
                                           )}
                                           <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
                                             {obj.className}
@@ -2892,7 +3060,7 @@ function App({ onLogout }: AppProps) {
                 </div>
               </div>
             </>
-          ) : activeTab === 'ai' || !hasOnlineDevices ? (
+          ) : activeTab === 'ai' && orgSettings.aiChat ? (
               <div className="glass-panel p-5 flex flex-col h-[800px]">
                 <div className="flex justify-between items-center mb-3">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
@@ -2913,6 +3081,12 @@ function App({ onLogout }: AppProps) {
                     )}
                   </button>
                 </div>
+
+                {!orgSettings.semanticSearch && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[0.8rem] text-amber-200 mb-3">
+                    Semantic search indexing is disabled. New clips will not be searchable until you enable it in org settings.
+                  </div>
+                )}
 
                 {/* Collapsible Filter Inputs */}
                 {showFilters && (
@@ -3537,10 +3711,37 @@ function App({ onLogout }: AppProps) {
 
       </div>
 
+      {/* CROP IMAGE PREVIEW */}
+      {cropPreviewFilename && (
+        <div
+          className="fixed inset-0 z-[10002] flex items-center justify-center p-6"
+          style={{ backdropFilter: 'blur(8px)', background: 'rgba(9,13,22,0.85)' }}
+          onClick={() => setCropPreviewFilename(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Crop preview"
+        >
+          <button
+            type="button"
+            onClick={() => setCropPreviewFilename(null)}
+            className="absolute top-4 right-4 btn btn-secondary p-2 rounded-lg z-10"
+            aria-label="Close preview"
+          >
+            <X size={18} />
+          </button>
+          <img
+            src={mediaUrl(`/crops/${cropPreviewFilename}`)}
+            alt="ReID crop preview"
+            className="max-w-[min(90vw,560px)] max-h-[85vh] object-contain rounded-xl border border-[rgba(56,189,248,0.3)] shadow-2xl bg-black"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
       {/* TIMELINE CLIP PLAYBACK MODAL */}
       {timelineVideo && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[10003] flex items-center justify-center p-4"
           style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
           onClick={() => setTimelineVideo(null)}
         >
@@ -3570,7 +3771,7 @@ function App({ onLogout }: AppProps) {
                 key={timelineVideo.filename}
                 src={mediaUrl(`/videos/${timelineVideo.filename}`)}
                 controls
-                autoPlay
+                preload="metadata"
                 className="w-full max-h-[420px] object-contain"
               />
             </div>
@@ -3581,8 +3782,9 @@ function App({ onLogout }: AppProps) {
                 className="w-12 h-12 rounded-lg object-cover bg-black shrink-0"
               />
               <p className="text-[0.75rem] text-text-secondary">
-                Jumped to the moment this person was detected
-                {timelineVideo.offsetMs > 0 ? ` (${(timelineVideo.offsetMs / 1000).toFixed(1)}s into clip)` : ''}.
+                {timelineVideo.offsetMs > 0
+                  ? `Seeked to ${Math.max(0, timelineVideo.offsetMs / 1000 - 1).toFixed(1)}s (1s before detection at ${(timelineVideo.offsetMs / 1000).toFixed(1)}s into clip). Press play when ready.`
+                  : 'Press play to watch this clip.'}
               </p>
             </div>
           </div>
@@ -3604,13 +3806,18 @@ function App({ onLogout }: AppProps) {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 {personRefsModal.cropFilename && (
-                  <div className="w-14 h-14 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.25)] shrink-0">
-                    <img
-                      src={mediaUrl(`/crops/${personRefsModal.cropFilename}`)}
-                      alt=""
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
+                  <CropThumbnail
+                    filename={personRefsModal.cropFilename}
+                    size="md"
+                    onPreview={setCropPreviewFilename}
+                    onPlayClip={playDetectionClip}
+                    clipPlayback={{
+                      clipFilename: selectedClip?.filename,
+                      clipOffsetMs: 0,
+                      cameraName: selectedClip?.camera ?? personRefsModal.label ?? 'Camera',
+                      detectionId: personRefsModal.detectionId,
+                    }}
+                  />
                 )}
                 <div className="min-w-0">
                   <h2 className="text-[1.05rem] font-bold text-text-primary">
@@ -3795,14 +4002,21 @@ function App({ onLogout }: AppProps) {
                               ref.clipFilename ? 'cursor-pointer' : 'opacity-60 cursor-default'
                             }`}
                           >
-                            <div className="w-12 h-12 rounded-md overflow-hidden border border-border-glass shrink-0 bg-black relative">
-                              <img
-                                src={mediaUrl(`/crops/${ref.filename}`)}
-                                alt=""
-                                className="w-full h-full object-cover"
+                            <div className="relative shrink-0">
+                              <CropThumbnail
+                                filename={ref.filename}
+                                size="md"
+                                onPreview={setCropPreviewFilename}
+                                onPlayClip={playDetectionClip}
+                                clipPlayback={{
+                                  clipFilename: ref.clipFilename,
+                                  clipOffsetMs: ref.clipOffsetMs,
+                                  cameraName: ref.cameraName,
+                                  detectionId: ref.id,
+                                }}
                               />
                               {ref.clipFilename && (
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg pointer-events-none">
                                   <Play size={12} className="text-white" fill="white" />
                                 </div>
                               )}
@@ -4123,6 +4337,8 @@ function App({ onLogout }: AppProps) {
           </div>
         );
       })()}
+        </>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import { hashPassword, signToken, verifyPassword } from '../services/auth';
 import { ensureUniqueOrgSlug } from '../services/bootstrap';
+import { getOrgSettings } from '../services/orgSettings';
 
 const router = Router();
 
@@ -157,6 +158,7 @@ router.get('/me', async (req: Request, res: Response) => {
     }
 
     const currentOrg = user.memberships.find((m) => m.orgId === req.auth!.orgId);
+    const settings = currentOrg ? await getOrgSettings(currentOrg.orgId) : null;
 
     res.json({
       user: { id: user.id, email: user.email, name: user.name },
@@ -169,6 +171,7 @@ router.get('/me', async (req: Request, res: Response) => {
         slug: m.org.slug,
         role: m.role,
       })),
+      settings,
     });
   } catch (error) {
     console.error('Me error:', error);

@@ -19,6 +19,7 @@ import orgsRouter from './routes/orgs';
 import { requireAuth } from './middleware/auth';
 import { bootstrapMultiOrg } from './services/bootstrap';
 import { getDeviceOrgId } from './services/orgScope';
+import { getOrgSettings } from './services/orgSettings';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { aggregateTrackEvents, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
@@ -367,34 +368,52 @@ async function processVideoClipInBackground(
   });
 
   broadcastToSubscribedUIs(deviceId, { type: 'status', streamId, status: 'Processing' });
-  broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Processing video clip: ${filename} via Gemini...`);
+  broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Processing video clip: ${filename}...`);
+
+  const orgId = await getDeviceOrgId(deviceId);
+  const orgSettings = orgId ? await getOrgSettings(orgId) : null;
 
   let geminiPath: string | null = null;
 
   try {
-    geminiPath = await transcodeForGemini(filepath);
-    const summaryPath = geminiPath !== filepath ? geminiPath : filepath;
+    const reidFromClipPromise =
+      orgSettings?.reidProcessing !== false && trackEvents.length > 0
+        ? processReidTrackEventsFromClip(
+            filepath,
+            deviceId,
+            streamId,
+            timestamp.getTime(),
+            filename,
+            trackEvents,
+            frameWidth,
+            frameHeight,
+          )
+        : Promise.resolve({ succeeded: 0, failures: [] as { trackId: number; error: string }[] });
 
-    const reidFromClipPromise = trackEvents.length > 0
-      ? processReidTrackEventsFromClip(
-          filepath,
-          deviceId,
-          streamId,
-          timestamp.getTime(),
-          filename,
-          trackEvents,
-          frameWidth,
-          frameHeight,
-        )
-      : Promise.resolve({ succeeded: 0, failures: [] as { trackId: number; error: string }[] });
+    let summary = '';
+    if (orgSettings?.videoSummary !== false) {
+      geminiPath = await transcodeForGemini(filepath);
+      const summaryPath = geminiPath !== filepath ? geminiPath : filepath;
+      summary = await summarizeVideo(summaryPath, cameraName);
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generated successfully.`);
+    } else {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Video summary disabled for this organization.`);
+    }
 
-    const summary = await summarizeVideo(summaryPath, cameraName);
     const reidResult = await reidFromClipPromise;
     const reidCropsExtracted = reidResult.succeeded;
 
-    broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Gemini summary generated successfully.`);
+    if (orgSettings?.reidProcessing === false && trackEvents.length > 0) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] ReID processing disabled for this organization.`);
+    }
 
     const reidLogEntries: ClipReidLogEntry[] = [];
+    if (orgSettings?.reidProcessing === false) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'ReID processing is disabled in organization settings.',
+      });
+    }
     if (!stream?.trackingEnabled) {
       reidLogEntries.push({
         level: 'info',
@@ -471,23 +490,22 @@ async function processVideoClipInBackground(
     await linkDetectionsToClip(clipDb.id, filename);
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
 
-    // 3. Generate embedding vector of the summary
-    const vector = await generateTextEmbedding(summary);
-
-    // 4. Index vector in Qdrant
-    const orgId = await getDeviceOrgId(deviceId);
-    await upsertClipVector(clipDb.id, vector, {
-      filepath,
-      filename,
-      timestamp: timestamp.toISOString(),
-      summary,
-      camera: cameraName,
-      deviceId: deviceId,
-      streamId: streamId,
-      ...(orgId ? { orgId } : {}),
-    });
-
-    broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Successfully indexed clip in Qdrant.`);
+    if (orgSettings?.semanticSearch !== false && summary.trim()) {
+      const vector = await generateTextEmbedding(summary);
+      await upsertClipVector(clipDb.id, vector, {
+        filepath,
+        filename,
+        timestamp: timestamp.toISOString(),
+        summary,
+        camera: cameraName,
+        deviceId: deviceId,
+        streamId: streamId,
+        ...(orgId ? { orgId } : {}),
+      });
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Successfully indexed clip in Qdrant.`);
+    } else if (orgSettings?.semanticSearch === false) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Semantic search indexing disabled for this organization.`);
+    }
     
     // Notify all UI clients — archive is global and may not have a device/stream subscription.
     broadcastNewClipToAllUIs(clipDb, deviceId, streamId);

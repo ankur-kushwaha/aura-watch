@@ -10,6 +10,29 @@ export interface AuthOrg {
   role?: string;
 }
 
+export interface OrgSettings {
+  videoSummary: boolean;
+  semanticSearch: boolean;
+  aiChat: boolean;
+  reidProcessing: boolean;
+}
+
+export const DEFAULT_ORG_SETTINGS: OrgSettings = {
+  videoSummary: true,
+  semanticSearch: true,
+  aiChat: true,
+  reidProcessing: true,
+};
+
+export interface OrgMember {
+  id: string;
+  userId: string;
+  email: string;
+  name: string;
+  role: string;
+  createdAt: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -134,12 +157,74 @@ export async function switchOrg(orgId: string): Promise<AuthOrg> {
   return data.org;
 }
 
-export async function fetchMe(): Promise<{ user: AuthUser; org: AuthOrg | null; orgs: AuthOrg[] }> {
+export async function fetchMe(): Promise<{
+  user: AuthUser;
+  org: AuthOrg | null;
+  orgs: AuthOrg[];
+  settings: OrgSettings | null;
+}> {
   const res = await apiFetch('/auth/me');
   if (!res.ok) {
     throw new Error('Session expired');
   }
   return res.json();
+}
+
+export async function fetchOrgSettings(orgId: string): Promise<{ settings: OrgSettings; role: string }> {
+  const res = await apiFetch(`/orgs/${orgId}/settings`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to fetch organization settings');
+  }
+  return res.json();
+}
+
+export async function updateOrgSettings(
+  orgId: string,
+  settings: Partial<OrgSettings>,
+): Promise<OrgSettings> {
+  const res = await apiFetch(`/orgs/${orgId}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to update organization settings');
+  }
+  const data = await res.json();
+  return data.settings;
+}
+
+export async function fetchOrgMembers(orgId: string): Promise<OrgMember[]> {
+  const res = await apiFetch(`/orgs/${orgId}/members`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to fetch organization members');
+  }
+  return res.json();
+}
+
+export async function addOrgMember(
+  orgId: string,
+  payload: { email: string; name?: string; password?: string; role?: string },
+): Promise<OrgMember> {
+  const res = await apiFetch(`/orgs/${orgId}/members`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to add organization member');
+  }
+  return res.json();
+}
+
+export async function removeOrgMember(orgId: string, userId: string): Promise<void> {
+  const res = await apiFetch(`/orgs/${orgId}/members/${userId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to remove organization member');
+  }
 }
 
 export async function createEnrollmentToken(label?: string): Promise<{ token: string; label: string | null }> {
