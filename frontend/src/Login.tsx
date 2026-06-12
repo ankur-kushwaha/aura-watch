@@ -1,14 +1,10 @@
 import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Cpu, LogIn } from 'lucide-react';
 import { login } from './api';
 
-interface LoginProps {
-  onLogin: () => void;
-  onBack?: () => void;
-  onRegister?: () => void;
-}
-
-export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
+export default function Login() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -21,7 +17,7 @@ export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
 
     try {
       await login(email.trim(), password);
-      onLogin();
+      navigate('/app/events', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Invalid email or password.');
       setSubmitting(false);
@@ -30,16 +26,13 @@ export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 relative">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="absolute top-6 left-6 btn btn-secondary text-[0.85rem] py-2 px-3"
-        >
-          <ArrowLeft size={16} />
-          Back
-        </button>
-      )}
+      <Link
+        to="/"
+        className="absolute top-6 left-6 btn btn-secondary text-[0.85rem] py-2 px-3"
+      >
+        <ArrowLeft size={16} />
+        Back
+      </Link>
       <div className="glass-panel w-full max-w-[420px] p-8">
         <div className="flex flex-col items-center text-center mb-8">
           <div className="bg-primary p-3 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(124,58,237,0.2)] mb-4">
@@ -93,14 +86,12 @@ export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
             Sign In
           </button>
 
-          {onRegister && (
-            <p className="text-center text-[0.8rem] text-text-muted mt-2">
-              No account?{' '}
-              <button type="button" onClick={onRegister} className="text-primary hover:underline">
-                Create organization
-              </button>
-            </p>
-          )}
+          <p className="text-center text-[0.8rem] text-text-muted mt-2">
+            No account?{' '}
+            <Link to="/register" className="text-primary hover:underline">
+              Create organization
+            </Link>
+          </p>
         </form>
       </div>
     </div>

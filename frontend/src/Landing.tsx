@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import {
   Activity,
   ArrowRight,
@@ -37,10 +38,6 @@ const CONTACT = {
   email: 'ankur.kus1@gmail.com',
   phone: '8587083895',
 };
-
-interface LandingProps {
-  onSignIn: () => void;
-}
 
 const CORE_VALUES = [
   {
@@ -228,7 +225,7 @@ function SectionHeader({ label, title, description }: { label: string; title: st
   );
 }
 
-export default function Landing({ onSignIn }: LandingProps) {
+export default function Landing() {
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -266,10 +263,10 @@ export default function Landing({ onSignIn }: LandingProps) {
             </button>
           </nav>
 
-          <button type="button" onClick={onSignIn} className="btn btn-primary text-[0.875rem] py-2 px-4">
+          <Link to="/login" className="btn btn-primary text-[0.875rem] py-2 px-4">
             Sign In
             <ArrowRight size={15} />
-          </button>
+          </Link>
         </div>
       </header>
 
@@ -428,10 +425,10 @@ export default function Landing({ onSignIn }: LandingProps) {
                   entire event archive in plain English and returns cited clips—so you get answers with proof,
                   not guesswork.
                 </p>
-                <button type="button" onClick={onSignIn} className="btn btn-primary text-[0.95rem] px-6 py-2.5">
+                <Link to="/login" className="btn btn-primary text-[0.95rem] px-6 py-2.5">
                   Try Ask Camera AI
                   <ArrowRight size={16} />
-                </button>
+                </Link>
               </div>
               <div className="flex flex-col gap-3">
                 <p className="text-[0.75rem] uppercase tracking-widest text-text-muted font-semibold mb-1">
@@ -594,10 +591,10 @@ export default function Landing({ onSignIn }: LandingProps) {
             Sign in to monitor every feed, get proactive alerts, and query your footage in plain English—all
             from one dashboard.
           </p>
-          <button type="button" onClick={onSignIn} className="btn btn-primary text-[1rem] px-8 py-3">
+          <Link to="/login" className="btn btn-primary text-[1rem] px-8 py-3">
             Access Dashboard
             <ArrowRight size={18} />
-          </button>
+          </Link>
         </div>
       </section>
 
@@ -680,10 +677,10 @@ export default function Landing({ onSignIn }: LandingProps) {
               <p className="text-[0.85rem] text-text-muted leading-relaxed mb-4">
                 Monitor live feeds and ask your cameras questions—all from one place.
               </p>
-              <button type="button" onClick={onSignIn} className="btn btn-primary text-[0.85rem] py-2 px-4">
+              <Link to="/login" className="btn btn-primary text-[0.85rem] py-2 px-4">
                 Sign In
                 <ArrowRight size={14} />
-              </button>
+              </Link>
             </div>
           </div>
 

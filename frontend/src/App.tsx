@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Camera,
   Settings,
@@ -49,7 +50,17 @@ import {
   type AuthUser,
   type OrgSettings,
 } from './api';
+import { clearLoggedIn } from './auth';
 import OrgSettingsPage from './OrgSettings';
+
+type DashboardTab = 'events' | 'ai' | 'reid';
+
+function dashboardTabFromPath(pathname: string): DashboardTab | null {
+  if (pathname.startsWith('/app/ai')) return 'ai';
+  if (pathname.startsWith('/app/reid')) return 'reid';
+  if (pathname.startsWith('/app/events')) return 'events';
+  return null;
+}
 
 const PREVIEW_STALL_MS = 5000;
 
@@ -677,16 +688,16 @@ function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Prom
   );
 }
 
-interface AppProps {
-  onLogout: () => void;
-}
+function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const appView = location.pathname.startsWith('/app/settings') ? 'settings' : 'dashboard';
+  const activeTab = dashboardTabFromPath(location.pathname) ?? 'events';
 
-function App({ onLogout }: AppProps) {
   const [currentOrg, setCurrentOrg] = useState<AuthOrg | null>(() => getStoredOrg());
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [availableOrgs, setAvailableOrgs] = useState<AuthOrg[]>([]);
   const [switchingOrg, setSwitchingOrg] = useState(false);
-  const [appView, setAppView] = useState<'dashboard' | 'settings'>('dashboard');
   const [orgSettings, setOrgSettings] = useState<OrgSettings>(DEFAULT_ORG_SETTINGS);
 
   // App States
@@ -702,7 +713,6 @@ function App({ onLogout }: AppProps) {
   const [journalLogs, setJournalLogs] = useState<string>('');
   const [loadingJournalLogs, setLoadingJournalLogs] = useState<boolean>(false);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'events' | 'ai' | 'reid'>('events');
 
   // ReID States
   const [reidPeople, setReidPeople] = useState<ReidPerson[]>([]);
@@ -849,13 +859,17 @@ function App({ onLogout }: AppProps) {
   const hasOnlineDevices = onlineDeviceIds.size > 0;
 
   useEffect(() => {
+    if (location.pathname === '/app' || location.pathname === '/app/') {
+      navigate('/app/events', { replace: true });
+      return;
+    }
     if (!orgSettings.aiChat && activeTab === 'ai') {
-      if (hasOnlineDevices) setActiveTab('events');
+      if (hasOnlineDevices) navigate('/app/events', { replace: true });
     }
     if (!hasOnlineDevices && (activeTab === 'events' || activeTab === 'reid')) {
-      if (orgSettings.aiChat) setActiveTab('ai');
+      if (orgSettings.aiChat) navigate('/app/ai', { replace: true });
     }
-  }, [orgSettings.aiChat, activeTab, hasOnlineDevices]);
+  }, [orgSettings.aiChat, activeTab, hasOnlineDevices, location.pathname, navigate]);
 
   const isClipFromOnlineDevice = useCallback((clip: VideoClip) => {
     if (!clip.deviceId) return hasOnlineDevices;
@@ -2323,8 +2337,13 @@ function App({ onLogout }: AppProps) {
     const clip = visibleClips.find((c) => c.id === clipId);
     if (clip) {
       setSelectedClip(clip);
-      setActiveTab('events');
+      navigate('/app/events');
     }
+  };
+
+  const handleLogout = () => {
+    clearLoggedIn();
+    navigate('/login', { replace: true });
   };
 
   const formatDate = (dateStr: string) => {
@@ -2333,6 +2352,14 @@ function App({ onLogout }: AppProps) {
   };
 
   const clipsHasMore = visibleClips.length < clipsTotal;
+
+  if (
+    location.pathname.startsWith('/app') &&
+    !location.pathname.startsWith('/app/settings') &&
+    dashboardTabFromPath(location.pathname) === null
+  ) {
+    return <Navigate to="/app/events" replace />;
+  }
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
@@ -2367,7 +2394,7 @@ function App({ onLogout }: AppProps) {
           {currentOrg && (
             <button
               type="button"
-              onClick={() => setAppView(appView === 'settings' ? 'dashboard' : 'settings')}
+              onClick={() => navigate(appView === 'settings' ? '/app/events' : '/app/settings')}
               className={`btn py-1.5 px-3 text-[0.8rem] rounded-md flex items-center gap-1.5 ${
                 appView === 'settings'
                   ? 'btn-primary'
@@ -2379,7 +2406,7 @@ function App({ onLogout }: AppProps) {
           )}
           <button
             type="button"
-            onClick={onLogout}
+            onClick={handleLogout}
             className="btn btn-secondary py-1.5 px-3 text-[0.8rem] rounded-md flex items-center gap-1.5"
           >
             <LogOut size={14} /> Logout
@@ -2391,7 +2418,7 @@ function App({ onLogout }: AppProps) {
         <OrgSettingsPage
           org={currentOrg}
           currentUserId={currentUser.id}
-          onBack={() => setAppView('dashboard')}
+          onBack={() => navigate('/app/events')}
           onSettingsSaved={setOrgSettings}
         />
       ) : (
@@ -2400,7 +2427,7 @@ function App({ onLogout }: AppProps) {
       <div className="flex gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-fit">
       {orgSettings.aiChat && (
         <button
-          onClick={() => setActiveTab('ai')}
+          onClick={() => navigate('/app/ai')}
           className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'ai'
             ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
             : 'text-text-secondary hover:text-text-primary bg-transparent'
@@ -2411,7 +2438,7 @@ function App({ onLogout }: AppProps) {
       )}
         {hasOnlineDevices && (
           <button
-            onClick={() => setActiveTab('events')}
+            onClick={() => navigate('/app/events')}
             className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'events'
               ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
               : 'text-text-secondary hover:text-text-primary bg-transparent'
@@ -2423,7 +2450,7 @@ function App({ onLogout }: AppProps) {
         
         {hasOnlineDevices && (
           <button
-            onClick={() => setActiveTab('reid')}
+            onClick={() => navigate('/app/reid')}
             className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'reid'
               ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
               : 'text-text-secondary hover:text-text-primary bg-transparent'
