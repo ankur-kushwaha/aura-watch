@@ -31,6 +31,7 @@ type EdgeDeviceConfig {
   recordingMaxSec         Float?
   recordingEndGraceSec    Float?
   recordingCooldownSec    Float?
+  minUploadDurationSec    Float?
   reidConfidenceThreshold Float?
   reidMinBboxSize         Int?
   reidVisibleSec          Float?
@@ -47,6 +48,7 @@ type StreamSettings {
   recordingMaxSec         Float?
   recordingEndGraceSec    Float?
   recordingCooldownSec    Float?
+  minUploadDurationSec    Float?
   yoloConfidence          Float?
   yoloImgsz               Int?
   yoloDetectInterval      Int?

@@ -14,6 +14,7 @@ export interface EdgeDeviceConfig {
   recordingMaxSec?: number | null;
   recordingEndGraceSec?: number | null;
   recordingCooldownSec?: number | null;
+  minUploadDurationSec?: number | null;
   reidConfidenceThreshold?: number | null;
   reidMinBboxSize?: number | null;
   reidVisibleSec?: number | null;
@@ -30,6 +31,7 @@ export interface StreamSettings {
   recordingMaxSec?: number | null;
   recordingEndGraceSec?: number | null;
   recordingCooldownSec?: number | null;
+  minUploadDurationSec?: number | null;
   yoloConfidence?: number | null;
   yoloImgsz?: number | null;
   yoloDetectInterval?: number | null;
@@ -64,6 +66,7 @@ export const DEFAULT_DEVICE_CONFIG: EffectiveEdgeDeviceConfig = {
   recordingMaxSec: 60,
   recordingEndGraceSec: 2,
   recordingCooldownSec: 45,
+  minUploadDurationSec: 2,
   reidConfidenceThreshold: 0.65,
   reidMinBboxSize: 2500,
   reidVisibleSec: 1.0,
@@ -80,6 +83,7 @@ export const DEFAULT_STREAM_SETTINGS: EffectiveStreamSettings = {
   recordingMaxSec: 60,
   recordingEndGraceSec: 2,
   recordingCooldownSec: 45,
+  minUploadDurationSec: 2,
   yoloConfidence: 0.25,
   yoloImgsz: 416,
   yoloDetectInterval: 3,

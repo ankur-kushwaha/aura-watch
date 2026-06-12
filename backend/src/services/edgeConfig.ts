@@ -17,6 +17,7 @@ export const EDGE_DEVICE_CONFIG_DEFAULTS: Required<{
   recordingMaxSec: number;
   recordingEndGraceSec: number;
   recordingCooldownSec: number;
+  minUploadDurationSec: number;
   reidConfidenceThreshold: number;
   reidMinBboxSize: number;
   reidVisibleSec: number;
@@ -37,6 +38,7 @@ export const EDGE_DEVICE_CONFIG_DEFAULTS: Required<{
   recordingMaxSec: 60,
   recordingEndGraceSec: 2,
   recordingCooldownSec: 45,
+  minUploadDurationSec: 2,
   reidConfidenceThreshold: 0.65,
   reidMinBboxSize: 2500,
   reidVisibleSec: 1.0,
@@ -53,6 +55,7 @@ export const STREAM_SETTINGS_DEFAULTS: Required<{
   recordingMaxSec: number;
   recordingEndGraceSec: number;
   recordingCooldownSec: number;
+  minUploadDurationSec: number;
   yoloConfidence: number;
   yoloImgsz: number;
   yoloDetectInterval: number;
@@ -72,6 +75,7 @@ export const STREAM_SETTINGS_DEFAULTS: Required<{
   recordingMaxSec: EDGE_DEVICE_CONFIG_DEFAULTS.recordingMaxSec,
   recordingEndGraceSec: EDGE_DEVICE_CONFIG_DEFAULTS.recordingEndGraceSec,
   recordingCooldownSec: EDGE_DEVICE_CONFIG_DEFAULTS.recordingCooldownSec,
+  minUploadDurationSec: EDGE_DEVICE_CONFIG_DEFAULTS.minUploadDurationSec,
   yoloConfidence: EDGE_DEVICE_CONFIG_DEFAULTS.yoloConfidence,
   yoloImgsz: EDGE_DEVICE_CONFIG_DEFAULTS.yoloImgsz,
   yoloDetectInterval: EDGE_DEVICE_CONFIG_DEFAULTS.yoloDetectInterval,
@@ -132,6 +136,7 @@ export function mergeStreamSettings(
       recordingMaxSec: deviceMerged.recordingMaxSec,
       recordingEndGraceSec: deviceMerged.recordingEndGraceSec,
       recordingCooldownSec: deviceMerged.recordingCooldownSec,
+      minUploadDurationSec: deviceMerged.minUploadDurationSec,
       yoloConfidence: deviceMerged.yoloConfidence,
       yoloImgsz: deviceMerged.yoloImgsz,
       yoloDetectInterval: deviceMerged.yoloDetectInterval,

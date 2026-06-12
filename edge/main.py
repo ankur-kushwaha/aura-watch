@@ -25,6 +25,7 @@ from camera import CameraCapture
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
     ClipEncoder,
+    clip_meets_upload_threshold,
     get_video_duration_seconds,
     kill_ffmpeg_for_path,
     upload_clip,
@@ -62,6 +63,7 @@ PREVIEW_JPEG_QUALITY = int(os.getenv("PREVIEW_JPEG_QUALITY", "70"))
 RECORDING_COOLDOWN_SEC = float(os.getenv("RECORDING_COOLDOWN_SEC", "45"))
 RECORDING_MAX_SEC = float(os.getenv("RECORDING_MAX_SEC", "60"))
 RECORDING_END_GRACE_SEC = float(os.getenv("RECORDING_END_GRACE_SEC", "2"))
+MIN_UPLOAD_DURATION_SEC = float(os.getenv("MIN_UPLOAD_DURATION_SEC", "2"))
 PREVIEW_STALL_TIMEOUT_SEC = float(os.getenv("PREVIEW_STALL_TIMEOUT_SEC", "5"))
 
 
@@ -643,6 +645,7 @@ class EdgeAgent:
         recording_max_sec = runtime.recording_max_sec if runtime else RECORDING_MAX_SEC
         recording_end_grace_sec = runtime.recording_end_grace_sec if runtime else RECORDING_END_GRACE_SEC
         recording_cooldown_sec = runtime.recording_cooldown_sec if runtime else RECORDING_COOLDOWN_SEC
+        min_upload_duration_sec = runtime.min_upload_duration_sec if runtime else MIN_UPLOAD_DURATION_SEC
         clip_encode_fps = runtime.clip_encode_fps if runtime else CLIP_ENCODE_FPS
 
         timestamp_ms = int(time.time() * 1000)
@@ -707,7 +710,22 @@ class EdgeAgent:
             actual_duration = get_video_duration_seconds(output_path)
             if actual_duration <= 0:
                 actual_duration = clip_encoder.frames_written / clip_encode_fps
-            self.send_log(f"[{name}] Clip encoded: {filename} ({actual_duration:.1f}s)")
+            file_size = os.path.getsize(output_path)
+            self.send_log(
+                f"[{name}] Clip encoded: {filename} "
+                f"({actual_duration:.1f}s, {file_size / 1024:.1f} KB)"
+            )
+
+            if not clip_meets_upload_threshold(actual_duration, min_upload_duration_sec):
+                self.send_log(
+                    f"[{name}] Skipping upload for {filename}: "
+                    f"duration {actual_duration:.1f}s < {min_upload_duration_sec:.1f}s"
+                )
+                try:
+                    os.unlink(output_path)
+                except OSError:
+                    pass
+                return
 
             with p_data["clip_track_events_lock"]:
                 track_events = list(p_data.get("clip_track_events") or [])

@@ -234,6 +234,13 @@ def transcode_for_gemini(
         raise RuntimeError(f"FFmpeg transcode failed: {result.stderr}")
 
 
+def clip_meets_upload_threshold(duration_sec: float, min_duration_sec: float) -> bool:
+    """Return False when clip is below configured minimum duration (0 = no minimum)."""
+    if min_duration_sec <= 0:
+        return True
+    return duration_sec >= min_duration_sec
+
+
 def upload_clip(
     cloud_url: str,
     device_id: str,

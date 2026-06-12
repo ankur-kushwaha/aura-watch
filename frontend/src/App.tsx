@@ -4251,30 +4251,33 @@ function App() {
               </button>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider">
-                {personRefsIdentityId ? 'Identity label' : 'Create new identity'}
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={personRefsLabelDraft}
-                  onChange={(e) => setPersonRefsLabelDraft(e.target.value)}
-                  placeholder={personRefsIdentityId ? 'Name this person' : 'Enter a name to create identity'}
-                  className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
-                />
-                <button
-                  type="button"
-                  onClick={handleSavePersonRefsLabel}
-                  disabled={savingPersonRefsLabel || !personRefsLabelDraft.trim()}
-                  className="btn btn-secondary py-1 px-3 text-[0.75rem] shrink-0"
-                >
-                  {savingPersonRefsLabel ? '…' : personRefsIdentityId ? 'Save label' : 'Create'}
-                </button>
-              </div>
-            </div>
+            {(() => {
+              const editingIdentity = !personRefsIdentityId
+                || !personRefsLabelConfirmed
+                || showPersonRefsSuggestions;
 
-            {!loadingPersonRefs && personRefsIdentitySuggestions.length > 0 && (() => {
+              if (!editingIdentity) {
+                return (
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider">
+                        Identity label
+                      </p>
+                      <p className="text-[0.85rem] font-semibold text-text-primary mt-0.5 truncate">
+                        {personRefsLabelDraft}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPersonRefsSuggestions(true)}
+                      className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md shrink-0"
+                    >
+                      Change
+                    </button>
+                  </div>
+                );
+              }
+
               const draft = personRefsLabelDraft.trim().toLowerCase();
               const filtered = draft
                 ? personRefsIdentitySuggestions.filter((s) =>
@@ -4283,24 +4286,14 @@ function App() {
                   )
                 : personRefsIdentitySuggestions;
               const shown = filtered.slice(0, 8);
-              const hideSuggestions = personRefsLabelConfirmed && !showPersonRefsSuggestions;
 
               return (
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <p className="text-[0.7rem] font-bold text-text-secondary uppercase tracking-wider">
-                      Use existing person
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider">
+                      {personRefsIdentityId ? 'Identity label' : 'Create new identity'}
                     </p>
-                    {hideSuggestions && (
-                      <button
-                        type="button"
-                        onClick={() => setShowPersonRefsSuggestions(true)}
-                        className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md shrink-0"
-                      >
-                        Change
-                      </button>
-                    )}
-                    {personRefsLabelConfirmed && showPersonRefsSuggestions && (
+                    {personRefsIdentityId && personRefsLabelConfirmed && showPersonRefsSuggestions && (
                       <button
                         type="button"
                         onClick={() => setShowPersonRefsSuggestions(false)}
@@ -4310,45 +4303,67 @@ function App() {
                       </button>
                     )}
                   </div>
-                  {!hideSuggestions && shown.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {shown.map((suggestion) => (
-                      <button
-                        key={suggestion.id}
-                        type="button"
-                        disabled={savingPersonRefsLabel || suggestion.id === personRefsIdentityId}
-                        onClick={() => handleAssignPersonRefsIdentity(suggestion)}
-                        className="glass-panel interactive flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-left disabled:opacity-50"
-                      >
-                        <div className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black">
-                          {brokenIdentityCovers.has(suggestion.id) ? (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <UserCircle size={14} className="text-text-muted" />
-                            </div>
-                          ) : (
-                            <img
-                              src={identityCoverUrl(suggestion.id)}
-                              alt=""
-                              onError={() => {
-                                setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
-                              }}
-                              className="w-full h-full object-cover"
-                            />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <span className="text-[0.75rem] font-semibold text-text-primary block truncate max-w-[140px]">
-                            {suggestion.displayName}
-                          </span>
-                          {suggestion.matchScore > 0 && (
-                            <span className="text-[0.65rem] text-secondary">
-                              {Math.round(suggestion.matchScore * 100)}% match
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={personRefsLabelDraft}
+                      onChange={(e) => setPersonRefsLabelDraft(e.target.value)}
+                      placeholder={personRefsIdentityId ? 'Name this person' : 'Enter a name to create identity'}
+                      className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSavePersonRefsLabel}
+                      disabled={savingPersonRefsLabel || !personRefsLabelDraft.trim()}
+                      className="btn btn-secondary py-1 px-3 text-[0.75rem] shrink-0"
+                    >
+                      {savingPersonRefsLabel ? '…' : personRefsIdentityId ? 'Save label' : 'Create'}
+                    </button>
                   </div>
+                  {!loadingPersonRefs && personRefsIdentitySuggestions.length > 0 && shown.length > 0 && (
+                    <div>
+                      <p className="text-[0.7rem] font-bold text-text-secondary uppercase tracking-wider mb-2">
+                        Use existing person
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {shown.map((suggestion) => (
+                          <button
+                            key={suggestion.id}
+                            type="button"
+                            disabled={savingPersonRefsLabel || suggestion.id === personRefsIdentityId}
+                            onClick={() => handleAssignPersonRefsIdentity(suggestion)}
+                            className="glass-panel interactive flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-left disabled:opacity-50"
+                          >
+                            <div className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black">
+                              {brokenIdentityCovers.has(suggestion.id) ? (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <UserCircle size={14} className="text-text-muted" />
+                                </div>
+                              ) : (
+                                <img
+                                  src={identityCoverUrl(suggestion.id)}
+                                  alt=""
+                                  onError={() => {
+                                    setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
+                                  }}
+                                  className="w-full h-full object-cover"
+                                />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <span className="text-[0.75rem] font-semibold text-text-primary block truncate max-w-[140px]">
+                                {suggestion.displayName}
+                              </span>
+                              {suggestion.matchScore > 0 && (
+                                <span className="text-[0.65rem] text-secondary">
+                                  {Math.round(suggestion.matchScore * 100)}% match
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               );

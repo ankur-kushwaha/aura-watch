@@ -65,6 +65,7 @@ class DeviceRuntimeConfig:
     recording_max_sec: float = field(default_factory=lambda: _env_float("RECORDING_MAX_SEC", 60.0))
     recording_end_grace_sec: float = field(default_factory=lambda: _env_float("RECORDING_END_GRACE_SEC", 2.0))
     recording_cooldown_sec: float = field(default_factory=lambda: _env_float("RECORDING_COOLDOWN_SEC", 45.0))
+    min_upload_duration_sec: float = field(default_factory=lambda: _env_float("MIN_UPLOAD_DURATION_SEC", 2.0))
     reid_confidence_threshold: float = field(default_factory=lambda: _env_float("REID_CONFIDENCE_THRESHOLD", 0.65))
     reid_min_bbox_size: int = field(default_factory=lambda: _env_int("REID_MIN_BBOX_SIZE", 2500))
     reid_visible_sec: float = field(default_factory=lambda: _env_float("REID_VISIBLE_SEC", 1.0))
@@ -90,6 +91,7 @@ class DeviceRuntimeConfig:
             recording_max_sec=_pick(data, "recordingMaxSec", cls().recording_max_sec, float),
             recording_end_grace_sec=_pick(data, "recordingEndGraceSec", cls().recording_end_grace_sec, float),
             recording_cooldown_sec=_pick(data, "recordingCooldownSec", cls().recording_cooldown_sec, float),
+            min_upload_duration_sec=_pick(data, "minUploadDurationSec", cls().min_upload_duration_sec, float),
             reid_confidence_threshold=_pick(data, "reidConfidenceThreshold", cls().reid_confidence_threshold, float),
             reid_min_bbox_size=_pick(data, "reidMinBboxSize", cls().reid_min_bbox_size, int),
             reid_visible_sec=_pick(data, "reidVisibleSec", cls().reid_visible_sec, float),
@@ -111,6 +113,7 @@ class StreamRuntimeSettings:
     recording_max_sec: Optional[float] = None
     recording_end_grace_sec: Optional[float] = None
     recording_cooldown_sec: Optional[float] = None
+    min_upload_duration_sec: Optional[float] = None
     yolo_confidence: Optional[float] = None
     yolo_imgsz: Optional[int] = None
     yolo_detect_interval: Optional[int] = None
@@ -135,6 +138,7 @@ class StreamRuntimeSettings:
             recording_max_sec=data.get("recordingMaxSec"),
             recording_end_grace_sec=data.get("recordingEndGraceSec"),
             recording_cooldown_sec=data.get("recordingCooldownSec"),
+            min_upload_duration_sec=data.get("minUploadDurationSec"),
             yolo_confidence=data.get("yoloConfidence"),
             yolo_imgsz=data.get("yoloImgsz"),
             yolo_detect_interval=data.get("yoloDetectInterval"),
@@ -176,6 +180,11 @@ class StreamRuntimeSettings:
             ),
             recording_cooldown_sec=(
                 self.recording_cooldown_sec if self.recording_cooldown_sec is not None else device.recording_cooldown_sec
+            ),
+            min_upload_duration_sec=(
+                self.min_upload_duration_sec
+                if self.min_upload_duration_sec is not None
+                else device.min_upload_duration_sec
             ),
             reid_confidence_threshold=(
                 self.reid_confidence_threshold

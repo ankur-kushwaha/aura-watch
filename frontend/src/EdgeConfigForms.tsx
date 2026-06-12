@@ -93,6 +93,7 @@ export function DeviceConfigFields({
         <NumberField label="Max clip length (sec)" value={config.recordingMaxSec} onChange={(v) => set('recordingMaxSec', v)} min={5} max={300} />
         <NumberField label="End grace (sec)" value={config.recordingEndGraceSec} onChange={(v) => set('recordingEndGraceSec', v)} min={0} max={30} step={0.5} />
         <NumberField label="Cooldown (sec)" value={config.recordingCooldownSec} onChange={(v) => set('recordingCooldownSec', v)} min={0} max={300} />
+        <NumberField label="Min upload duration (sec)" value={config.minUploadDurationSec} onChange={(v) => set('minUploadDurationSec', v)} min={0} max={120} step={0.5} />
       </Section>
 
       <Section title="ReID">
@@ -178,6 +179,7 @@ export function StreamAdvancedFields({
         <NumberField label="Max clip (sec)" value={settings.recordingMaxSec} onChange={(v) => set('recordingMaxSec', v)} min={5} max={300} />
         <NumberField label="End grace (sec)" value={settings.recordingEndGraceSec} onChange={(v) => set('recordingEndGraceSec', v)} min={0} max={30} step={0.5} />
         <NumberField label="Cooldown (sec)" value={settings.recordingCooldownSec} onChange={(v) => set('recordingCooldownSec', v)} min={0} max={300} />
+        <NumberField label="Min upload duration (sec)" value={settings.minUploadDurationSec} onChange={(v) => set('minUploadDurationSec', v)} min={0} max={120} step={0.5} />
       </Section>
 
       <Section title="ReID override">
