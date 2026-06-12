@@ -64,7 +64,14 @@ export function DeviceConfigFields({
         <NumberField label="Width (px)" value={config.cameraWidth} onChange={(v) => set('cameraWidth', v)} min={160} max={3840} />
         <NumberField label="Height (px)" value={config.cameraHeight} onChange={(v) => set('cameraHeight', v)} min={120} max={2160} />
         <NumberField label="FPS" value={config.cameraFps} onChange={(v) => set('cameraFps', v)} min={1} max={60} />
-        <NumberField label="Stall timeout (sec)" value={config.cameraStallTimeoutSec} onChange={(v) => set('cameraStallTimeoutSec', v)} min={5} max={300} />
+        <NumberField
+          label="Reconnect if no frames (sec)"
+          value={config.cameraStallTimeoutSec}
+          onChange={(v) => set('cameraStallTimeoutSec', v)}
+          min={5}
+          max={300}
+          hint="Reconnect camera/RTSP when no frames arrive for this long."
+        />
       </Section>
 
       <Section title="YOLO / Detection">
@@ -85,15 +92,45 @@ export function DeviceConfigFields({
       <Section title="Preview">
         <NumberField label="Stream FPS" value={config.frameStreamFps} onChange={(v) => set('frameStreamFps', v)} min={1} max={30} step={0.5} />
         <NumberField label="JPEG quality" value={config.previewJpegQuality} onChange={(v) => set('previewJpegQuality', v)} min={30} max={95} />
-        <NumberField label="Stall timeout (sec)" value={config.previewStallTimeoutSec} onChange={(v) => set('previewStallTimeoutSec', v)} min={1} max={60} />
+        <NumberField
+          label="Report frozen preview after (sec)"
+          value={config.previewStallTimeoutSec}
+          onChange={(v) => set('previewStallTimeoutSec', v)}
+          min={1}
+          max={60}
+          hint="Alert the dashboard when live preview frames stop updating."
+        />
       </Section>
 
       <Section title="Recording">
         <NumberField label="Encode FPS" value={config.clipEncodeFps} onChange={(v) => set('clipEncodeFps', v)} min={1} max={30} />
         <NumberField label="Max clip length (sec)" value={config.recordingMaxSec} onChange={(v) => set('recordingMaxSec', v)} min={5} max={300} />
-        <NumberField label="End grace (sec)" value={config.recordingEndGraceSec} onChange={(v) => set('recordingEndGraceSec', v)} min={0} max={30} step={0.5} />
-        <NumberField label="Cooldown (sec)" value={config.recordingCooldownSec} onChange={(v) => set('recordingCooldownSec', v)} min={0} max={300} />
-        <NumberField label="Min upload duration (sec)" value={config.minUploadDurationSec} onChange={(v) => set('minUploadDurationSec', v)} min={0} max={120} step={0.5} />
+        <NumberField
+          label="End grace (sec)"
+          value={config.recordingEndGraceSec}
+          onChange={(v) => set('recordingEndGraceSec', v)}
+          min={0}
+          max={30}
+          step={0.5}
+          hint="Stop recording after objects leave the frame for this long."
+        />
+        <NumberField
+          label="Wait before next clip (sec)"
+          value={config.recordingCooldownSec}
+          onChange={(v) => set('recordingCooldownSec', v)}
+          min={0}
+          max={300}
+          hint="Minimum gap between clip uploads after one finishes."
+        />
+        <NumberField
+          label="Min upload duration (sec)"
+          value={config.minUploadDurationSec}
+          onChange={(v) => set('minUploadDurationSec', v)}
+          min={0}
+          max={120}
+          step={0.5}
+          hint="Skip cloud upload for clips shorter than this (0 = disabled)."
+        />
       </Section>
 
       <Section title="ReID">
@@ -171,15 +208,45 @@ export function StreamAdvancedFields({
       <Section title="Preview override">
         <NumberField label="Stream FPS" value={settings.frameStreamFps} onChange={(v) => set('frameStreamFps', v)} min={1} max={30} step={0.5} />
         <NumberField label="JPEG quality" value={settings.previewJpegQuality} onChange={(v) => set('previewJpegQuality', v)} min={30} max={95} />
-        <NumberField label="Stall timeout (sec)" value={settings.previewStallTimeoutSec} onChange={(v) => set('previewStallTimeoutSec', v)} min={1} max={60} />
+        <NumberField
+          label="Report frozen preview after (sec)"
+          value={settings.previewStallTimeoutSec}
+          onChange={(v) => set('previewStallTimeoutSec', v)}
+          min={1}
+          max={60}
+          hint="Alert the dashboard when live preview frames stop updating."
+        />
       </Section>
 
       <Section title="Recording override">
         <NumberField label="Encode FPS" value={settings.clipEncodeFps} onChange={(v) => set('clipEncodeFps', v)} min={1} max={30} />
         <NumberField label="Max clip (sec)" value={settings.recordingMaxSec} onChange={(v) => set('recordingMaxSec', v)} min={5} max={300} />
-        <NumberField label="End grace (sec)" value={settings.recordingEndGraceSec} onChange={(v) => set('recordingEndGraceSec', v)} min={0} max={30} step={0.5} />
-        <NumberField label="Cooldown (sec)" value={settings.recordingCooldownSec} onChange={(v) => set('recordingCooldownSec', v)} min={0} max={300} />
-        <NumberField label="Min upload duration (sec)" value={settings.minUploadDurationSec} onChange={(v) => set('minUploadDurationSec', v)} min={0} max={120} step={0.5} />
+        <NumberField
+          label="End grace (sec)"
+          value={settings.recordingEndGraceSec}
+          onChange={(v) => set('recordingEndGraceSec', v)}
+          min={0}
+          max={30}
+          step={0.5}
+          hint="Stop recording after objects leave the frame for this long."
+        />
+        <NumberField
+          label="Wait before next clip (sec)"
+          value={settings.recordingCooldownSec}
+          onChange={(v) => set('recordingCooldownSec', v)}
+          min={0}
+          max={300}
+          hint="Minimum gap between clip uploads after one finishes."
+        />
+        <NumberField
+          label="Min upload duration (sec)"
+          value={settings.minUploadDurationSec}
+          onChange={(v) => set('minUploadDurationSec', v)}
+          min={0}
+          max={120}
+          step={0.5}
+          hint="Skip cloud upload for clips shorter than this (0 = disabled)."
+        />
       </Section>
 
       <Section title="ReID override">
