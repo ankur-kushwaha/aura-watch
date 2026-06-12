@@ -41,3 +41,5 @@ export const DEFAULT_STREAM_CONFIG = {
 export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {
   return { ...DEFAULT_DEVICE_CONFIG };
 }
+
+export const DEVICE_CONFIG_KEYS = Object.keys(DEFAULT_DEVICE_CONFIG) as (keyof EffectiveEdgeDeviceConfig)[];

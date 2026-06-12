@@ -62,6 +62,7 @@ class VisionPipeline:
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
         self._capture_thread: Optional[threading.Thread] = None
         self._frame_index = 0
+        self._last_clip_write_at = 0.0
 
     def start_capture(self):
         self._capture_thread = threading.Thread(
@@ -117,7 +118,6 @@ class VisionPipeline:
 
             clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
             if clip_encoder:
-                clip_encoder.write_frame(frame)
                 frame_interval = 1.0 / max(self.settings.encode_fps, 1)
             else:
                 frame_interval = 1.0 / max(self.settings.process_fps, 1)
@@ -149,6 +149,14 @@ class VisionPipeline:
                 continue
 
             consecutive_failures = 0
+
+            clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
+            if clip_encoder:
+                clip_interval = 1.0 / max(self.settings.encode_fps, 1)
+                now = time.monotonic()
+                if now - self._last_clip_write_at >= clip_interval:
+                    clip_encoder.write_frame(frame)
+                    self._last_clip_write_at = now
 
             try:
                 self._frame_queue.put_nowait(frame)

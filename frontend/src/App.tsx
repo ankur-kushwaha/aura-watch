@@ -11,6 +11,7 @@ import {
   Activity,
   Video,
   RefreshCw,
+  RotateCcw,
   Cpu,
   HelpCircle,
   Clock,
@@ -56,6 +57,7 @@ import OrgSettingsPage from './OrgSettings';
 import {
   createDefaultDeviceConfig,
   DEFAULT_STREAM_CONFIG,
+  DEVICE_CONFIG_KEYS,
   type EffectiveEdgeDeviceConfig,
 } from './edgeConfig';
 import { DeviceConfigFields } from './EdgeConfigForms';
@@ -2271,6 +2273,43 @@ function App() {
     } catch (err) {
       console.error('Failed to update device config', err);
       alert('Failed to update device configuration');
+    }
+  };
+
+  const handleResetDeviceConfigToDefaults = async () => {
+    if (!deviceConfigDeviceId) return;
+    if (
+      !confirm(
+        'Reset all device settings to defaults and push to the edge device?\n\nThis clears any saved overrides in the cloud.',
+      )
+    ) {
+      return;
+    }
+
+    const defaults = createDefaultDeviceConfig();
+    setDeviceConfig(defaults);
+
+    try {
+      const clearOverrides = Object.fromEntries(DEVICE_CONFIG_KEYS.map((key) => [key, null]));
+      const res = await apiFetch(`/devices/${deviceConfigDeviceId}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: deviceConfigName,
+          ...clearOverrides,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to reset device configuration');
+        return;
+      }
+      setShowDeviceConfigDialog(false);
+      setDeviceConfigDeviceId(null);
+      fetchDevices();
+    } catch (err) {
+      console.error('Failed to reset device config', err);
+      alert('Failed to reset device configuration');
     }
   };
 
@@ -4781,7 +4820,16 @@ function App() {
 
               <DeviceConfigFields config={deviceConfig} onChange={setDeviceConfig} />
 
-              <div className="flex gap-2.5 justify-end pt-1">
+              <div className="flex gap-2.5 justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => { void handleResetDeviceConfigToDefaults(); }}
+                  className="btn btn-secondary py-2 px-4 text-[0.85rem] flex items-center gap-1.5"
+                >
+                  <RotateCcw size={14} />
+                  Reset to Defaults
+                </button>
+                <div className="flex gap-2.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -4795,6 +4843,7 @@ function App() {
                 <button type="submit" className="btn btn-primary py-2 px-5 text-[0.85rem]">
                   Save Device Settings
                 </button>
+                </div>
               </div>
             </form>
           </div>

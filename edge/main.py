@@ -701,6 +701,9 @@ class EdgeAgent:
             actual_duration = get_video_duration_seconds(output_path)
             if actual_duration <= 0:
                 actual_duration = clip_encoder.frames_written / clip_encode_fps
+            encoded_duration = clip_encoder.frames_written / clip_encode_fps
+            if encoded_duration > actual_duration:
+                actual_duration = encoded_duration
             file_size = os.path.getsize(output_path)
             self.send_log(
                 f"[{name}] Clip encoded: {filename} "
