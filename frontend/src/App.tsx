@@ -73,6 +73,12 @@ function dashboardTabFromPath(pathname: string): DashboardTab | null {
 
 const PREVIEW_STALL_MS = 5000;
 
+interface VideoClipDetectedObject {
+  trackId: number;
+  className: string;
+  confidence: number;
+}
+
 interface VideoClip {
   id: string;
   filepath: string;
@@ -82,6 +88,9 @@ interface VideoClip {
   duration: number;
   camera: string;
   deviceId?: string;
+  streamId?: string;
+  detectedObjects?: VideoClipDetectedObject[];
+  reidLog?: { trackEventsReceived?: number };
 }
 
 interface ClipObjectDetection {
@@ -466,6 +475,67 @@ function MatchScoreBreakdown({ scores }: { scores: MatchScores }) {
 }
 const CLIPS_PAGE_SIZE = 10;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+
+function buildClipsQueryString(
+  limit: number,
+  offset: number,
+  filters: {
+    deviceId: string;
+    streamId: string;
+    startTime: string;
+    endTime: string;
+  },
+) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (filters.deviceId) params.set('deviceId', filters.deviceId);
+  if (filters.streamId) params.set('streamId', filters.streamId);
+  if (filters.startTime) params.set('startTime', new Date(filters.startTime).toISOString());
+  if (filters.endTime) params.set('endTime', new Date(filters.endTime).toISOString());
+  return params.toString();
+}
+
+function formatClipListDateTime(dateStr: string) {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (date.toDateString() === now.toDateString()) {
+    return `Today, ${time}`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) {
+    return `Yesterday, ${time}`;
+  }
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatClipDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
+}
+
+function getClipDetectionCount(clip: VideoClip): number | null {
+  if (Array.isArray(clip.detectedObjects) && clip.detectedObjects.length > 0) {
+    return clip.detectedObjects.length;
+  }
+  const fromLog = clip.reidLog?.trackEventsReceived;
+  if (typeof fromLog === 'number' && fromLog > 0) {
+    return fromLog;
+  }
+  return null;
+}
 const HUB_HTTP = import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
 
 function buildInstallCmd(enrollmentToken?: string) {
@@ -852,6 +922,11 @@ function App() {
   const [filterEndTime, setFilterEndTime] = useState<string>('');
   const [filterStreamId, setFilterStreamId] = useState<string>('');
   const [showFilters, setShowFilters] = useState<boolean>(false);
+  const [clipFilterDeviceId, setClipFilterDeviceId] = useState<string>('');
+  const [clipFilterStreamId, setClipFilterStreamId] = useState<string>('');
+  const [clipFilterStartTime, setClipFilterStartTime] = useState<string>('');
+  const [clipFilterEndTime, setClipFilterEndTime] = useState<string>('');
+  const [showClipFilters, setShowClipFilters] = useState<boolean>(false);
 
   // Live Camera Feed Video States
   const [liveFeedOpen, setLiveFeedOpen] = useState<boolean>(true);
@@ -874,6 +949,32 @@ function App() {
   const onlineDeviceIds = useMemo(
     () => new Set(devices.filter((d) => d.status !== 'Offline').map((d) => d.deviceId)),
     [devices],
+  );
+
+  const deviceNameById = useMemo(
+    () => new Map(devices.map((d) => [d.deviceId, d.name])),
+    [devices],
+  );
+
+  const clipFilterParams = useMemo(
+    () => ({
+      deviceId: clipFilterDeviceId,
+      streamId: clipFilterStreamId,
+      startTime: clipFilterStartTime,
+      endTime: clipFilterEndTime,
+    }),
+    [clipFilterDeviceId, clipFilterStreamId, clipFilterStartTime, clipFilterEndTime],
+  );
+
+  const clipFilterStreams = useMemo(
+    () => (clipFilterDeviceId
+      ? streams.filter((s) => s.deviceId === clipFilterDeviceId)
+      : streams),
+    [streams, clipFilterDeviceId],
+  );
+
+  const hasActiveClipFilters = Boolean(
+    clipFilterDeviceId || clipFilterStreamId || clipFilterStartTime || clipFilterEndTime,
   );
 
   const hasOnlineDevices = onlineDeviceIds.size > 0;
@@ -961,16 +1062,28 @@ function App() {
     }
   }, []);
 
-  const fetchClips = useCallback(async () => {
+  const fetchClips = useCallback(async (
+    filtersOverride?: {
+      deviceId: string;
+      streamId: string;
+      startTime: string;
+      endTime: string;
+    },
+  ) => {
+    const filters = filtersOverride ?? clipFilterParams;
     setLoadingClips(true);
     try {
-      const res = await apiFetch(`/clips?limit=${CLIPS_PAGE_SIZE}&offset=0`);
+      const qs = buildClipsQueryString(CLIPS_PAGE_SIZE, 0, filters);
+      const res = await apiFetch(`/clips?${qs}`);
       const data = await res.json();
       setClips(data.clips);
       setClipsTotal(data.total);
       setSelectedClip((prevSelected) => {
         if (data.clips.length > 0 && !prevSelected) {
           return data.clips[0];
+        }
+        if (prevSelected && !data.clips.some((c: VideoClip) => c.id === prevSelected.id)) {
+          return data.clips.length > 0 ? data.clips[0] : null;
         }
         return prevSelected;
       });
@@ -979,13 +1092,14 @@ function App() {
     } finally {
       setLoadingClips(false);
     }
-  }, []);
+  }, [clipFilterParams]);
 
   const loadMoreClips = useCallback(async () => {
     if (loadingMoreClips || clips.length >= clipsTotal) return;
     setLoadingMoreClips(true);
     try {
-      const res = await apiFetch(`/clips?limit=${CLIPS_PAGE_SIZE}&offset=${clips.length}`);
+      const qs = buildClipsQueryString(CLIPS_PAGE_SIZE, clips.length, clipFilterParams);
+      const res = await apiFetch(`/clips?${qs}`);
       const data = await res.json();
       setClips((prev) => [...prev, ...data.clips]);
       setClipsTotal(data.total);
@@ -994,7 +1108,7 @@ function App() {
     } finally {
       setLoadingMoreClips(false);
     }
-  }, [clips.length, clipsTotal, loadingMoreClips]);
+  }, [clips.length, clipsTotal, loadingMoreClips, clipFilterParams]);
 
   useEffect(() => {
     fetchClipsRef.current = fetchClips;
@@ -2938,11 +3052,26 @@ function App() {
             <>
               {/* EVENT ARCHIVE & PLAYBACK PANEL */}
               <div className="glass-panel p-5 flex flex-col h-[984px]">
-                <div className="flex justify-between items-center mb-4">
+                <div className="flex justify-between items-center mb-3">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
                     <Video size={18} color="var(--color-primary)" /> Event Archive & Playback
                   </h2>
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowClipFilters(!showClipFilters)}
+                      className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
+                        showClipFilters || hasActiveClipFilters
+                          ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
+                          : ''
+                      }`}
+                    >
+                      <SlidersHorizontal size={12} />
+                      Filters
+                      {hasActiveClipFilters && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
+                      )}
+                    </button>
                     <button
                       onClick={handleDeleteAllClips}
                       className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md hover:text-danger"
@@ -2951,7 +3080,7 @@ function App() {
                       <Trash2 size={12} /> Delete All
                     </button>
                     <button
-                      onClick={fetchClips}
+                      onClick={() => { void fetchClips(); }}
                       className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
                       disabled={loadingClips || deletingAllClips}
                     >
@@ -2960,31 +3089,147 @@ function App() {
                   </div>
                 </div>
 
+                {showClipFilters && (
+                  <div className="glass-panel p-3.5 mb-3 bg-[rgba(255,255,255,0.01)] border-[rgba(255,255,255,0.08)] rounded-[10px] flex flex-col gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">Device</label>
+                        <select
+                          value={clipFilterDeviceId}
+                          onChange={(e) => {
+                            setClipFilterDeviceId(e.target.value);
+                            setClipFilterStreamId('');
+                          }}
+                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                        >
+                          <option value="">All Devices</option>
+                          {devices.filter((d) => d.status !== 'Offline').map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">Camera Stream</label>
+                        <select
+                          value={clipFilterStreamId}
+                          onChange={(e) => setClipFilterStreamId(e.target.value)}
+                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                        >
+                          <option value="">All Streams</option>
+                          {clipFilterStreams.map((s) => (
+                            <option key={s.streamId} value={s.streamId}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">From</label>
+                        <input
+                          type="datetime-local"
+                          value={clipFilterStartTime}
+                          onChange={(e) => setClipFilterStartTime(e.target.value)}
+                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[0.7rem] text-text-secondary">To</label>
+                        <input
+                          type="datetime-local"
+                          value={clipFilterEndTime}
+                          onChange={(e) => setClipFilterEndTime(e.target.value)}
+                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      {hasActiveClipFilters && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setClipFilterDeviceId('');
+                            setClipFilterStreamId('');
+                            setClipFilterStartTime('');
+                            setClipFilterEndTime('');
+                            void fetchClips({
+                              deviceId: '',
+                              streamId: '',
+                              startTime: '',
+                              endTime: '',
+                            });
+                          }}
+                          className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded flex items-center gap-1 hover:text-danger hover:border-danger bg-transparent font-semibold border-none"
+                        >
+                          Clear Filters
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { void fetchClips(); }}
+                        disabled={loadingClips}
+                        className="btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md"
+                      >
+                        Apply Filters
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0 lg:overflow-hidden">
                   {/* Left pane: Clips History List */}
                   <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2.5 overflow-y-auto min-w-0 pr-1 lg:h-full">
                     {visibleClips.length === 0 ? (
-                      <div className="h-full flex justify-center items-center text-text-muted text-[0.85rem]">
-                        {devices.some((d) => d.status !== 'Offline')
-                          ? 'No clips recorded yet.'
-                          : 'No online devices. Event archive is hidden while all devices are offline.'}
+                      <div className="h-full flex justify-center items-center text-text-muted text-[0.85rem] text-center px-4">
+                        {!devices.some((d) => d.status !== 'Offline')
+                          ? 'No online devices. Event archive is hidden while all devices are offline.'
+                          : hasActiveClipFilters
+                            ? 'No clips match the current filters.'
+                            : 'No clips recorded yet.'}
                       </div>
                     ) : (
                       <>
-                        {visibleClips.map((c) => (
+                        {visibleClips.map((c) => {
+                          const deviceName = c.deviceId ? deviceNameById.get(c.deviceId) : undefined;
+                          const durationLabel = formatClipDuration(c.duration);
+                          const detectionCount = getClipDetectionCount(c);
+                          return (
                           <div
                             key={c.id}
                             onClick={() => setSelectedClip(c)}
-                            className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-center cursor-pointer transition-all duration-200 w-full min-w-0`}
+                            className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-start cursor-pointer transition-all duration-200 w-full min-w-0`}
                           >
-                            <div className="flex items-center gap-3 flex-1 min-w-0">
-                              <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0">
+                            <div className="flex items-start gap-3 flex-1 min-w-0">
+                              <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0 mt-0.5">
                                 <Play size={16} fill="currentColor" />
                               </div>
                               <div className="min-w-0 flex-1">
-                                <div className="flex justify-between items-center mb-0.5">
-                                  <span className="text-[0.85rem] font-semibold text-text-primary">{c.camera}</span>
-                                  <span className="text-[0.7rem] text-text-muted">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                <div className="flex justify-between items-start gap-2 mb-0.5">
+                                  <span className="text-[0.85rem] font-semibold text-text-primary truncate">{c.camera}</span>
+                                  <span className="text-[0.68rem] text-text-muted whitespace-nowrap shrink-0">
+                                    {formatClipListDateTime(c.timestamp)}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] text-text-muted mb-0.5">
+                                  {deviceName && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Cpu size={11} />
+                                      {deviceName}
+                                    </span>
+                                  )}
+                                  {durationLabel && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Clock size={11} />
+                                      {durationLabel}
+                                    </span>
+                                  )}
+                                  {detectionCount !== null && (
+                                    <span className="inline-flex items-center gap-1 text-sky-400/90">
+                                      <Activity size={11} />
+                                      {detectionCount} detection{detectionCount === 1 ? '' : 's'}
+                                    </span>
+                                  )}
                                 </div>
                                 {orgSettings.videoSummary && c.summary && (
                                   <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
@@ -2996,12 +3241,13 @@ function App() {
 
                             <button
                               onClick={(e) => handleDeleteClip(c.id, e)}
-                              className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none"
+                              className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none shrink-0"
                             >
                               <Trash2 size={14} />
                             </button>
                           </div>
-                        ))}
+                          );
+                        })}
                         {clipsHasMore && (
                           <button
                             type="button"
@@ -3024,7 +3270,13 @@ function App() {
 
                   {/* Right pane: Clip Viewer */}
                   <div className="flex-1 flex flex-col min-w-0 overflow-y-auto pr-1 lg:h-full">
-                    {selectedClip ? (
+                    {selectedClip ? (() => {
+                      const selectedDeviceName = selectedClip.deviceId
+                        ? deviceNameById.get(selectedClip.deviceId)
+                        : undefined;
+                      const selectedDurationLabel = formatClipDuration(selectedClip.duration);
+                      const selectedDetectionCount = getClipDetectionCount(selectedClip);
+                      return (
                       <div className="flex flex-col gap-3">
                         <div className="bg-[#000] rounded-xl overflow-hidden h-[220px] border border-[rgba(255,255,255,0.08)] shrink-0">
                           <video
@@ -3036,11 +3288,32 @@ function App() {
                           />
                         </div>
                         <div>
-                          <div className="flex justify-between items-center mb-1.5 flex-wrap gap-1">
-                            <h3 className="text-[0.85rem] font-semibold break-all text-text-primary">{selectedClip.filename}</h3>
-                            <span className="text-[0.7rem] text-text-muted flex items-center gap-1 whitespace-nowrap">
-                              <Clock size={12} /> {formatDate(selectedClip.timestamp)}
-                            </span>
+                          <div className="flex justify-between items-start mb-1.5 flex-wrap gap-2">
+                            <div className="min-w-0">
+                              <h3 className="text-[0.85rem] font-semibold text-text-primary">{selectedClip.camera}</h3>
+                              <p className="text-[0.72rem] text-text-muted break-all">{selectedClip.filename}</p>
+                            </div>
+                            <div className="text-[0.7rem] text-text-muted flex flex-col items-end gap-1 whitespace-nowrap shrink-0">
+                              <span className="flex items-center gap-1">
+                                <Clock size={12} /> {formatDate(selectedClip.timestamp)}
+                              </span>
+                              {selectedDeviceName && (
+                                <span className="flex items-center gap-1">
+                                  <Cpu size={12} /> {selectedDeviceName}
+                                </span>
+                              )}
+                              {selectedDurationLabel && (
+                                <span className="flex items-center gap-1">
+                                  Duration: {selectedDurationLabel}
+                                </span>
+                              )}
+                              {selectedDetectionCount !== null && (
+                                <span className="flex items-center gap-1 text-sky-400/90">
+                                  <Activity size={12} />
+                                  {selectedDetectionCount} YOLO detection{selectedDetectionCount === 1 ? '' : 's'}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {orgSettings.videoSummary && (
                             <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
@@ -3173,7 +3446,8 @@ function App() {
                           )}
                         </div>
                       </div>
-                    ) : (
+                      );
+                    })() : (
                       <div className="h-full flex flex-col justify-center items-center border border-dashed border-border-glass rounded-xl text-text-muted p-5 text-center">
                         <Video size={32} className="text-text-muted mb-2.5 mx-auto" />
                         <p className="text-[0.85rem] font-semibold">No Event Selected</p>

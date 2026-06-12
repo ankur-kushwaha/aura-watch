@@ -41,10 +41,12 @@ export interface StreamSettings {
   reidVisibleSec?: number | null;
 }
 
-export type EffectiveEdgeDeviceConfig = Required<EdgeDeviceConfig> & { debugLogs: boolean };
-export type EffectiveStreamSettings = Required<
-  Omit<StreamSettings, 'rtspLocalAddr'>
-> & { rtspLocalAddr: string };
+type EffectiveConfig<T> = {
+  [K in keyof T]-?: NonNullable<T[K]>;
+};
+
+export type EffectiveEdgeDeviceConfig = EffectiveConfig<EdgeDeviceConfig>;
+export type EffectiveStreamSettings = EffectiveConfig<StreamSettings>;
 
 export const DEFAULT_DEVICE_CONFIG: EffectiveEdgeDeviceConfig = {
   yoloConfidence: 0.25,
@@ -88,14 +90,6 @@ export const DEFAULT_STREAM_SETTINGS: EffectiveStreamSettings = {
   reidMinBboxSize: 2500,
   reidVisibleSec: 1.0,
 };
-
-export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {
-  return { ...DEFAULT_DEVICE_CONFIG };
-}
-
-export function createDefaultStreamSettings(): EffectiveStreamSettings {
-  return { ...DEFAULT_STREAM_SETTINGS };
-}
 
 export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {
   return { ...DEFAULT_DEVICE_CONFIG };

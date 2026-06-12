@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import type { Prisma } from '@prisma/client';
 import prisma from '../services/db';
 import { deleteClipVector, deleteClipVectors } from '../services/qdrant';
 import { getClipDetectionsResponse } from '../services/clipDetections';
@@ -7,6 +8,55 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const router = Router();
+
+function parseClipListFilters(req: Request) {
+  const deviceId =
+    typeof req.query.deviceId === 'string' && req.query.deviceId.trim()
+      ? req.query.deviceId.trim()
+      : undefined;
+  const streamId =
+    typeof req.query.streamId === 'string' && req.query.streamId.trim()
+      ? req.query.streamId.trim()
+      : undefined;
+
+  const startRaw = typeof req.query.startTime === 'string' ? req.query.startTime : undefined;
+  const endRaw = typeof req.query.endTime === 'string' ? req.query.endTime : undefined;
+  const startTime = startRaw ? new Date(startRaw) : undefined;
+  const endTime = endRaw ? new Date(endRaw) : undefined;
+
+  return {
+    deviceId,
+    streamId,
+    startTime: startTime && !Number.isNaN(startTime.getTime()) ? startTime : undefined,
+    endTime: endTime && !Number.isNaN(endTime.getTime()) ? endTime : undefined,
+  };
+}
+
+function buildClipListWhere(
+  onlineWhere: Prisma.VideoClipWhereInput,
+  filters: ReturnType<typeof parseClipListFilters>,
+): Prisma.VideoClipWhereInput {
+  const extra: Prisma.VideoClipWhereInput = {};
+
+  if (filters.deviceId) {
+    extra.deviceId = filters.deviceId;
+  }
+  if (filters.streamId) {
+    extra.streamId = filters.streamId;
+  }
+  if (filters.startTime || filters.endTime) {
+    extra.timestamp = {
+      ...(filters.startTime ? { gte: filters.startTime } : {}),
+      ...(filters.endTime ? { lte: filters.endTime } : {}),
+    };
+  }
+
+  if (Object.keys(extra).length === 0) {
+    return onlineWhere;
+  }
+
+  return { AND: [onlineWhere, extra] };
+}
 
 export type ClipDeletedCallback = (deviceId: string, filename: string) => void;
 let onClipDeletedCallback: ClipDeletedCallback | null = null;
@@ -29,6 +79,8 @@ router.get('/', async (req: Request, res: Response) => {
 
   try {
     const onlineWhere = await orgClipWhere(req.auth.orgId);
+    const filters = parseClipListFilters(req);
+    const where = buildClipListWhere(onlineWhere, filters);
 
     const limitParam = req.query.limit;
     const offsetParam = req.query.offset;
@@ -39,12 +91,12 @@ router.get('/', async (req: Request, res: Response) => {
 
       const [clips, total] = await Promise.all([
         prisma.videoClip.findMany({
-          where: onlineWhere,
+          where,
           orderBy: { timestamp: 'desc' },
           take: limit,
           skip: offset,
         }),
-        prisma.videoClip.count({ where: onlineWhere }),
+        prisma.videoClip.count({ where }),
       ]);
 
       res.json({
@@ -56,7 +108,7 @@ router.get('/', async (req: Request, res: Response) => {
     }
 
     const clips = await prisma.videoClip.findMany({
-      where: onlineWhere,
+      where,
       orderBy: { timestamp: 'desc' },
     });
     res.json(clips);
