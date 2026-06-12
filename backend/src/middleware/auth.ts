@@ -4,6 +4,7 @@ import { verifyToken } from '../services/auth';
 
 const PUBLIC_PATHS: Array<{ method: string; pattern: RegExp }> = [
   { method: 'POST', pattern: /^\/api\/auth\/(register|login)$/ },
+  { method: 'POST', pattern: /^\/api\/admin\/login$/ },
   { method: 'POST', pattern: /^\/api\/devices\/register$/ },
   { method: 'POST', pattern: /^\/api\/devices\/[^/]+\/(upload|reid\/crop)$/ },
 ];
@@ -18,6 +19,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   if (isPublicPath(req.method, req.path)) {
+    return next();
+  }
+
+  // Super admin routes use their own auth middleware.
+  if (req.path.startsWith('/api/admin')) {
     return next();
   }
 

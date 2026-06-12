@@ -16,6 +16,11 @@ export interface JwtPayload {
   orgId: string;
   email: string;
   role: string;
+  impersonatedBy?: 'superadmin';
+}
+
+export interface SuperAdminJwtPayload {
+  isSuperAdmin: true;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -30,8 +35,22 @@ export function signToken(payload: JwtPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);
 }
 
+export function signSuperAdminToken(): string {
+  return jwt.sign({ isSuperAdmin: true } satisfies SuperAdminJwtPayload, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES_IN,
+  } as jwt.SignOptions);
+}
+
 export function verifyToken(token: string): JwtPayload {
   return jwt.verify(token, JWT_SECRET) as JwtPayload;
+}
+
+export function verifySuperAdminToken(token: string): SuperAdminJwtPayload {
+  const payload = jwt.verify(token, JWT_SECRET) as SuperAdminJwtPayload;
+  if (!payload.isSuperAdmin) {
+    throw new Error('Not a super admin token');
+  }
+  return payload;
 }
 
 export function slugify(name: string): string {

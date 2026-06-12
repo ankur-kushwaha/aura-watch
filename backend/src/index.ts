@@ -20,6 +20,7 @@ import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import { buildConfigurePayload } from './services/edgeConfig';
 import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR, processReidTrackEventsFromClip, ReidTrackEvent } from './routes/reid';
 import authRouter from './routes/auth';
+import adminRouter from './routes/admin';
 import orgsRouter from './routes/orgs';
 import { requireAuth } from './middleware/auth';
 import { bootstrapMultiOrg } from './services/bootstrap';
@@ -109,6 +110,7 @@ app.get('/api/videos/:filename', async (req, res) => {
 
 // Mount routes
 app.use('/api/auth', authRouter);
+app.use('/api/admin', adminRouter);
 app.use('/api/orgs', orgsRouter);
 app.use('/api/clips', clipsRouter);
 app.use('/api/rag', ragRouter);

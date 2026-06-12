@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import App from './App.tsx';
+import Admin from './Admin.tsx';
 import Landing from './Landing.tsx';
 import Login from './Login.tsx';
 import Register from './Register.tsx';
@@ -55,6 +56,7 @@ export default function Root() {
             </ProtectedRoute>
           }
         />
+        <Route path="/admin/*" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

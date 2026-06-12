@@ -51,6 +51,7 @@ import {
   type OrgSettings,
 } from './api';
 import { clearLoggedIn } from './auth';
+import { exitImpersonation, isImpersonating } from './adminApi';
 import OrgSettingsPage from './OrgSettings';
 import {
   DEFAULT_STREAM_SETTINGS,
@@ -885,6 +886,7 @@ function App() {
       navigate('/app/events', { replace: true });
       return;
     }
+    if (location.pathname.startsWith('/app/settings')) return;
     if (!orgSettings.aiChat && activeTab === 'ai') {
       if (hasOnlineDevices) navigate('/app/events', { replace: true });
     }
@@ -2405,8 +2407,19 @@ function App() {
   };
 
   const handleLogout = () => {
+    const wasImpersonating = isImpersonating();
+    if (wasImpersonating) {
+      exitImpersonation();
+      navigate('/admin/orgs', { replace: true });
+      return;
+    }
     clearLoggedIn();
     navigate('/login', { replace: true });
+  };
+
+  const handleExitImpersonation = () => {
+    exitImpersonation();
+    navigate('/admin/orgs', { replace: true });
   };
 
   const formatDate = (dateStr: string) => {
@@ -2426,6 +2439,22 @@ function App() {
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
+
+      {isImpersonating() && (
+        <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[0.85rem] text-amber-200">
+            Super admin impersonation — viewing as <span className="font-semibold">{currentOrg?.name}</span>
+            {currentOrg?.role ? ` (${currentOrg.role})` : ''}
+          </p>
+          <button
+            type="button"
+            onClick={handleExitImpersonation}
+            className="btn btn-secondary py-1.5 px-3 text-[0.8rem]"
+          >
+            Exit to admin console
+          </button>
+        </div>
+      )}
 
       {/* HEADER SECTION */}
       <header className="glass-panel p-5 px-6 flex justify-between items-center mb-6">
