@@ -8,6 +8,49 @@ generator client {
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
+model Organization {
+  id               String                 @id @default(auto()) @map("_id") @db.ObjectId
+  name             String
+  slug             String                 @unique
+  createdAt        DateTime               @default(now())
+  members          OrgMember[]
+  devices          EdgeDevice[]
+  identities       ReidIdentity[]
+  topologyRoutes   TopologyRoute[]
+  enrollmentTokens DeviceEnrollmentToken[]
+}
+
+model User {
+  id           String      @id @default(auto()) @map("_id") @db.ObjectId
+  email        String      @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime    @default(now())
+  memberships  OrgMember[]
+}
+
+model OrgMember {
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
+  orgId     String       @db.ObjectId
+  userId    String       @db.ObjectId
+  role      String       @default("member") // owner | admin | member | viewer
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+}
+
+model DeviceEnrollmentToken {
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
+  orgId     String       @db.ObjectId
+  token     String       @unique
+  label     String?
+  expiresAt DateTime?
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
 model VideoClip {
   id              String          @id @default(auto()) @map("_id") @db.ObjectId
   filepath        String
@@ -30,6 +73,8 @@ model EdgeDevice {
   name          String
   status        String         @default("Offline") // "Offline", "Online"
   lastHeartbeat DateTime       @default(now())
+  orgId         String?        @db.ObjectId
+  org           Organization?  @relation(fields: [orgId], references: [id], onDelete: Cascade)
   streams       CameraStream[]
 }
 
@@ -61,6 +106,8 @@ model ReidIdentity {
   createdAt           DateTime                 @default(now())
   centroidUpdatedAt   DateTime?
   galleryCount        Int                      @default(0)
+  orgId               String?                  @db.ObjectId
+  org                 Organization?            @relation(fields: [orgId], references: [id], onDelete: Cascade)
   detections          ReidDetection[]
   streamTrackMappings ReidStreamTrackMapping[]
 }
@@ -125,6 +172,7 @@ model TopologyRoute {
   minTimeSeconds Float
   maxTimeSeconds Float
   topologyScore  Float         @default(1.0)
+  orgId          String?       @db.ObjectId
+  org            Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
 }
-
 

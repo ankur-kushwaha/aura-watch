@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import { deleteClipVector, deleteClipVectors } from '../services/qdrant';
 import { getClipDetectionsResponse } from '../services/clipDetections';
+import { orgClipWhere, assertClipInOrg, getOrgDeviceIds } from '../services/orgScope';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -22,7 +23,13 @@ const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../s
  * Optional query params: limit, offset — returns { clips, total, hasMore }.
  */
 router.get('/', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
+    const onlineWhere = await orgClipWhere(req.auth.orgId);
+
     const limitParam = req.query.limit;
     const offsetParam = req.query.offset;
 
@@ -32,11 +39,12 @@ router.get('/', async (req: Request, res: Response) => {
 
       const [clips, total] = await Promise.all([
         prisma.videoClip.findMany({
+          where: onlineWhere,
           orderBy: { timestamp: 'desc' },
           take: limit,
           skip: offset,
         }),
-        prisma.videoClip.count(),
+        prisma.videoClip.count({ where: onlineWhere }),
       ]);
 
       res.json({
@@ -48,6 +56,7 @@ router.get('/', async (req: Request, res: Response) => {
     }
 
     const clips = await prisma.videoClip.findMany({
+      where: onlineWhere,
       orderBy: { timestamp: 'desc' },
     });
     res.json(clips);
@@ -63,9 +72,12 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/:id/detections', async (req: Request, res: Response) => {
   const { id } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const clip = await prisma.videoClip.findUnique({ where: { id } });
-    if (!clip) {
+    if (!(await assertClipInOrg(id, req.auth.orgId))) {
       return res.status(404).json({ error: 'Clip not found' });
     }
 
@@ -83,7 +95,15 @@ router.get('/:id/detections', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
+    if (!(await assertClipInOrg(id, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Clip not found' });
+    }
+
     const clip = await prisma.videoClip.findUnique({
       where: { id },
     });
@@ -101,9 +121,16 @@ router.get('/:id', async (req: Request, res: Response) => {
  * DELETE /api/clips
  * Delete all video clips, their local files, and Qdrant vectors.
  */
-router.delete('/', async (_req: Request, res: Response) => {
+router.delete('/', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const clips = await prisma.videoClip.findMany();
+    const orgDeviceIds = await getOrgDeviceIds(req.auth.orgId);
+    const clips = await prisma.videoClip.findMany({
+      where: { deviceId: { in: orgDeviceIds } },
+    });
 
     for (const clip of clips) {
       if (fs.existsSync(clip.filepath)) {
@@ -122,9 +149,11 @@ router.delete('/', async (_req: Request, res: Response) => {
 
     await deleteClipVectors(clips.map((clip) => clip.id));
 
-    const result = await prisma.videoClip.deleteMany();
+    const result = await prisma.videoClip.deleteMany({
+      where: { deviceId: { in: orgDeviceIds } },
+    });
 
-    res.json({ message: 'All clips successfully deleted', count: result.count });
+    res.json({ message: 'Organization clips successfully deleted', count: result.count });
   } catch (error) {
     console.error('Error deleting all clips:', error);
     res.status(500).json({ error: 'Failed to delete all clips' });
@@ -137,8 +166,15 @@ router.delete('/', async (_req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    // 1. Fetch clip from DB to get filepath
+    if (!(await assertClipInOrg(id, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Clip not found' });
+    }
+
     const clip = await prisma.videoClip.findUnique({
       where: { id },
     });

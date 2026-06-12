@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Camera,
   Settings,
@@ -32,8 +32,19 @@ import {
   ThumbsDown,
   Users,
   ArrowLeft,
-  UserCircle
+  UserCircle,
+  Building2,
 } from 'lucide-react';
+import {
+  apiFetch,
+  API_BASE,
+  getToken,
+  getStoredOrg,
+  switchOrg,
+  fetchMe,
+  createEnrollmentToken,
+  type AuthOrg,
+} from './api';
 
 const PREVIEW_STALL_MS = 5000;
 
@@ -190,19 +201,31 @@ interface ReidRoute {
   topologyScore: number;
 }
 
-const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
-const identityCoverUrl = (identityId: string) => `${API_BASE}/reid/identities/${identityId}/cover`;
+const identityCoverUrl = (identityId: string) => {
+  const token = getToken();
+  const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
+  return `${API_BASE}/reid/identities/${identityId}/cover${qs}`;
+};
 const CLIPS_PAGE_SIZE = 10;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 const HUB_HTTP = import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
 
-function buildInstallCmd() {
-  return `CLOUD_URL='${HUB_HTTP}' sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
+function buildInstallCmd(enrollmentToken?: string) {
+  const tokenPart = enrollmentToken ? ` ENROLLMENT_TOKEN='${enrollmentToken}'` : '';
+  return `CLOUD_URL='${HUB_HTTP}'${tokenPart} sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
 }
 
-function DeviceInstallTooltip() {
+function mediaUrl(path: string) {
+  const token = getToken();
+  const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
+  return `${API_BASE}${path}${qs}`;
+}
+
+function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Promise<string> }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [enrollmentToken, setEnrollmentToken] = useState<string>('');
+  const [generatingToken, setGeneratingToken] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -216,7 +239,19 @@ function DeviceInstallTooltip() {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const installCmd = buildInstallCmd();
+  const installCmd = buildInstallCmd(enrollmentToken);
+
+  const handleGenerateToken = async () => {
+    setGeneratingToken(true);
+    try {
+      const result = await onGenerateToken();
+      setEnrollmentToken(result);
+    } catch (err: any) {
+      alert(err.message || 'Failed to generate enrollment token');
+    } finally {
+      setGeneratingToken(false);
+    }
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(installCmd).then(() => {
@@ -282,8 +317,23 @@ function DeviceInstallTooltip() {
             ➕ Add a New Edge Device
           </p>
           <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '10px', lineHeight: 1.5 }}>
-            Run this command on the target device (Linux / macOS) to install and register the edge agent:
+            Generate an enrollment token, then run this command on the target device (Linux / macOS):
           </p>
+
+          <button
+            type="button"
+            onClick={handleGenerateToken}
+            disabled={generatingToken}
+            className="btn btn-secondary w-full mb-2 text-[0.72rem] py-1.5"
+          >
+            {generatingToken ? 'Generating…' : enrollmentToken ? 'Regenerate token' : 'Generate enrollment token'}
+          </button>
+
+          {enrollmentToken && (
+            <p style={{ fontSize: '0.67rem', color: '#10b981', marginBottom: '8px', wordBreak: 'break-all' }}>
+              Token: {enrollmentToken.slice(0, 12)}…
+            </p>
+          )}
 
           <div style={{
             background: 'rgba(0,0,0,0.5)',
@@ -339,6 +389,10 @@ interface AppProps {
 }
 
 function App({ onLogout }: AppProps) {
+  const [currentOrg, setCurrentOrg] = useState<AuthOrg | null>(() => getStoredOrg());
+  const [availableOrgs, setAvailableOrgs] = useState<AuthOrg[]>([]);
+  const [switchingOrg, setSwitchingOrg] = useState(false);
+
   // App States
   const [devices, setDevices] = useState<EdgeDevice[]>([]);
   const [streams, setStreams] = useState<CameraStream[]>([]);
@@ -376,6 +430,34 @@ function App({ onLogout }: AppProps) {
   const [showIdentitySuggestions, setShowIdentitySuggestions] = useState<boolean>(false);
   const timelineVideoRef = useRef<HTMLVideoElement>(null);
 
+  useEffect(() => {
+    fetchMe()
+      .then((data) => {
+        if (data.org) setCurrentOrg(data.org);
+        setAvailableOrgs(data.orgs);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSwitchOrg = async (orgId: string) => {
+    if (orgId === currentOrg?.id) return;
+    setSwitchingOrg(true);
+    try {
+      const org = await switchOrg(orgId);
+      setCurrentOrg(org);
+      window.location.reload();
+    } catch (err: any) {
+      alert(err.message || 'Failed to switch organization');
+    } finally {
+      setSwitchingOrg(false);
+    }
+  };
+
+  const handleGenerateEnrollmentToken = async () => {
+    const result = await createEnrollmentToken('Device install');
+    return result.token;
+  };
+
   // Topology States
   const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
   const [newRoute, setNewRoute] = useState<ReidRoute>({
@@ -388,6 +470,7 @@ function App({ onLogout }: AppProps) {
   const selectedStreamIdRef = useRef(selectedStreamId);
   const fetchClipsRef = useRef<() => Promise<void>>(async () => {});
   const streamStatusRef = useRef<string>('Offline');
+  const onlineDeviceIdsRef = useRef<Set<string>>(new Set());
   const deviceLogsModalRef = useRef(deviceLogsModal);
   const deviceLogsContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -454,13 +537,40 @@ function App({ onLogout }: AppProps) {
   const wsIntentionalCloseRef = useRef(false);
   const wsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const onlineDeviceIds = useMemo(
+    () => new Set(devices.filter((d) => d.status !== 'Offline').map((d) => d.deviceId)),
+    [devices],
+  );
+
+  const isClipFromOnlineDevice = useCallback((clip: VideoClip) => {
+    if (!clip.deviceId) return true;
+    return onlineDeviceIds.has(clip.deviceId);
+  }, [onlineDeviceIds]);
+
+  const visibleClips = useMemo(
+    () => clips.filter(isClipFromOnlineDevice),
+    [clips, isClipFromOnlineDevice],
+  );
+
+  useEffect(() => {
+    onlineDeviceIdsRef.current = onlineDeviceIds;
+  }, [onlineDeviceIds]);
+
+  useEffect(() => {
+    setClips((prev) => {
+      const filtered = prev.filter(isClipFromOnlineDevice);
+      return filtered.length === prev.length ? prev : filtered;
+    });
+    setSelectedClip((prev) => (prev && isClipFromOnlineDevice(prev) ? prev : null));
+  }, [isClipFromOnlineDevice]);
+
   const fetchDevices = useCallback(async (selectFirst = false) => {
     try {
-      const res = await fetch(`${API_BASE}/devices`);
+      const res = await apiFetch('/devices');
       const data = await res.json();
       setDevices(data);
 
-      const streamsRes = await fetch(`${API_BASE}/streams`);
+      const streamsRes = await apiFetch('/streams');
       const streamsData = await streamsRes.json();
       setStreams(streamsData);
 
@@ -480,7 +590,7 @@ function App({ onLogout }: AppProps) {
   const fetchClips = useCallback(async () => {
     setLoadingClips(true);
     try {
-      const res = await fetch(`${API_BASE}/clips?limit=${CLIPS_PAGE_SIZE}&offset=0`);
+      const res = await apiFetch(`/clips?limit=${CLIPS_PAGE_SIZE}&offset=0`);
       const data = await res.json();
       setClips(data.clips);
       setClipsTotal(data.total);
@@ -501,7 +611,7 @@ function App({ onLogout }: AppProps) {
     if (loadingMoreClips || clips.length >= clipsTotal) return;
     setLoadingMoreClips(true);
     try {
-      const res = await fetch(`${API_BASE}/clips?limit=${CLIPS_PAGE_SIZE}&offset=${clips.length}`);
+      const res = await apiFetch(`/clips?limit=${CLIPS_PAGE_SIZE}&offset=${clips.length}`);
       const data = await res.json();
       setClips((prev) => [...prev, ...data.clips]);
       setClipsTotal(data.total);
@@ -625,6 +735,7 @@ function App({ onLogout }: AppProps) {
         case 'new_clip': {
           const clip = data.clip as VideoClip | undefined;
           if (!clip?.id) break;
+          if (clip.deviceId && !onlineDeviceIdsRef.current.has(clip.deviceId)) break;
           const normalized: VideoClip = {
             ...clip,
             timestamp: typeof clip.timestamp === 'string'
@@ -665,6 +776,7 @@ function App({ onLogout }: AppProps) {
           break;
         case 'devices_changed':
           fetchDevices();
+          fetchClipsRef.current();
           break;
         default:
           break;
@@ -705,7 +817,7 @@ function App({ onLogout }: AppProps) {
     let cancelled = false;
     setLoadingClipDetections(true);
 
-    fetch(`${API_BASE}/clips/${selectedClip.id}/detections`)
+    apiFetch(`/clips/${selectedClip.id}/detections`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: ClipDetectionsResponse | ClipObjectDetection[] | null) => {
         if (cancelled || !data) return;
@@ -792,7 +904,7 @@ function App({ onLogout }: AppProps) {
   const fetchReidPeople = useCallback(async () => {
     setLoadingReidPeople(true);
     try {
-      const res = await fetch(`${API_BASE}/reid/people`);
+      const res = await apiFetch('/reid/people');
       const data = await res.json();
       setReidPeople(data);
       setBrokenIdentityCovers(new Set());
@@ -805,7 +917,7 @@ function App({ onLogout }: AppProps) {
 
   const fetchTopology = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/reid/topology`);
+      const res = await apiFetch('/reid/topology');
       const data = await res.json();
       setTopologyRoutes(data);
     } catch (err) {
@@ -821,8 +933,8 @@ function App({ onLogout }: AppProps) {
     setLoadingPersonDetail(true);
     try {
       const [journeyRes, matchesRes] = await Promise.all([
-        fetch(`${API_BASE}/reid/identities/${person.id}/journey`),
-        fetch(`${API_BASE}/reid/identities/${person.id}/matches`),
+        apiFetch(`/reid/identities/${person.id}/journey`),
+        apiFetch(`/reid/identities/${person.id}/matches`),
       ]);
       const journey = await journeyRes.json();
       const matches = await matchesRes.json();
@@ -871,7 +983,7 @@ function App({ onLogout }: AppProps) {
 
     if (identityId) {
       try {
-        const matchesRes = await fetch(`${API_BASE}/reid/identities/${identityId}/matches`);
+        const matchesRes = await apiFetch(`/reid/identities/${identityId}/matches`);
         if (matchesRes.ok) {
           const matches: ReidPersonMatch[] = await matchesRes.json();
           for (const match of matches) {
@@ -886,7 +998,7 @@ function App({ onLogout }: AppProps) {
     }
 
     try {
-      const peopleRes = await fetch(`${API_BASE}/reid/people`);
+      const peopleRes = await apiFetch('/reid/people');
       if (peopleRes.ok) {
         const people: ReidPerson[] = await peopleRes.json();
         for (const person of people) {
@@ -918,7 +1030,7 @@ function App({ onLogout }: AppProps) {
   };
 
   const reloadPersonRefsJourney = async (identityId: string) => {
-    const journeyRes = await fetch(`${API_BASE}/reid/identities/${identityId}/journey`);
+    const journeyRes = await apiFetch(`/reid/identities/${identityId}/journey`);
     if (!journeyRes.ok) return;
     const journey = await journeyRes.json();
     const identityLabel = journey.identity?.label?.trim() || '';
@@ -939,7 +1051,7 @@ function App({ onLogout }: AppProps) {
 
   const refreshClipDetectionsAfterLabel = async () => {
     if (!selectedClip) return;
-    const detRes = await fetch(`${API_BASE}/clips/${selectedClip.id}/detections`);
+    const detRes = await apiFetch(`/clips/${selectedClip.id}/detections`);
     if (detRes.ok) {
       const updated = await detRes.json();
       if (Array.isArray(updated)) {
@@ -977,7 +1089,7 @@ function App({ onLogout }: AppProps) {
 
     try {
       if (obj.identityId) {
-        const journeyRes = await fetch(`${API_BASE}/reid/identities/${obj.identityId}/journey`);
+        const journeyRes = await apiFetch(`/reid/identities/${obj.identityId}/journey`);
         if (!journeyRes.ok) throw new Error('Failed to load identity journey');
         const journey = await journeyRes.json();
         const identityLabel = journey.identity?.label?.trim() || '';
@@ -998,7 +1110,7 @@ function App({ onLogout }: AppProps) {
         setPersonRefs(refs);
       } else {
 
-      const trackRes = await fetch(`${API_BASE}/reid/track`, {
+      const trackRes = await apiFetch('/reid/track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ detectionId: obj.detectionId, limit: 30 }),
@@ -1068,7 +1180,7 @@ function App({ onLogout }: AppProps) {
     if (!personRefsModal?.detectionId) return;
     setSavingPersonRefsLabel(true);
     try {
-      const res = await fetch(`${API_BASE}/reid/detections/${personRefsModal.detectionId}/assign-identity`, {
+      const res = await apiFetch(`/reid/detections/${personRefsModal.detectionId}/assign-identity`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identityId: suggestion.id }),
@@ -1100,7 +1212,7 @@ function App({ onLogout }: AppProps) {
     setSavingPersonRefsLabel(true);
     try {
       if (personRefsIdentityId) {
-        const res = await fetch(`${API_BASE}/reid/identities/${personRefsIdentityId}`, {
+        const res = await apiFetch(`/reid/identities/${personRefsIdentityId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: personRefsLabelDraft }),
@@ -1111,7 +1223,7 @@ function App({ onLogout }: AppProps) {
           return;
         }
       } else {
-        const res = await fetch(`${API_BASE}/reid/detections/${personRefsModal.detectionId}/label`, {
+        const res = await apiFetch(`/reid/detections/${personRefsModal.detectionId}/label`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: personRefsLabelDraft }),
@@ -1148,7 +1260,7 @@ function App({ onLogout }: AppProps) {
       let clipOffsetMs = crop.clipOffsetMs ?? 0;
 
       if (!clipFilename) {
-        const res = await fetch(`${API_BASE}/reid/detections/${crop.id}/source-clip`);
+        const res = await apiFetch(`/reid/detections/${crop.id}/source-clip`);
         if (!res.ok) {
           alert('No video clip found for this detection.');
           return;
@@ -1181,7 +1293,7 @@ function App({ onLogout }: AppProps) {
     if (!selectedPerson) return;
     setSavingIdentityLabel(true);
     try {
-      const res = await fetch(`${API_BASE}/reid/identities/${selectedPerson.id}`, {
+      const res = await apiFetch(`/reid/identities/${selectedPerson.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: identityLabelDraft }),
@@ -1218,7 +1330,7 @@ function App({ onLogout }: AppProps) {
     const key = `${type}:${sourceStreamId}:${sourceTrackId}:${targetStreamId}:${targetTrackId}`;
     setFeedbackPending(key);
     try {
-      const res = await fetch(`${API_BASE}/reid/feedback/stream-track`, {
+      const res = await apiFetch('/reid/feedback/stream-track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, sourceStreamId, sourceTrackId, targetStreamId, targetTrackId }),
@@ -1260,7 +1372,7 @@ function App({ onLogout }: AppProps) {
 
     setDeletingIdentityId(person.id);
     try {
-      const res = await fetch(`${API_BASE}/reid/identities/${person.id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/reid/identities/${person.id}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || 'Failed to delete identity');
@@ -1288,8 +1400,8 @@ function App({ onLogout }: AppProps) {
     try {
       const [idA, idB] = linkPeopleSelection;
       const [jA, jB] = await Promise.all([
-        fetch(`${API_BASE}/reid/identities/${idA}/journey`).then(r => r.json()),
-        fetch(`${API_BASE}/reid/identities/${idB}/journey`).then(r => r.json()),
+        apiFetch(`/reid/identities/${idA}/journey`).then(r => r.json()),
+        apiFetch(`/reid/identities/${idB}/journey`).then(r => r.json()),
       ]);
       const detA = jA.detections?.[0]?.id;
       const detB = jB.detections?.[0]?.id;
@@ -1297,7 +1409,7 @@ function App({ onLogout }: AppProps) {
         alert('Could not find crops to link.');
         return;
       }
-      const res = await fetch(`${API_BASE}/reid/identities/merge`, {
+      const res = await apiFetch('/reid/identities/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ detectionIds: [detA, detB] }),
@@ -1335,7 +1447,7 @@ function App({ onLogout }: AppProps) {
         toStreamId: toStream?.streamId,
       };
 
-      const res = await fetch(`${API_BASE}/reid/topology`, {
+      const res = await apiFetch('/reid/topology', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1359,6 +1471,12 @@ function App({ onLogout }: AppProps) {
       fetchTopology();
     }
   }, [activeTab, fetchReidPeople, fetchTopology]);
+
+  useEffect(() => {
+    if (activeTab === 'reid') {
+      fetchReidPeople();
+    }
+  }, [onlineDeviceIds, activeTab, fetchReidPeople]);
 
   useEffect(() => {
     if (activeTab === 'reid' && reidRefreshNonce > 0) {
@@ -1426,7 +1544,7 @@ function App({ onLogout }: AppProps) {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/streams/${selectedStreamId}/config`, {
+      const res = await apiFetch(`/streams/${selectedStreamId}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1462,7 +1580,7 @@ function App({ onLogout }: AppProps) {
     if (!stream || stream.status === 'Offline') return;
 
     try {
-      const res = await fetch(`${API_BASE}/streams/${streamId}/config`, {
+      const res = await apiFetch(`/streams/${streamId}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1508,7 +1626,7 @@ function App({ onLogout }: AppProps) {
 
     setDeviceCommandPending(`${deviceId}:reboot`);
     try {
-      const res = await fetch(`${API_BASE}/devices/${deviceId}/command/reboot`, { method: 'POST' });
+      const res = await apiFetch(`/devices/${deviceId}/command/reboot`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || 'Failed to reboot device');
@@ -1533,7 +1651,7 @@ function App({ onLogout }: AppProps) {
 
     setDeviceCommandPending(`${deviceId}:update`);
     try {
-      const res = await fetch(`${API_BASE}/devices/${deviceId}/command/update-service`, {
+      const res = await apiFetch(`/devices/${deviceId}/command/update-service`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -1555,7 +1673,7 @@ function App({ onLogout }: AppProps) {
   const fetchJournalLogs = useCallback(async (deviceId: string) => {
     setLoadingJournalLogs(true);
     try {
-      const res = await fetch(`${API_BASE}/devices/${deviceId}/logs?lines=200`);
+      const res = await apiFetch(`/devices/${deviceId}/logs?lines=200`);
       const data = await res.json();
       if (res.ok) {
         setJournalLogs(data.logs || '');
@@ -1601,7 +1719,7 @@ function App({ onLogout }: AppProps) {
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this edge device and all its streams?')) return;
     try {
-      const res = await fetch(`${API_BASE}/devices/${deviceId}`, {
+      const res = await apiFetch(`/devices/${deviceId}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -1626,7 +1744,7 @@ function App({ onLogout }: AppProps) {
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this camera stream?')) return;
     try {
-      const res = await fetch(`${API_BASE}/streams/${streamId}`, {
+      const res = await apiFetch(`/streams/${streamId}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -1649,7 +1767,7 @@ function App({ onLogout }: AppProps) {
     if (!confirm('Are you sure you want to delete this recorded clip?')) return;
 
     try {
-      const res = await fetch(`${API_BASE}/clips/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/clips/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setClips((prev) => prev.filter((c) => c.id !== id));
         setClipsTotal((prev) => Math.max(0, prev - 1));
@@ -1668,7 +1786,7 @@ function App({ onLogout }: AppProps) {
 
     setDeletingAllClips(true);
     try {
-      const res = await fetch(`${API_BASE}/clips`, { method: 'DELETE' });
+      const res = await apiFetch('/clips', { method: 'DELETE' });
       if (res.ok) {
         setClips([]);
         setClipsTotal(0);
@@ -1691,7 +1809,7 @@ function App({ onLogout }: AppProps) {
     setIsAsking(true);
 
     try {
-      const res = await fetch(`${API_BASE}/rag/query`, {
+      const res = await apiFetch('/rag/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1733,7 +1851,7 @@ function App({ onLogout }: AppProps) {
     return date.toLocaleString();
   };
 
-  const clipsHasMore = clips.length < clipsTotal;
+  const clipsHasMore = visibleClips.length < clipsTotal;
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto">
@@ -1751,6 +1869,25 @@ function App({ onLogout }: AppProps) {
         </div>
 
         <div className="flex items-center gap-4">
+          {currentOrg && (
+            <div className="flex items-center gap-2">
+              <Building2 size={14} className="text-text-muted" />
+              {availableOrgs.length > 1 ? (
+                <select
+                  value={currentOrg.id}
+                  onChange={(e) => handleSwitchOrg(e.target.value)}
+                  disabled={switchingOrg}
+                  className="text-[0.8rem] bg-transparent border border-border-glass rounded-md py-1 px-2"
+                >
+                  {availableOrgs.map((org) => (
+                    <option key={org.id} value={org.id}>{org.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-[0.8rem] text-text-secondary">{currentOrg.name}</span>
+              )}
+            </div>
+          )}
           {selectedDeviceId && (
             <div className={`status-indicator ${status.toLowerCase().replace(' ', '')}`}>
               <span className="w-2 h-2 rounded-full bg-current inline-block"></span>
@@ -1809,7 +1946,7 @@ function App({ onLogout }: AppProps) {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Cpu size={18} color="var(--color-primary)" /> Registered Edge Devices
-                <DeviceInstallTooltip />
+                <DeviceInstallTooltip onGenerateToken={handleGenerateEnrollmentToken} />
               </h2>
               <button
                 onClick={() => fetchDevices()}
@@ -2158,7 +2295,7 @@ function App({ onLogout }: AppProps) {
                     <button
                       onClick={handleDeleteAllClips}
                       className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md hover:text-danger"
-                      disabled={loadingClips || deletingAllClips || clips.length === 0}
+                      disabled={loadingClips || deletingAllClips || visibleClips.length === 0}
                     >
                       <Trash2 size={12} /> Delete All
                     </button>
@@ -2175,13 +2312,15 @@ function App({ onLogout }: AppProps) {
                 <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0 lg:overflow-hidden">
                   {/* Left pane: Clips History List */}
                   <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2.5 overflow-y-auto min-w-0 pr-1 lg:h-full">
-                    {clips.length === 0 ? (
+                    {visibleClips.length === 0 ? (
                       <div className="h-full flex justify-center items-center text-text-muted text-[0.85rem]">
-                        No clips recorded yet.
+                        {devices.some((d) => d.status !== 'Offline')
+                          ? 'No clips recorded yet.'
+                          : 'No online devices. Event archive is hidden while all devices are offline.'}
                       </div>
                     ) : (
                       <>
-                        {clips.map((c) => (
+                        {visibleClips.map((c) => (
                           <div
                             key={c.id}
                             onClick={() => setSelectedClip(c)}
@@ -2220,7 +2359,7 @@ function App({ onLogout }: AppProps) {
                             <RefreshCw size={12} className={loadingMoreClips ? 'animate-spin' : ''} />
                             {loadingMoreClips
                               ? 'Loading…'
-                              : `Load more (${clips.length} of ${clipsTotal})`}
+                              : `Load more (${visibleClips.length} of ${clipsTotal})`}
                           </button>
                         )}
                       </>
@@ -2237,7 +2376,7 @@ function App({ onLogout }: AppProps) {
                         <div className="bg-[#000] rounded-xl overflow-hidden h-[220px] border border-[rgba(255,255,255,0.08)] shrink-0">
                           <video
                             key={selectedClip.id}
-                            src={`${API_BASE}/videos/${selectedClip.filename}`}
+                            src={mediaUrl(`/videos/${selectedClip.filename}`)}
                             controls
                             autoPlay
                             className="w-full h-full object-contain"
@@ -2286,7 +2425,7 @@ function App({ onLogout }: AppProps) {
                                         {obj.cropFilename && (
                                           <div className="w-10 h-10 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.2)] shrink-0">
                                             <img
-                                              src={`${API_BASE}/crops/${obj.cropFilename}`}
+                                              src={mediaUrl(`/crops/${obj.cropFilename}`)}
                                               alt=""
                                               className="w-full h-full object-cover bg-black"
                                             />
@@ -2465,7 +2604,7 @@ function App({ onLogout }: AppProps) {
                             <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
                               {chat.clips.map((c, cIdx) => {
                                 const filename = c.filename || c.filepath.split(/[/\\]/).pop() || '';
-                                const videoUrl = `${API_BASE}/videos/${filename}`;
+                                const videoUrl = mediaUrl(`/videos/${filename}`);
                                 const matchPercentage = c.score ? Math.round(c.score * 100) : null;
 
                                 return (
@@ -2525,7 +2664,7 @@ function App({ onLogout }: AppProps) {
                             </div>
                             <div className="flex gap-2.5 overflow-x-auto pb-2 w-full scroll-smooth">
                               {chat.reidDetections.map((det, dIdx) => {
-                                const imageUrl = `${API_BASE}/crops/${det.filename}`;
+                                const imageUrl = mediaUrl(`/crops/${det.filename}`);
                                 return (
                                   <div
                                     key={dIdx}
@@ -2945,7 +3084,7 @@ function App({ onLogout }: AppProps) {
                             >
                               <div className="relative w-12 h-12 shrink-0">
                                 <img
-                                  src={`${API_BASE}/crops/${crop.filename}`}
+                                  src={mediaUrl(`/crops/${crop.filename}`)}
                                   alt=""
                                   className="w-12 h-12 rounded-lg object-cover bg-black"
                                 />
@@ -3012,7 +3151,7 @@ function App({ onLogout }: AppProps) {
               <video
                 ref={timelineVideoRef}
                 key={timelineVideo.filename}
-                src={`${API_BASE}/videos/${timelineVideo.filename}`}
+                src={mediaUrl(`/videos/${timelineVideo.filename}`)}
                 controls
                 autoPlay
                 className="w-full max-h-[420px] object-contain"
@@ -3020,7 +3159,7 @@ function App({ onLogout }: AppProps) {
             </div>
             <div className="flex items-center gap-3">
               <img
-                src={`${API_BASE}/crops/${timelineVideo.cropFilename}`}
+                src={mediaUrl(`/crops/${timelineVideo.cropFilename}`)}
                 alt=""
                 className="w-12 h-12 rounded-lg object-cover bg-black shrink-0"
               />
@@ -3050,7 +3189,7 @@ function App({ onLogout }: AppProps) {
                 {personRefsModal.cropFilename && (
                   <div className="w-14 h-14 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.25)] shrink-0">
                     <img
-                      src={`${API_BASE}/crops/${personRefsModal.cropFilename}`}
+                      src={mediaUrl(`/crops/${personRefsModal.cropFilename}`)}
                       alt=""
                       className="w-full h-full object-cover"
                     />
@@ -3202,7 +3341,7 @@ function App({ onLogout }: AppProps) {
                       >
                         <div className="w-12 h-12 rounded-md overflow-hidden border border-border-glass shrink-0 bg-black">
                           <img
-                            src={`${API_BASE}/crops/${ref.filename}`}
+                            src={mediaUrl(`/crops/${ref.filename}`)}
                             alt=""
                             className="w-full h-full object-cover"
                           />
@@ -3336,7 +3475,7 @@ function App({ onLogout }: AppProps) {
           if (isAddMode) {
             // CREATE new stream
             try {
-              const res = await fetch(`${API_BASE}/streams`, {
+              const res = await apiFetch('/streams', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

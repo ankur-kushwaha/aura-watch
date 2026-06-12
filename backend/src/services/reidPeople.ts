@@ -14,6 +14,7 @@ import {
   syncStreamTrackMappingsForIdentity,
 } from './reidStreamTrack';
 import { rankCoverCandidates } from './cropResolve';
+import { getOrgIdForStream } from './orgScope';
 
 export function defaultPersonLabel(cameraName: string, trackId: number): string {
   return `${cameraName} · track ${trackId}`;
@@ -39,7 +40,10 @@ export async function ensureIdentityForStreamTrack(
     return prior.identityId;
   }
 
-  const identity = await prisma.reidIdentity.create({ data: {} });
+  const orgId = await getOrgIdForStream(streamId);
+  const identity = await prisma.reidIdentity.create({
+    data: orgId ? { orgId } : {},
+  });
   await registerStreamTrackMapping(streamId, trackId, identity.id);
   return identity.id;
 }
@@ -53,7 +57,10 @@ export async function splitStreamTrackToNewIdentity(
     select: { id: true },
   });
 
-  const newIdentity = await prisma.reidIdentity.create({ data: {} });
+  const orgId = await getOrgIdForStream(streamId);
+  const newIdentity = await prisma.reidIdentity.create({
+    data: orgId ? { orgId } : {},
+  });
   const detectionIds = detections.map(d => d.id);
 
   if (detectionIds.length > 0) {
@@ -177,16 +184,26 @@ async function resolveStreamTracksForIdentity(identityId: string) {
   }
   return tracks;
 }
-export async function listPeople(limit = 50) {
+export async function listPeople(limit = 50, onlineDeviceIds?: string[], orgId?: string) {
+  const detectionFilter = onlineDeviceIds !== undefined
+    ? (onlineDeviceIds.length > 0
+      ? { some: { deviceId: { in: onlineDeviceIds } } }
+      : { some: { deviceId: { in: [] as string[] } } })
+    : { some: {} };
+
   const identities = await prisma.reidIdentity.findMany({
     where: {
-      detections: { some: {} },
+      ...(orgId ? { orgId } : {}),
+      detections: detectionFilter,
     },
     orderBy: { centroidUpdatedAt: 'desc' },
     take: limit,
     include: {
       streamTrackMappings: true,
       detections: {
+        where: onlineDeviceIds !== undefined
+          ? { deviceId: { in: onlineDeviceIds } }
+          : undefined,
         orderBy: { timestamp: 'desc' },
         take: 20,
         select: {

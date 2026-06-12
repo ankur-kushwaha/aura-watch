@@ -27,6 +27,7 @@ import {
 import { extractCropFromClip } from '../services/reidClipExtract';
 import { enrichDetectionWithClipSource, resolveClipForDetection } from '../services/reidClipResolve';
 import { resolveClipIdFromFilename } from '../services/clipLink';
+import { getOrgOnlineDeviceIds, assertIdentityInOrg, getDeviceOrgId } from '../services/orgScope';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -243,7 +244,9 @@ router.post('/devices/:deviceId/crop', handleCropUpload);
 router.get('/detections', async (req: Request, res: Response) => {
   const limit = parseInt(req.query.limit as string || '50', 10);
   try {
+    const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
     const detections = await prisma.reidDetection.findMany({
+      where: { deviceId: { in: onlineDeviceIds } },
       orderBy: { timestamp: 'desc' },
       take: limit,
       include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
@@ -296,7 +299,8 @@ router.get('/people', async (req: Request, res: Response) => {
   const limit = parseInt(req.query.limit as string || '50', 10);
   try {
     await cleanupEmptyIdentities();
-    const people = await listPeople(limit);
+    const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
+    const people = await listPeople(limit, onlineDeviceIds, req.auth!.orgId);
     res.json(people);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -490,8 +494,9 @@ router.patch('/detections/:id/label', async (req: Request, res: Response) => {
     let identityId = detection.identityId;
 
     if (!identityId) {
+      const orgId = await getDeviceOrgId(detection.deviceId);
       const identity = await prisma.reidIdentity.create({
-        data: { label: trimmed || null },
+        data: { label: trimmed || null, ...(orgId ? { orgId } : {}) },
       });
       identityId = identity.id;
       await prisma.reidDetection.update({
@@ -528,7 +533,9 @@ router.patch('/detections/:id/label', async (req: Request, res: Response) => {
  */
 router.get('/topology', async (req: Request, res: Response) => {
   try {
-    const routes = await prisma.topologyRoute.findMany();
+    const routes = await prisma.topologyRoute.findMany({
+      where: { orgId: req.auth!.orgId },
+    });
     res.json(routes);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -550,6 +557,7 @@ router.post('/topology', async (req: Request, res: Response) => {
     // Check if route exists between these two cameras/streams (bi-directional check)
     const existing = await prisma.topologyRoute.findFirst({
       where: {
+        orgId: req.auth!.orgId,
         OR: [
           { fromCamera, toCamera },
           { fromCamera: toCamera, toCamera: fromCamera },
@@ -585,6 +593,7 @@ router.post('/topology', async (req: Request, res: Response) => {
           minTimeSeconds: parseFloat(minTimeSeconds),
           maxTimeSeconds: parseFloat(maxTimeSeconds),
           topologyScore: parseFloat(topologyScore || '1.0'),
+          orgId: req.auth!.orgId,
         }
       });
     }
@@ -619,7 +628,14 @@ async function assignDetectionsToIdentity(detectionIds: string[], identityId?: s
   const mergedAwayIds: string[] = [];
   if (!targetIdentityId) {
     if (existingIdentityIds.length === 0) {
-      const identity = await prisma.reidIdentity.create({ data: {} });
+      const firstDet = await prisma.reidDetection.findFirst({
+        where: { id: uniqueIds[0] },
+        select: { deviceId: true },
+      });
+      const orgId = firstDet ? await getDeviceOrgId(firstDet.deviceId) : null;
+      const identity = await prisma.reidIdentity.create({
+        data: orgId ? { orgId } : {},
+      });
       targetIdentityId = identity.id;
     } else {
       targetIdentityId = existingIdentityIds[0];
@@ -860,8 +876,9 @@ router.get('/identities/:id/journey', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Identity not found' });
     }
 
+    const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
     const detections = await prisma.reidDetection.findMany({
-      where: { identityId: id },
+      where: { identityId: id, deviceId: { in: onlineDeviceIds } },
       orderBy: { timestamp: 'asc' },
       include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });

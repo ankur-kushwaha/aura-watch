@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { handleCropUpload, ReidTrackEvent } from './reid';
 import { sendDeviceCommand } from '../services/deviceCommands';
+import { getEffectiveDeviceStatus } from '../services/deviceStatus';
+import { assertDeviceInOrg } from '../services/orgScope';
 
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
@@ -40,21 +42,21 @@ function notifyDevicesChanged() {
  * List all registered edge devices
  */
 router.get('/', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
     const devices = await prisma.edgeDevice.findMany({
+      where: { orgId: req.auth.orgId },
       orderBy: { lastHeartbeat: 'desc' },
     });
     
-    // Dynamically adjust status to Offline if the last heartbeat is older than 30 seconds
     const now = new Date();
-    const threshold = 30000; // 30 seconds
-    const sanitizedDevices = devices.map(device => {
-      const isStale = now.getTime() - new Date(device.lastHeartbeat).getTime() > threshold;
-      if (isStale && device.status !== 'Offline') {
-        return { ...device, status: 'Offline' };
-      }
-      return device;
-    });
+    const sanitizedDevices = devices.map((device) => ({
+      ...device,
+      status: getEffectiveDeviceStatus(device.status, device.lastHeartbeat, now),
+    }));
 
     res.json(sanitizedDevices);
   } catch (error) {
@@ -69,21 +71,19 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/:deviceId', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const device = await prisma.edgeDevice.findUnique({
-      where: { deviceId },
+    const device = await prisma.edgeDevice.findFirst({
+      where: { deviceId, orgId: req.auth.orgId },
     });
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
     
-    // Dynamically adjust status to Offline if the last heartbeat is older than 30 seconds
-    const now = new Date();
-    const threshold = 30000; // 30 seconds
-    const isStale = now.getTime() - new Date(device.lastHeartbeat).getTime() > threshold;
-    if (isStale && device.status !== 'Offline') {
-      device.status = 'Offline';
-    }
+    device.status = getEffectiveDeviceStatus(device.status, device.lastHeartbeat);
 
     res.json(device);
   } catch (error) {
@@ -97,14 +97,36 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
  * Edge device registers/announces itself on boot
  */
 router.post('/register', async (req: Request, res: Response) => {
-  const { deviceId, name, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status } = req.body;
+  const { deviceId, name, enrollmentToken, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status } = req.body;
 
   if (!deviceId || !name) {
     return res.status(400).json({ error: 'deviceId and name are required' });
   }
 
   try {
-    // Check if device already exists.
+    const existing = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    let orgId = existing?.orgId ?? null;
+
+    if (!orgId) {
+      if (!enrollmentToken) {
+        return res.status(400).json({ error: 'enrollmentToken is required for new devices' });
+      }
+
+      const tokenRecord = await prisma.deviceEnrollmentToken.findUnique({
+        where: { token: enrollmentToken },
+      });
+
+      if (!tokenRecord) {
+        return res.status(403).json({ error: 'Invalid enrollment token' });
+      }
+
+      if (tokenRecord.expiresAt && tokenRecord.expiresAt < new Date()) {
+        return res.status(403).json({ error: 'Enrollment token has expired' });
+      }
+
+      orgId = tokenRecord.orgId;
+    }
+
     const device = await prisma.edgeDevice.upsert({
       where: { deviceId },
       update: {
@@ -115,6 +137,7 @@ router.post('/register', async (req: Request, res: Response) => {
       create: {
         deviceId,
         name,
+        orgId: orgId!,
         status: status || 'Idle',
         lastHeartbeat: new Date(),
       },
@@ -160,7 +183,15 @@ router.post('/register', async (req: Request, res: Response) => {
  */
 router.delete('/:deviceId', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
     await prisma.cameraStream.deleteMany({
       where: { deviceId },
     });
@@ -270,9 +301,12 @@ router.post('/:deviceId/reid/crop', handleCropUpload);
  */
 router.post('/:deviceId/command/reboot', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    if (!device) {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
       return res.status(404).json({ error: 'Device not found' });
     }
 
@@ -290,9 +324,12 @@ router.post('/:deviceId/command/reboot', async (req: Request, res: Response) => 
  */
 router.post('/:deviceId/command/update-service', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    if (!device) {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
       return res.status(404).json({ error: 'Device not found' });
     }
 
@@ -312,9 +349,12 @@ router.get('/:deviceId/logs', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
   const lines = Math.min(Math.max(parseInt(String(req.query.lines || '200'), 10) || 200, 10), 2000);
 
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
-    if (!device) {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
       return res.status(404).json({ error: 'Device not found' });
     }
 

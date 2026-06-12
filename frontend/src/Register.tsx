@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Cpu, LogIn } from 'lucide-react';
-import { login } from './api';
+import { ArrowLeft, Building2 } from 'lucide-react';
+import { register } from './api';
 
-interface LoginProps {
-  onLogin: () => void;
-  onBack?: () => void;
-  onRegister?: () => void;
+interface RegisterProps {
+  onRegister: () => void;
+  onBack: () => void;
 }
 
-export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
+export default function Register({ onRegister, onBack }: RegisterProps) {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [orgName, setOrgName] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -20,36 +21,64 @@ export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
     setSubmitting(true);
 
     try {
-      await login(email.trim(), password);
-      onLogin();
+      await register(email.trim(), password, name.trim(), orgName.trim());
+      onRegister();
     } catch (err: any) {
-      setError(err.message || 'Invalid email or password.');
+      setError(err.message || 'Registration failed.');
       setSubmitting(false);
     }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 relative">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="absolute top-6 left-6 btn btn-secondary text-[0.85rem] py-2 px-3"
-        >
-          <ArrowLeft size={16} />
-          Back
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={onBack}
+        className="absolute top-6 left-6 btn btn-secondary text-[0.85rem] py-2 px-3"
+      >
+        <ArrowLeft size={16} />
+        Back
+      </button>
       <div className="glass-panel w-full max-w-[420px] p-8">
         <div className="flex flex-col items-center text-center mb-8">
           <div className="bg-primary p-3 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(124,58,237,0.2)] mb-4">
-            <Cpu size={28} color="white" />
+            <Building2 size={28} color="white" />
           </div>
-          <h1 className="text-gradient-purple text-[1.75rem] font-extrabold mb-1">AURA WATCH AI</h1>
-          <p className="text-[0.85rem] text-text-muted">Sign in to monitor your cameras and review events</p>
+          <h1 className="text-gradient-purple text-[1.75rem] font-extrabold mb-1">Create Organization</h1>
+          <p className="text-[0.85rem] text-text-muted">Set up your workspace and admin account</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="orgName" className="text-[0.8rem] text-text-secondary">
+              Organization name
+            </label>
+            <input
+              id="orgName"
+              type="text"
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              placeholder="Acme Security"
+              required
+              disabled={submitting}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="name" className="text-[0.8rem] text-text-secondary">
+              Your name
+            </label>
+            <input
+              id="name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Jane Doe"
+              required
+              disabled={submitting}
+            />
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label htmlFor="email" className="text-[0.8rem] text-text-secondary">
               Email
@@ -75,8 +104,9 @@ export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-              autoComplete="current-password"
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              minLength={8}
               required
               disabled={submitting}
             />
@@ -89,18 +119,9 @@ export default function Login({ onLogin, onBack, onRegister }: LoginProps) {
           )}
 
           <button type="submit" className="btn btn-primary w-full mt-2" disabled={submitting}>
-            <LogIn size={16} />
-            Sign In
+            <Building2 size={16} />
+            Create Account
           </button>
-
-          {onRegister && (
-            <p className="text-center text-[0.8rem] text-text-muted mt-2">
-              No account?{' '}
-              <button type="button" onClick={onRegister} className="text-primary hover:underline">
-                Create organization
-              </button>
-            </p>
-          )}
         </form>
       </div>
     </div>

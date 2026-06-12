@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
+import { assertDeviceInOrg } from '../services/orgScope';
 
 const router = Router();
 
@@ -25,8 +26,13 @@ export async function triggerStreamsUpdated(deviceId: string) {
  * Retrieve all camera streams
  */
 router.get('/', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
     const streams = await prisma.cameraStream.findMany({
+      where: { device: { orgId: req.auth.orgId } },
       orderBy: { lastHeartbeat: 'desc' },
     });
     res.json(streams);
@@ -42,7 +48,15 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/device/:deviceId', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
     const streams = await prisma.cameraStream.findMany({
       where: { deviceId },
       orderBy: { name: 'asc' },
@@ -75,8 +89,15 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'deviceId and name are required' });
   }
 
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    // Generate a unique stream ID
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
     const streamId = `${deviceId}_stream_${Date.now()}`;
 
     const newStream = await prisma.cameraStream.create({
@@ -127,9 +148,16 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
     streamHost,
   } = req.body;
 
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const existing = await prisma.cameraStream.findUnique({ where: { streamId } });
-    if (!existing) {
+    const existing = await prisma.cameraStream.findUnique({
+      where: { streamId },
+      include: { device: { select: { orgId: true } } },
+    });
+    if (!existing || existing.device.orgId !== req.auth.orgId) {
       return res.status(404).json({ error: 'Camera stream not found' });
     }
 
@@ -168,9 +196,16 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
 router.delete('/:streamId', async (req: Request, res: Response) => {
   const { streamId } = req.params;
 
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   try {
-    const existing = await prisma.cameraStream.findUnique({ where: { streamId } });
-    if (!existing) {
+    const existing = await prisma.cameraStream.findUnique({
+      where: { streamId },
+      include: { device: { select: { orgId: true } } },
+    });
+    if (!existing || existing.device.orgId !== req.auth.orgId) {
       return res.status(404).json({ error: 'Camera stream not found' });
     }
 

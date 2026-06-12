@@ -114,7 +114,7 @@ export async function deleteClipVectors(mongoIds: string[]) {
 export async function searchClipVectors(
   vector: number[],
   limit = 5,
-  options?: { startTime?: string; endTime?: string; deviceId?: string; streamId?: string }
+  options?: { startTime?: string; endTime?: string; deviceId?: string; streamId?: string; orgDeviceIds?: string[] }
 ) {
   try {
     const filterConditions: any[] = [];
@@ -141,6 +141,11 @@ export async function searchClipVectors(
         match: {
           value: options.deviceId,
         },
+      });
+    } else if (options?.orgDeviceIds && options.orgDeviceIds.length > 0) {
+      filterConditions.push({
+        key: 'deviceId',
+        match: { any: options.orgDeviceIds },
       });
     }
 
@@ -173,7 +178,7 @@ export async function searchClipVectors(
 export async function fallbackSearchClips(
   queryText: string,
   limit = 5,
-  options?: { startTime?: string; endTime?: string; deviceId?: string; streamId?: string }
+  options?: { startTime?: string; endTime?: string; deviceId?: string; streamId?: string; orgDeviceIds?: string[] }
 ) {
   try {
     console.log(`[Qdrant Fallback] Searching MongoDB for keywords matching: "${queryText}"`);
@@ -188,6 +193,8 @@ export async function fallbackSearchClips(
     const baseWhere: any = {};
     if (options?.deviceId) {
       baseWhere.deviceId = options.deviceId;
+    } else if (options?.orgDeviceIds && options.orgDeviceIds.length > 0) {
+      baseWhere.deviceId = { in: options.orgDeviceIds };
     }
     if (options?.streamId) {
       baseWhere.streamId = options.streamId;

@@ -14,6 +14,11 @@ import ragRouter from './routes/rag';
 import devicesRouter, { registerOnClipUploaded, registerOnDevicesChanged } from './routes/devices';
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROPS_DIR, processReidTrackEventsFromClip, ReidTrackEvent } from './routes/reid';
+import authRouter from './routes/auth';
+import orgsRouter from './routes/orgs';
+import { requireAuth } from './middleware/auth';
+import { bootstrapMultiOrg } from './services/bootstrap';
+import { getDeviceOrgId } from './services/orgScope';
 import { initQdrant, upsertClipVector } from './services/qdrant';
 import { aggregateTrackEvents, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
@@ -43,6 +48,7 @@ if (!fs.existsSync(CROPS_DIR)) {
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(requireAuth);
 
 // Serve static videos or proxy them from the edge device
 app.get('/api/videos/:filename', async (req, res) => {
@@ -95,6 +101,8 @@ app.get('/api/videos/:filename', async (req, res) => {
 });
 
 // Mount routes
+app.use('/api/auth', authRouter);
+app.use('/api/orgs', orgsRouter);
 app.use('/api/clips', clipsRouter);
 app.use('/api/rag', ragRouter);
 app.use('/api/devices', devicesRouter);
@@ -466,6 +474,7 @@ async function processVideoClipInBackground(
     const vector = await generateTextEmbedding(summary);
 
     // 4. Index vector in Qdrant
+    const orgId = await getDeviceOrgId(deviceId);
     await upsertClipVector(clipDb.id, vector, {
       filepath,
       filename,
@@ -474,6 +483,7 @@ async function processVideoClipInBackground(
       camera: cameraName,
       deviceId: deviceId,
       streamId: streamId,
+      ...(orgId ? { orgId } : {}),
     });
 
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Successfully indexed clip in Qdrant.`);
@@ -859,6 +869,8 @@ process.once('SIGUSR2', async () => {
 
 server.listen(PORT, async () => {
   console.log(`[Server] Express listening on port ${PORT}`);
+
+  await bootstrapMultiOrg();
   
   // Initialize Qdrant Collection
   await initQdrant();
