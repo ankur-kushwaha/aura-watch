@@ -55,15 +55,12 @@ import { exitImpersonation, isImpersonating } from './adminApi';
 import OrgSettingsPage from './OrgSettings';
 import {
   DEFAULT_STREAM_SETTINGS,
+  createDefaultDeviceConfig,
+  createDefaultStreamSettings,
   type EffectiveEdgeDeviceConfig,
   type EffectiveStreamSettings,
 } from './edgeConfig';
-import {
-  DeviceConfigFields,
-  StreamAdvancedFields,
-  createDefaultDeviceConfig,
-  createDefaultStreamSettings,
-} from './EdgeConfigForms';
+import { DeviceConfigFields, StreamAdvancedFields } from './EdgeConfigForms';
 
 type DashboardTab = 'events' | 'ai' | 'reid';
 

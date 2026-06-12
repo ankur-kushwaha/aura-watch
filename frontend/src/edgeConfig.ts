@@ -88,3 +88,19 @@ export const DEFAULT_STREAM_SETTINGS: EffectiveStreamSettings = {
   reidMinBboxSize: 2500,
   reidVisibleSec: 1.0,
 };
+
+export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {
+  return { ...DEFAULT_DEVICE_CONFIG };
+}
+
+export function createDefaultStreamSettings(): EffectiveStreamSettings {
+  return { ...DEFAULT_STREAM_SETTINGS };
+}
+
+export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {
+  return { ...DEFAULT_DEVICE_CONFIG };
+}
+
+export function createDefaultStreamSettings(): EffectiveStreamSettings {
+  return { ...DEFAULT_STREAM_SETTINGS };
+}

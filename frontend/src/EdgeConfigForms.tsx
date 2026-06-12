@@ -1,10 +1,5 @@
 import React from 'react';
-import {
-  DEFAULT_DEVICE_CONFIG,
-  DEFAULT_STREAM_SETTINGS,
-  type EffectiveEdgeDeviceConfig,
-  type EffectiveStreamSettings,
-} from './edgeConfig';
+import type { EffectiveEdgeDeviceConfig, EffectiveStreamSettings } from './edgeConfig';
 
 function NumberField({
   label,
@@ -192,12 +187,4 @@ export function StreamAdvancedFields({
       </Section>
     </div>
   );
-}
-
-export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {
-  return { ...DEFAULT_DEVICE_CONFIG };
-}
-
-export function createDefaultStreamSettings(): EffectiveStreamSettings {
-  return { ...DEFAULT_STREAM_SETTINGS };
 }
