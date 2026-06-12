@@ -362,39 +362,60 @@ PYTHON_CMD="$EDGE_DIR/.venv/bin/python"
 echo "   ✅ Python dependencies installed in $EDGE_DIR/.venv"
 echo ""
 
-if [ "$NONINTERACTIVE" = true ]; then
-    echo "🚀 Starting Edge Agent (non-interactive mode)..."
-    start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
-elif [ "$(detect_os)" = "linux" ]; then
-    echo "📋 Linux system detected."
-    read -r -p "Would you like to install the Edge Agent as a systemd background service? (y/n) [y]: " REGISTER_SERVICE </dev/tty
-    REGISTER_SERVICE=${REGISTER_SERVICE:-y}
+install_systemd_service() {
+    echo "⚙️  Running daemon registration..."
+    chmod +x scripts/setup-service.sh
+    if ./scripts/setup-service.sh; then
+        AGENT_STARTED=true
+        echo "   ✅ Edge Agent registered as systemd service and started."
+        return 0
+    fi
+    echo "   ⚠️  Systemd setup failed. You can start the agent manually."
+    return 1
+}
 
-    case "$REGISTER_SERVICE" in
-        [Yy]*)
-            echo "⚙️  Running daemon registration..."
-            chmod +x scripts/setup-service.sh
-            if ./scripts/setup-service.sh; then
-                AGENT_STARTED=true
-                echo "   ✅ Edge Agent registered as systemd service and started."
-            else
-                echo "   ⚠️  Systemd setup failed. You can start the agent manually."
-            fi
-            ;;
-    esac
+SHOULD_INSTALL_SYSTEMD=false
+if [ "$(detect_os)" = "linux" ]; then
+    if [ "$NONINTERACTIVE" = true ]; then
+        # Dashboard / curl one-liner installs default to systemd on Linux (survives reboot).
+        case "${INSTALL_SYSTEMD:-true}" in
+            [Yy1]*|[Tt][Rr][Uu][Ee]*) SHOULD_INSTALL_SYSTEMD=true ;;
+        esac
+    else
+        echo "📋 Linux system detected."
+        read -r -p "Would you like to install the Edge Agent as a systemd background service? (y/n) [y]: " REGISTER_SERVICE </dev/tty
+        REGISTER_SERVICE=${REGISTER_SERVICE:-y}
+        case "$REGISTER_SERVICE" in
+            [Yy]*) SHOULD_INSTALL_SYSTEMD=true ;;
+        esac
+    fi
+
+    if [ "$SHOULD_INSTALL_SYSTEMD" = true ]; then
+        if [ "$NONINTERACTIVE" = true ]; then
+            echo "📋 Linux detected — registering systemd service (sudo required)..."
+        fi
+        install_systemd_service || true
+    fi
 else
-    echo "ℹ️  Systemd service registration is only supported on Linux (Raspberry Pi/Jetson)."
+    if [ "$NONINTERACTIVE" != true ]; then
+        echo "ℹ️  Systemd service registration is only supported on Linux (Raspberry Pi/Jetson)."
+    fi
 fi
 
 if [ "$AGENT_STARTED" = false ]; then
-    read -r -p "Start the Edge Agent now in the background? (y/n) [y]: " START_NOW </dev/tty
-    START_NOW=${START_NOW:-y}
-    case "$START_NOW" in
-        [Yy]*)
-            echo "🚀 Starting Edge Agent..."
-            start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
-            ;;
-    esac
+    if [ "$NONINTERACTIVE" = true ]; then
+        echo "🚀 Starting Edge Agent in background (non-interactive fallback)..."
+        start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
+    else
+        read -r -p "Start the Edge Agent now in the background? (y/n) [y]: " START_NOW </dev/tty
+        START_NOW=${START_NOW:-y}
+        case "$START_NOW" in
+            [Yy]*)
+                echo "🚀 Starting Edge Agent..."
+                start_agent_background "$EDGE_DIR" "$PYTHON_CMD"
+                ;;
+        esac
+    fi
 fi
 
 echo ""
@@ -418,9 +439,14 @@ if [ -f "$EDGE_DIR/agent.pid" ]; then
     echo ""
 fi
 if [ "$(detect_os)" = "linux" ]; then
-    echo "To manage the systemd background service (if installed):"
-    echo "   sudo systemctl status aura-watch-edge.service"
-    echo "   sudo systemctl restart aura-watch-edge.service"
+    if [ "$AGENT_STARTED" = true ] && [ -f /etc/systemd/system/aura-watch-edge.service ]; then
+        echo "To manage the systemd background service:"
+        echo "   sudo systemctl status aura-watch-edge.service"
+        echo "   sudo systemctl restart aura-watch-edge.service"
+    else
+        echo "To register the systemd service (auto-start on boot):"
+        echo "   cd $EDGE_DIR && ./scripts/setup-service.sh"
+    fi
     echo ""
 fi
 echo "========================================================================="
