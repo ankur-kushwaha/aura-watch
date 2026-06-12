@@ -230,8 +230,7 @@ Production Cloud Hub: [https://aura-watch.adboardtools.com](https://aura-watch.a
   Register the edge agent as a systemd background service on system boot:
   ```bash
   cd edge
-  chmod +x scripts/setup-service.sh
-  ./scripts/setup-service.sh
+  sh scripts/setup-service.sh
   ```
   Manage the service using `systemctl`:
   ```bash

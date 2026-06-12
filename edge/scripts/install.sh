@@ -262,6 +262,7 @@ else
 fi
 
 cd "$INSTALL_DIR/edge"
+chmod +x scripts/*.sh 2>/dev/null || true
 
 # 4. Configuration Inputs
 echo ""
@@ -364,8 +365,8 @@ echo ""
 
 install_systemd_service() {
     echo "⚙️  Running daemon registration..."
-    chmod +x scripts/setup-service.sh
-    if ./scripts/setup-service.sh; then
+    chmod +x scripts/setup-service.sh scripts/refresh-systemd-service.sh 2>/dev/null || true
+    if sh scripts/setup-service.sh; then
         AGENT_STARTED=true
         echo "   ✅ Edge Agent registered as systemd service and started."
         return 0
@@ -445,7 +446,7 @@ if [ "$(detect_os)" = "linux" ]; then
         echo "   sudo systemctl restart aura-watch-edge.service"
     else
         echo "To register the systemd service (auto-start on boot):"
-        echo "   cd $EDGE_DIR && ./scripts/setup-service.sh"
+        echo "   cd $EDGE_DIR && sh scripts/setup-service.sh"
     fi
     echo ""
 fi
