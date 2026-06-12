@@ -100,7 +100,6 @@ Include specific details such as:
 - Any motion or changes detected.
 - Objects, people, animals, or vehicles that appear.
 - Actions taken (e.g., a person walking, a door opening, a car driving by).
-- Lighting changes or environment details.
 Be objective, precise, and descriptive. Do not assume context not shown in the video.`
               },
               ...base64Frames.map(frame => ({

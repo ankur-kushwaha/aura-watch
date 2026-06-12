@@ -37,6 +37,7 @@ import {
   ArrowLeft,
   UserCircle,
   Building2,
+  PanelLeft,
 } from 'lucide-react';
 import {
   apiFetch,
@@ -916,6 +917,26 @@ function App() {
   const [loadingPersonRefs, setLoadingPersonRefs] = useState(false);
   const [savingPersonRefsLabel, setSavingPersonRefsLabel] = useState(false);
   const [cropPreviewFilename, setCropPreviewFilename] = useState<string | null>(null);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState<boolean>(false);
+  const [clipPreviewOpen, setClipPreviewOpen] = useState<boolean>(false);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)');
+    const onChange = () => setIsMobileViewport(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileViewport) {
+      setClipPreviewOpen(false);
+      setLeftSidebarOpen(false);
+    }
+  }, [isMobileViewport]);
 
   // RAG Q&A states
   const [query, setQuery] = useState<string>('');
@@ -1672,6 +1693,7 @@ function App() {
     const clip = clips.find((c) => c.filename === ref.clipFilename);
     if (clip) {
       setSelectedClip(clip);
+      if (isMobileViewport) setClipPreviewOpen(true);
       closePersonRefsModal();
     }
   };
@@ -2543,12 +2565,201 @@ function App() {
     }
   };
 
+  const handleSelectClip = (clip: VideoClip) => {
+    setSelectedClip(clip);
+    if (isMobileViewport) {
+      setClipPreviewOpen(true);
+    }
+  };
+
   const selectAndPlayClip = (clipId: string) => {
     const clip = visibleClips.find((c) => c.id === clipId);
     if (clip) {
-      setSelectedClip(clip);
+      handleSelectClip(clip);
       navigate('/app/events');
     }
+  };
+
+  const closeClipPreview = () => {
+    setClipPreviewOpen(false);
+  };
+
+  const renderClipPreviewPanel = (clip: VideoClip, videoHeightClass = 'h-[220px]') => {
+    const selectedDeviceName = clip.deviceId ? deviceNameById.get(clip.deviceId) : undefined;
+    const selectedDurationLabel = formatClipDuration(clip.duration);
+    const selectedDetectionCount = getClipDetectionCount(clip);
+
+    return (
+      <div className="flex flex-col gap-3">
+        <div className={`bg-[#000] rounded-xl overflow-hidden ${videoHeightClass} border border-[rgba(255,255,255,0.08)] shrink-0`}>
+          <video
+            key={clip.id}
+            src={mediaUrl(`/videos/${clip.filename}`)}
+            controls
+            autoPlay
+            className="w-full h-full object-contain"
+          />
+        </div>
+        <div>
+          <div className="flex justify-between items-start mb-1.5 flex-wrap gap-2">
+            <div className="min-w-0">
+              <h3 className="text-[0.85rem] font-semibold text-text-primary">{clip.camera}</h3>
+              <p className="text-[0.72rem] text-text-muted break-all">{clip.filename}</p>
+            </div>
+            <div className="text-[0.7rem] text-text-muted flex flex-col items-end gap-1 whitespace-nowrap shrink-0">
+              <span className="flex items-center gap-1">
+                <Clock size={12} /> {formatDate(clip.timestamp)}
+              </span>
+              {selectedDeviceName && (
+                <span className="flex items-center gap-1">
+                  <Cpu size={12} /> {selectedDeviceName}
+                </span>
+              )}
+              {selectedDurationLabel && (
+                <span className="flex items-center gap-1">
+                  Duration: {selectedDurationLabel}
+                </span>
+              )}
+              {selectedDetectionCount !== null && (
+                <span className="flex items-center gap-1 text-sky-400/90">
+                  <Activity size={12} />
+                  {selectedDetectionCount} YOLO detection{selectedDetectionCount === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+          </div>
+          {orgSettings.videoSummary && (
+            <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
+              <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
+                <Sparkles size={12} />Video Summary
+              </p>
+              <p className="text-[0.8rem] text-text-secondary leading-[1.4]">
+                {clip.summary || 'No summary available.'}
+              </p>
+            </div>
+          )}
+          {orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0 || clipReidLog) && (
+            <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5 mt-3">
+              <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
+                <Fingerprint size={12} />Detected Objects
+              </p>
+              {loadingClipDetections ? (
+                <p className="text-[0.75rem] text-text-muted">Loading detections…</p>
+              ) : clipDetections.length === 0 ? (
+                <p className="text-[0.75rem] text-text-muted mb-2">
+                  No objects tracked during this clip.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2 mb-2">
+                  {clipDetections.map((obj) => {
+                    const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
+                    const hasIdentity = !!obj.identityId;
+                    const personIds = [
+                      ...(obj.identityId ? [{ label: 'identity', value: obj.identityId }] : []),
+                      ...(obj.detectionId ? [{ label: 'detection', value: obj.detectionId }] : []),
+                    ];
+                    return (
+                      <button
+                        key={obj.trackId}
+                        type="button"
+                        disabled={!isClickablePerson}
+                        onClick={() => openPersonRefsModal(obj)}
+                        className={`flex flex-col gap-1.5 text-left w-full rounded-lg px-2 py-2 -mx-1 border border-transparent ${
+                          isClickablePerson
+                            ? 'hover:bg-[rgba(56,189,248,0.08)] hover:border-[rgba(56,189,248,0.15)] cursor-pointer'
+                            : 'cursor-default'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary">
+                          {obj.cropFilename && (
+                            <CropThumbnail
+                              filename={obj.cropFilename}
+                              onPreview={setCropPreviewFilename}
+                              onPlayClip={playDetectionClip}
+                              clipPlayback={obj.detectionId ? {
+                                clipFilename: clip.filename,
+                                clipOffsetMs: 0,
+                                cameraName: clip.camera ?? 'Camera',
+                                detectionId: obj.detectionId,
+                              } : undefined}
+                            />
+                          )}
+                          <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
+                            {obj.className}
+                            {obj.confidence != null && obj.confidence > 0 && (
+                              <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
+                            )}
+                          </span>
+                          {obj.trackId > 0 && (
+                            <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
+                          )}
+                          {isClickablePerson && (
+                            <span className="text-[0.65rem] text-primary ml-auto">
+                              {hasIdentity ? 'Timeline & matches →' : 'Identify & matches →'}
+                            </span>
+                          )}
+                        </div>
+                        {obj.className === 'person' && (
+                          <div className="pl-12 flex flex-col gap-1">
+                            {obj.labelStatus === 'confirmed' && obj.label && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <UserCircle size={12} className="text-green-400 shrink-0" />
+                                <span className="text-[0.72rem] text-green-400 font-medium">{obj.label}</span>
+                                <IdsInfoIcon ids={personIds} />
+                              </div>
+                            )}
+                            {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[0.72rem] text-secondary">
+                                  Suggested: {Math.round(obj.matchScore * 100)}% match · {obj.label}
+                                  <span className="text-text-muted ml-1">— click to confirm or choose another</span>
+                                </span>
+                                <IdsInfoIcon ids={personIds} />
+                              </div>
+                            )}
+                            {obj.labelStatus === 'none' && isClickablePerson && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[0.72rem] text-amber-400">
+                                  Unassigned — click to create a new identity or link to existing
+                                </span>
+                                <IdsInfoIcon ids={personIds} />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {!loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
+                <div className="pt-2 mt-1 border-t border-[rgba(56,189,248,0.12)]">
+                  <p className="text-[0.65rem] font-bold text-text-muted uppercase mb-1.5 tracking-wider flex items-center gap-1">
+                    <ScrollText size={11} />ReID Log
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {clipReidLog.entries.map((entry, idx) => (
+                      <p
+                        key={idx}
+                        className={`text-[0.72rem] leading-snug ${
+                          entry.level === 'warn'
+                            ? 'text-amber-400'
+                            : entry.level === 'error'
+                              ? 'text-red-400'
+                              : 'text-text-muted'
+                        }`}
+                      >
+                        {entry.message}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const handleLogout = () => {
@@ -2583,7 +2794,7 @@ function App() {
   }
 
   return (
-    <div className="p-6 max-w-[1440px] mx-auto">
+    <div className="p-4 sm:p-6 max-w-[1440px] mx-auto">
 
       {isImpersonating() && (
         <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
@@ -2602,18 +2813,28 @@ function App() {
       )}
 
       {/* HEADER SECTION */}
-      <header className="glass-panel p-5 px-6 flex justify-between items-center mb-6">
-        <div className="flex items-center gap-3">
-          <div className="bg-primary p-2.5 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(124,58,237,0.2)]">
+      <header className="glass-panel p-4 sm:p-5 px-4 sm:px-6 flex flex-wrap justify-between items-center gap-4 mb-6">
+        <div className="flex items-center gap-3 min-w-0">
+          {appView === 'dashboard' && (
+            <button
+              type="button"
+              onClick={() => setLeftSidebarOpen(true)}
+              className="btn btn-secondary p-2 rounded-lg lg:hidden shrink-0"
+              aria-label="Open devices and cameras panel"
+            >
+              <PanelLeft size={20} />
+            </button>
+          )}
+          <div className="bg-primary p-2.5 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(124,58,237,0.2)] shrink-0">
             <Cpu size={24} color="white" />
           </div>
-          <div>
-            <h1 className="text-gradient-purple text-[1.6rem] font-extrabold">AURA WATCH AI</h1>
-            <p className="text-[0.8rem] text-text-muted">Smart surveillance — see everything, ask anything</p>
+          <div className="min-w-0">
+            <h1 className="text-gradient-purple text-[1.25rem] sm:text-[1.6rem] font-extrabold truncate">AURA WATCH AI</h1>
+            <p className="text-[0.75rem] sm:text-[0.8rem] text-text-muted hidden sm:block">Smart surveillance — see everything, ask anything</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
           {currentOrg && (
             <OrgInfoBadge
               org={currentOrg}
@@ -2661,11 +2882,11 @@ function App() {
       ) : (
         <>
       {/* NAVIGATION TABS */}
-      <div className="flex gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-fit">
+      <div className="flex gap-2 sm:gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-full lg:w-fit overflow-x-auto">
       {orgSettings.aiChat && (
         <button
           onClick={() => navigate('/app/ai')}
-          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'ai'
+          className={`py-2 px-3 sm:px-4 rounded-lg text-[0.8rem] sm:text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${activeTab === 'ai'
             ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
             : 'text-text-secondary hover:text-text-primary bg-transparent'
             }`}
@@ -2676,7 +2897,7 @@ function App() {
         {hasOnlineDevices && (
           <button
             onClick={() => navigate('/app/events')}
-            className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'events'
+            className={`py-2 px-3 sm:px-4 rounded-lg text-[0.8rem] sm:text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${activeTab === 'events'
               ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
               : 'text-text-secondary hover:text-text-primary bg-transparent'
               }`}
@@ -2688,7 +2909,7 @@ function App() {
         {hasOnlineDevices && (
           <button
             onClick={() => navigate('/app/reid')}
-            className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'reid'
+            className={`py-2 px-3 sm:px-4 rounded-lg text-[0.8rem] sm:text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${activeTab === 'reid'
               ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
               : 'text-text-secondary hover:text-text-primary bg-transparent'
               }`}
@@ -2698,11 +2919,39 @@ function App() {
         )}
       </div>
 
+      {/* Mobile left sidebar backdrop */}
+      {leftSidebarOpen && appView === 'dashboard' && createPortal(
+        <div
+          className="fixed inset-0 z-[10001] bg-[rgba(9,13,22,0.75)] backdrop-blur-sm lg:hidden"
+          onClick={() => setLeftSidebarOpen(false)}
+          aria-hidden="true"
+        />,
+        document.body,
+      )}
+
       {/* DASHBOARD LAYOUT */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 relative">
 
         {/* LEFT COLUMN: DEVICES & CAMERA */}
-        <div className="lg:col-span-4 flex flex-col gap-6">
+        <div
+          className={`lg:col-span-4 flex flex-col gap-6
+            fixed inset-y-0 left-0 z-[10002] w-[min(100vw-2.5rem,380px)] overflow-y-auto p-4 pt-5
+            bg-[rgba(9,13,22,0.97)] border-r border-border-glass shadow-2xl
+            transition-transform duration-300 ease-out
+            lg:relative lg:z-auto lg:w-auto lg:overflow-visible lg:p-0 lg:bg-transparent lg:border-r-0 lg:shadow-none
+            ${leftSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        >
+          <div className="flex justify-between items-center lg:hidden mb-1">
+            <span className="text-[0.85rem] font-semibold text-text-secondary">Devices & Cameras</span>
+            <button
+              type="button"
+              onClick={() => setLeftSidebarOpen(false)}
+              className="btn btn-secondary p-1.5 rounded-md"
+              aria-label="Close devices panel"
+            >
+              <X size={16} />
+            </button>
+          </div>
 
           {/* DEVICE SELECTOR PANEL */}
           <div className="glass-panel p-5">
@@ -3086,12 +3335,12 @@ function App() {
           {activeTab === 'events' && hasOnlineDevices ? (
             <>
               {/* EVENT ARCHIVE & PLAYBACK PANEL */}
-              <div className="glass-panel p-5 flex flex-col h-[984px]">
-                <div className="flex justify-between items-center mb-3">
-                  <h2 className="text-[1.1rem] flex items-center gap-2">
+              <div className="glass-panel p-4 sm:p-5 flex flex-col min-h-[60vh] lg:h-[984px]">
+                <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
+                  <h2 className="text-[1rem] sm:text-[1.1rem] flex items-center gap-2">
                     <Video size={18} color="var(--color-primary)" /> Event Archive & Playback
                   </h2>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
                       onClick={() => setShowClipFilters(!showClipFilters)}
@@ -3214,7 +3463,7 @@ function App() {
 
                 <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0 lg:overflow-hidden">
                   {/* Left pane: Clips History List */}
-                  <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2.5 overflow-y-auto min-w-0 pr-1 lg:h-full">
+                  <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2.5 overflow-y-auto min-w-0 pr-1 lg:h-full max-h-[70vh] lg:max-h-none">
                     {visibleClips.length === 0 ? (
                       <div className="h-full flex justify-center items-center text-text-muted text-[0.85rem] text-center px-4">
                         {!devices.some((d) => d.status !== 'Offline')
@@ -3232,7 +3481,7 @@ function App() {
                           return (
                           <div
                             key={c.id}
-                            onClick={() => setSelectedClip(c)}
+                            onClick={() => handleSelectClip(c)}
                             className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''} p-3 flex justify-between items-start cursor-pointer transition-all duration-200 w-full min-w-0`}
                           >
                             <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -3303,186 +3552,11 @@ function App() {
                   {/* Vertical Divider */}
                   <div className="hidden lg:block w-[1px] bg-[rgba(255,255,255,0.08)] self-stretch" />
 
-                  {/* Right pane: Clip Viewer */}
-                  <div className="flex-1 flex flex-col min-w-0 overflow-y-auto pr-1 lg:h-full">
-                    {selectedClip ? (() => {
-                      const selectedDeviceName = selectedClip.deviceId
-                        ? deviceNameById.get(selectedClip.deviceId)
-                        : undefined;
-                      const selectedDurationLabel = formatClipDuration(selectedClip.duration);
-                      const selectedDetectionCount = getClipDetectionCount(selectedClip);
-                      return (
-                      <div className="flex flex-col gap-3">
-                        <div className="bg-[#000] rounded-xl overflow-hidden h-[220px] border border-[rgba(255,255,255,0.08)] shrink-0">
-                          <video
-                            key={selectedClip.id}
-                            src={mediaUrl(`/videos/${selectedClip.filename}`)}
-                            controls
-                            autoPlay
-                            className="w-full h-full object-contain"
-                          />
-                        </div>
-                        <div>
-                          <div className="flex justify-between items-start mb-1.5 flex-wrap gap-2">
-                            <div className="min-w-0">
-                              <h3 className="text-[0.85rem] font-semibold text-text-primary">{selectedClip.camera}</h3>
-                              <p className="text-[0.72rem] text-text-muted break-all">{selectedClip.filename}</p>
-                            </div>
-                            <div className="text-[0.7rem] text-text-muted flex flex-col items-end gap-1 whitespace-nowrap shrink-0">
-                              <span className="flex items-center gap-1">
-                                <Clock size={12} /> {formatDate(selectedClip.timestamp)}
-                              </span>
-                              {selectedDeviceName && (
-                                <span className="flex items-center gap-1">
-                                  <Cpu size={12} /> {selectedDeviceName}
-                                </span>
-                              )}
-                              {selectedDurationLabel && (
-                                <span className="flex items-center gap-1">
-                                  Duration: {selectedDurationLabel}
-                                </span>
-                              )}
-                              {selectedDetectionCount !== null && (
-                                <span className="flex items-center gap-1 text-sky-400/90">
-                                  <Activity size={12} />
-                                  {selectedDetectionCount} YOLO detection{selectedDetectionCount === 1 ? '' : 's'}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          {orgSettings.videoSummary && (
-                            <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
-                              <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
-                                <Sparkles size={12} />Video Summary
-                              </p>
-                              <p className="text-[0.8rem] text-text-secondary leading-[1.4]">
-                                {selectedClip.summary || 'No summary available.'}
-                              </p>
-                            </div>
-                          )}
-                          {orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0 || clipReidLog) && (
-                            <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
-                              <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
-                                <Fingerprint size={12} />Detected Objects
-                              </p>
-                              {loadingClipDetections ? (
-                                <p className="text-[0.75rem] text-text-muted">Loading detections…</p>
-                              ) : clipDetections.length === 0 ? (
-                                <p className="text-[0.75rem] text-text-muted mb-2">
-                                  No objects tracked during this clip.
-                                </p>
-                              ) : (
-                                <div className="flex flex-col gap-2 mb-2">
-                                  {clipDetections.map((obj) => {
-                                    const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
-                                    const hasIdentity = !!obj.identityId;
-                                    const personIds = [
-                                      ...(obj.identityId ? [{ label: 'identity', value: obj.identityId }] : []),
-                                      ...(obj.detectionId ? [{ label: 'detection', value: obj.detectionId }] : []),
-                                    ];
-                                    return (
-                                      <button
-                                        key={obj.trackId}
-                                        type="button"
-                                        disabled={!isClickablePerson}
-                                        onClick={() => openPersonRefsModal(obj)}
-                                        className={`flex flex-col gap-1.5 text-left w-full rounded-lg px-2 py-2 -mx-1 border border-transparent ${
-                                          isClickablePerson
-                                            ? 'hover:bg-[rgba(56,189,248,0.08)] hover:border-[rgba(56,189,248,0.15)] cursor-pointer'
-                                            : 'cursor-default'
-                                        }`}
-                                      >
-                                        <div className="flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary">
-                                          {obj.cropFilename && (
-                                            <CropThumbnail
-                                              filename={obj.cropFilename}
-                                              onPreview={setCropPreviewFilename}
-                                              onPlayClip={playDetectionClip}
-                                              clipPlayback={obj.detectionId ? {
-                                                clipFilename: selectedClip?.filename,
-                                                clipOffsetMs: 0,
-                                                cameraName: selectedClip?.camera ?? 'Camera',
-                                                detectionId: obj.detectionId,
-                                              } : undefined}
-                                            />
-                                          )}
-                                          <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
-                                            {obj.className}
-                                            {obj.confidence != null && obj.confidence > 0 && (
-                                              <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
-                                            )}
-                                          </span>
-                                          {obj.trackId > 0 && (
-                                            <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
-                                          )}
-                                          {isClickablePerson && (
-                                            <span className="text-[0.65rem] text-primary ml-auto">
-                                              {hasIdentity ? 'Timeline & matches →' : 'Identify & matches →'}
-                                            </span>
-                                          )}
-                                        </div>
-                                        {obj.className === 'person' && (
-                                          <div className="pl-12 flex flex-col gap-1">
-                                            {obj.labelStatus === 'confirmed' && obj.label && (
-                                              <div className="flex flex-wrap items-center gap-1.5">
-                                                <UserCircle size={12} className="text-green-400 shrink-0" />
-                                                <span className="text-[0.72rem] text-green-400 font-medium">{obj.label}</span>
-                                                <IdsInfoIcon ids={personIds} />
-                                              </div>
-                                            )}
-                                            {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
-                                              <div className="flex flex-wrap items-center gap-1.5">
-                                                <span className="text-[0.72rem] text-secondary">
-                                                  Suggested: {Math.round(obj.matchScore * 100)}% match · {obj.label}
-                                                  <span className="text-text-muted ml-1">— click to confirm or choose another</span>
-                                                </span>
-                                                <IdsInfoIcon ids={personIds} />
-                                              </div>
-                                            )}
-                                            {obj.labelStatus === 'none' && isClickablePerson && (
-                                              <div className="flex flex-wrap items-center gap-1.5">
-                                                <span className="text-[0.72rem] text-amber-400">
-                                                  Unassigned — click to create a new identity or link to existing
-                                                </span>
-                                                <IdsInfoIcon ids={personIds} />
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {!loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
-                                <div className="pt-2 mt-1 border-t border-[rgba(56,189,248,0.12)]">
-                                  <p className="text-[0.65rem] font-bold text-text-muted uppercase mb-1.5 tracking-wider flex items-center gap-1">
-                                    <ScrollText size={11} />ReID Log
-                                  </p>
-                                  <div className="flex flex-col gap-1">
-                                    {clipReidLog.entries.map((entry, idx) => (
-                                      <p
-                                        key={idx}
-                                        className={`text-[0.72rem] leading-snug ${
-                                          entry.level === 'warn'
-                                            ? 'text-amber-400'
-                                            : entry.level === 'error'
-                                              ? 'text-red-400'
-                                              : 'text-text-muted'
-                                        }`}
-                                      >
-                                        {entry.message}
-                                      </p>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      );
-                    })() : (
+                  {/* Right pane: Clip Viewer (desktop only) */}
+                  <div className="hidden lg:flex flex-1 flex-col min-w-0 overflow-y-auto pr-1 lg:h-full">
+                    {selectedClip ? (
+                      renderClipPreviewPanel(selectedClip)
+                    ) : (
                       <div className="h-full flex flex-col justify-center items-center border border-dashed border-border-glass rounded-xl text-text-muted p-5 text-center">
                         <Video size={32} className="text-text-muted mb-2.5 mx-auto" />
                         <p className="text-[0.85rem] font-semibold">No Event Selected</p>
@@ -3494,7 +3568,7 @@ function App() {
               </div>
             </>
           ) : activeTab === 'ai' && orgSettings.aiChat ? (
-              <div className="glass-panel p-5 flex flex-col h-[800px]">
+              <div className="glass-panel p-4 sm:p-5 flex flex-col min-h-[60vh] lg:h-[800px]">
                 <div className="flex justify-between items-center mb-3">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
                     <Sparkles size={18} color="var(--color-primary)" /> Ask Camera AI
@@ -4143,6 +4217,36 @@ function App() {
 
 
       </div>
+
+      {/* MOBILE CLIP PREVIEW DIALOG */}
+      {clipPreviewOpen && selectedClip && isMobileViewport && createPortal(
+        <div
+          className="fixed inset-0 z-[10004] flex flex-col lg:hidden"
+          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.85)' }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Event clip preview"
+        >
+          <div className="flex items-center justify-between gap-3 p-4 border-b border-border-glass shrink-0">
+            <div className="min-w-0">
+              <h2 className="text-[1rem] font-bold text-text-primary truncate">{selectedClip.camera}</h2>
+              <p className="text-[0.72rem] text-text-muted truncate">{formatClipListDateTime(selectedClip.timestamp)}</p>
+            </div>
+            <button
+              type="button"
+              onClick={closeClipPreview}
+              className="btn btn-secondary p-2 rounded-lg shrink-0"
+              aria-label="Close preview"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {renderClipPreviewPanel(selectedClip, 'h-[min(40vh,280px)]')}
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* CROP IMAGE PREVIEW */}
       {cropPreviewFilename && (
