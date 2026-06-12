@@ -1,51 +1,13 @@
-import type { CameraStream, EdgeDevice, EdgeDeviceConfig } from '@prisma/client';
+import type { EdgeDeviceConfig } from '@prisma/client';
+import type { CameraStream, EdgeDevice } from '@prisma/client';
+import {
+  EDGE_DEVICE_CONFIG_DEFAULTS,
+  type EdgeDeviceConfigDefaults,
+} from '../config/edgeDeviceDefaults';
 
-/** Defaults matching edge/.env.example — used for API effective-value display. */
-export const EDGE_DEVICE_CONFIG_DEFAULTS: Required<{
-  yoloConfidence: number;
-  yoloDevice: string;
-  yoloImgsz: number;
-  yoloDetectInterval: number;
-  cameraWidth: number;
-  cameraHeight: number;
-  cameraFps: number;
-  clipEncodeFps: number;
-  cameraStallTimeoutSec: number;
-  frameStreamFps: number;
-  previewJpegQuality: number;
-  previewStallTimeoutSec: number;
-  recordingMaxSec: number;
-  recordingEndGraceSec: number;
-  recordingCooldownSec: number;
-  minUploadDurationSec: number;
-  reidConfidenceThreshold: number;
-  reidMinBboxSize: number;
-  reidVisibleSec: number;
-  debugLogs: boolean;
-}> = {
-  yoloConfidence: 0.25,
-  yoloDevice: 'auto',
-  yoloImgsz: 416,
-  yoloDetectInterval: 3,
-  cameraWidth: 640,
-  cameraHeight: 480,
-  cameraFps: 15,
-  clipEncodeFps: 10,
-  cameraStallTimeoutSec: 45,
-  frameStreamFps: 12,
-  previewJpegQuality: 70,
-  previewStallTimeoutSec: 5,
-  recordingMaxSec: 60,
-  recordingEndGraceSec: 5,
-  recordingCooldownSec: 20,
-  minUploadDurationSec: 2,
-  reidConfidenceThreshold: 0.65,
-  reidMinBboxSize: 2500,
-  reidVisibleSec: 1.0,
-  debugLogs: true,
-};
+export type EffectiveEdgeDeviceConfig = EdgeDeviceConfigDefaults;
 
-export type EffectiveEdgeDeviceConfig = typeof EDGE_DEVICE_CONFIG_DEFAULTS;
+export { EDGE_DEVICE_CONFIG_DEFAULTS, STREAM_CONFIG_DEFAULTS } from '../config/edgeDeviceDefaults';
 
 function pickDefined<T extends Record<string, unknown>>(input: T): Partial<T> {
   const out: Partial<T> = {};
@@ -57,25 +19,18 @@ function pickDefined<T extends Record<string, unknown>>(input: T): Partial<T> {
   return out;
 }
 
-function applyDefinedDefaults<T extends Record<string, unknown>>(
-  defaults: T,
-  stored: Record<string, unknown> | null | undefined,
-): T {
-  const merged = { ...defaults };
-  if (!stored) return merged;
-  for (const key of Object.keys(defaults)) {
-    const value = stored[key];
-    if (value !== null && value !== undefined) {
-      (merged as Record<string, unknown>)[key] = value;
-    }
-  }
-  return merged;
-}
-
 export function mergeDeviceConfig(
   stored: EdgeDeviceConfig | null | undefined,
 ): EffectiveEdgeDeviceConfig {
-  return applyDefinedDefaults(EDGE_DEVICE_CONFIG_DEFAULTS, stored as Record<string, unknown> | null);
+  if (!stored) return { ...EDGE_DEVICE_CONFIG_DEFAULTS };
+  const overrides: Partial<EffectiveEdgeDeviceConfig> = {};
+  for (const key of DEVICE_CONFIG_KEYS) {
+    const value = stored[key as keyof EdgeDeviceConfig];
+    if (value !== null && value !== undefined) {
+      overrides[key as keyof EffectiveEdgeDeviceConfig] = value as never;
+    }
+  }
+  return { ...EDGE_DEVICE_CONFIG_DEFAULTS, ...overrides };
 }
 
 export function mergeDeviceConfigUpdate(

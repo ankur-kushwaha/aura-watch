@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
 import { assertDeviceInOrg } from '../services/orgScope';
+import { STREAM_CONFIG_DEFAULTS } from '../services/edgeConfig';
 import {
   getEffectiveStreamStatus,
   getOnlineDeviceIds,
@@ -142,12 +143,12 @@ router.post('/', async (req: Request, res: Response) => {
         name,
         cameraType: cameraType || 'webcam',
         streamUrl: streamUrl || '0',
-        trackingEnabled: trackingEnabled || false,
+        trackingEnabled: trackingEnabled !== undefined ? Boolean(trackingEnabled) : STREAM_CONFIG_DEFAULTS.trackingEnabled,
         status: 'Offline',
-        motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : 25,
-        pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
-        detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : true,
-        detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : true,
+        motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : STREAM_CONFIG_DEFAULTS.motionThreshold,
+        pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : STREAM_CONFIG_DEFAULTS.pixelChangeThreshold,
+        detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : STREAM_CONFIG_DEFAULTS.detectPerson,
+        detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : STREAM_CONFIG_DEFAULTS.detectVehicle,
         streamHost: '',
       },
     });

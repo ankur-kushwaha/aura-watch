@@ -1,0 +1,31 @@
+{
+  "deviceConfig": {
+    "yoloConfidence": 0.35,
+    "yoloDevice": "auto",
+    "yoloImgsz": 416,
+    "yoloDetectInterval": 2,
+    "cameraWidth": 640,
+    "cameraHeight": 480,
+    "cameraFps": 15,
+    "clipEncodeFps": 10,
+    "cameraStallTimeoutSec": 45,
+    "frameStreamFps": 8,
+    "previewJpegQuality": 65,
+    "previewStallTimeoutSec": 5,
+    "recordingMaxSec": 90,
+    "recordingEndGraceSec": 12,
+    "recordingCooldownSec": 60,
+    "minUploadDurationSec": 8,
+    "reidConfidenceThreshold": 0.5,
+    "reidMinBboxSize": 800,
+    "reidVisibleSec": 0.5,
+    "debugLogs": true
+  },
+  "streamDefaults": {
+    "trackingEnabled": true,
+    "detectPerson": true,
+    "detectVehicle": true,
+    "motionThreshold": 25,
+    "pixelChangeThreshold": 0.02
+  }
+}

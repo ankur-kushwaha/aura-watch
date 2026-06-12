@@ -11,6 +11,7 @@ import {
   mergeDeviceConfig,
   mergeDeviceConfigUpdate,
   withEffectiveDeviceConfig,
+  STREAM_CONFIG_DEFAULTS,
 } from '../services/edgeConfig';
 
 const router = Router();
@@ -193,12 +194,12 @@ router.post('/register', async (req: Request, res: Response) => {
           name: 'Default Camera',
           cameraType: cameraType || 'webcam',
           streamUrl: streamUrl || '0',
-          trackingEnabled: trackingEnabled || false,
+          trackingEnabled: trackingEnabled !== undefined ? Boolean(trackingEnabled) : STREAM_CONFIG_DEFAULTS.trackingEnabled,
           status: 'Offline',
-          motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : 25,
-          pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : 0.02,
-          detectPerson: true,
-          detectVehicle: true,
+          motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : STREAM_CONFIG_DEFAULTS.motionThreshold,
+          pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : STREAM_CONFIG_DEFAULTS.pixelChangeThreshold,
+          detectPerson: STREAM_CONFIG_DEFAULTS.detectPerson,
+          detectVehicle: STREAM_CONFIG_DEFAULTS.detectVehicle,
         },
       });
       streams = [defaultStream];

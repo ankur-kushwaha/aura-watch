@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from config import DeviceRuntimeConfig, rtsp_local_addr_value, rtsp_transport_value
+from config import DeviceRuntimeConfig, default_stream_tracking_enabled, rtsp_local_addr_value, rtsp_transport_value
 
 import requests
 import websocket
@@ -30,10 +30,14 @@ from recorder import (
     kill_ffmpeg_for_path,
     upload_clip,
 )
-from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names, resolve_yolo_device
+from device_defaults import stream_config_defaults
+from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+_STREAM_DEFAULTS = stream_config_defaults()
+_DEFAULT_RUNTIME = DeviceRuntimeConfig()
 
 
 def derive_ws_url(http_url: str) -> str:
@@ -51,20 +55,8 @@ DEVICE_NAME = os.getenv("DEVICE_NAME", "Office Edge Device")
 LOCAL_VIDEO_DIR = os.getenv("LOCAL_VIDEO_DIR", os.path.join(BASE_DIR, "storage", "temp_clips"))
 LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage", "crops"))
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
-DEBUG_LOGS = os.getenv("DEBUG_LOGS", "true").lower() != "false"
-YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
-YOLO_DEVICE = resolve_yolo_device(os.getenv("YOLO_DEVICE", "auto"))
-YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "416"))
-YOLO_DETECT_INTERVAL = max(int(os.getenv("YOLO_DETECT_INTERVAL", "2")), 1)
-CAMERA_FPS = max(int(os.getenv("CAMERA_FPS", "30")), 1)
-FRAME_STREAM_FPS = float(os.getenv("FRAME_STREAM_FPS", "12"))
-CLIP_ENCODE_FPS = max(int(os.getenv("CLIP_ENCODE_FPS", os.getenv("ENCODE_FPS", "10"))), 1)
-PREVIEW_JPEG_QUALITY = int(os.getenv("PREVIEW_JPEG_QUALITY", "70"))
-RECORDING_COOLDOWN_SEC = float(os.getenv("RECORDING_COOLDOWN_SEC", "45"))
-RECORDING_MAX_SEC = float(os.getenv("RECORDING_MAX_SEC", "60"))
-RECORDING_END_GRACE_SEC = float(os.getenv("RECORDING_END_GRACE_SEC", "5"))
-MIN_UPLOAD_DURATION_SEC = float(os.getenv("MIN_UPLOAD_DURATION_SEC", "2"))
-PREVIEW_STALL_TIMEOUT_SEC = float(os.getenv("PREVIEW_STALL_TIMEOUT_SEC", "5"))
+DEBUG_LOGS = _DEFAULT_RUNTIME.debug_logs
+PREVIEW_STALL_TIMEOUT_SEC = _DEFAULT_RUNTIME.preview_stall_timeout_sec
 
 
 @dataclass
@@ -72,11 +64,13 @@ class EdgeConfig:
     name: str = DEVICE_NAME
     camera_type: str = "webcam"
     stream_url: str = "0"
-    tracking_enabled: bool = False
-    motion_threshold: int = 25
-    pixel_change_threshold: float = 0.02
-    detect_person: bool = True
-    detect_vehicle: bool = True
+    tracking_enabled: bool = field(default_factory=lambda: bool(_STREAM_DEFAULTS["trackingEnabled"]))
+    motion_threshold: int = field(default_factory=lambda: int(_STREAM_DEFAULTS["motionThreshold"]))
+    pixel_change_threshold: float = field(
+        default_factory=lambda: float(_STREAM_DEFAULTS["pixelChangeThreshold"])
+    )
+    detect_person: bool = field(default_factory=lambda: bool(_STREAM_DEFAULTS["detectPerson"]))
+    detect_vehicle: bool = field(default_factory=lambda: bool(_STREAM_DEFAULTS["detectVehicle"]))
 
     def runtime(self, device: DeviceRuntimeConfig) -> DeviceRuntimeConfig:
         return device
@@ -155,9 +149,9 @@ class EdgeAgent:
             "name": DEVICE_NAME,
             "cameraType": "webcam",
             "streamUrl": "0",
-            "trackingEnabled": False,
-            "motionThreshold": 25,
-            "pixelChangeThreshold": 0.02,
+            "trackingEnabled": _STREAM_DEFAULTS["trackingEnabled"],
+            "motionThreshold": _STREAM_DEFAULTS["motionThreshold"],
+            "pixelChangeThreshold": _STREAM_DEFAULTS["pixelChangeThreshold"],
             "status": "Idle",
         }
         enrollment_token = os.getenv("ENROLLMENT_TOKEN", "").strip()
@@ -226,7 +220,7 @@ class EdgeAgent:
                 name=s.get("name", "Unnamed Stream"),
                 camera_type=s.get("cameraType", "webcam"),
                 stream_url=s.get("streamUrl", "0"),
-                tracking_enabled=bool(s.get("trackingEnabled", False)),
+                tracking_enabled=bool(s.get("trackingEnabled", default_stream_tracking_enabled())),
                 motion_threshold=int(s.get("motionThreshold", 25)),
                 pixel_change_threshold=float(s.get("pixelChangeThreshold", 0.02)),
                 detect_person=bool(s.get("detectPerson", True)),
@@ -639,11 +633,11 @@ class EdgeAgent:
         runtime = p_data.get("runtime")
         if runtime is None and config is not None:
             runtime = config.runtime(self.device_runtime_config)
-        recording_max_sec = runtime.recording_max_sec if runtime else RECORDING_MAX_SEC
-        recording_end_grace_sec = runtime.recording_end_grace_sec if runtime else RECORDING_END_GRACE_SEC
-        recording_cooldown_sec = runtime.recording_cooldown_sec if runtime else RECORDING_COOLDOWN_SEC
-        min_upload_duration_sec = runtime.min_upload_duration_sec if runtime else MIN_UPLOAD_DURATION_SEC
-        clip_encode_fps = runtime.clip_encode_fps if runtime else CLIP_ENCODE_FPS
+        recording_max_sec = runtime.recording_max_sec if runtime else _DEFAULT_RUNTIME.recording_max_sec
+        recording_end_grace_sec = runtime.recording_end_grace_sec if runtime else _DEFAULT_RUNTIME.recording_end_grace_sec
+        recording_cooldown_sec = runtime.recording_cooldown_sec if runtime else _DEFAULT_RUNTIME.recording_cooldown_sec
+        min_upload_duration_sec = runtime.min_upload_duration_sec if runtime else _DEFAULT_RUNTIME.min_upload_duration_sec
+        clip_encode_fps = runtime.clip_encode_fps if runtime else _DEFAULT_RUNTIME.clip_encode_fps
 
         timestamp_ms = int(time.time() * 1000)
         p_data["recording_started_at_ms"] = timestamp_ms

@@ -4,6 +4,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
+COPY config/ ../config/
 RUN npm run build
 
 # Stage 2: Build the backend and prepare production node_modules
@@ -14,6 +15,7 @@ WORKDIR /app/backend
 COPY backend/package*.json ./
 RUN npm ci
 COPY backend/ ./
+COPY config/ ../config/
 # Generate Prisma Client (needed for build and runtime)
 RUN npx prisma generate
 # Compile TypeScript to JavaScript
@@ -36,6 +38,7 @@ COPY package*.json ./
 # Copy backend files
 COPY --from=backend-builder /app/backend/package*.json ./backend/
 COPY --from=backend-builder /app/backend/dist ./backend/dist
+COPY --from=backend-builder /app/config ./config
 COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-builder /app/backend/prisma ./backend/prisma
 COPY --from=backend-builder /app/backend/models ./backend/models

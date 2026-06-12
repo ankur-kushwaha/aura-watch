@@ -55,6 +55,7 @@ import { exitImpersonation, isImpersonating } from './adminApi';
 import OrgSettingsPage from './OrgSettings';
 import {
   createDefaultDeviceConfig,
+  DEFAULT_STREAM_CONFIG,
   type EffectiveEdgeDeviceConfig,
 } from './edgeConfig';
 import { DeviceConfigFields } from './EdgeConfigForms';
@@ -876,11 +877,11 @@ function App() {
     name: 'Macbook Air Camera',
     type: 'webcam',
     streamUrl: '0',
-    trackingEnabled: false,
-    motionThreshold: 25,
-    pixelChangeThreshold: 0.02,
-    detectPerson: true,
-    detectVehicle: true,
+    trackingEnabled: DEFAULT_STREAM_CONFIG.trackingEnabled,
+    motionThreshold: DEFAULT_STREAM_CONFIG.motionThreshold,
+    pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
+    detectPerson: DEFAULT_STREAM_CONFIG.detectPerson,
+    detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
   });
   const [status, setStatus] = useState<string>('Offline');
   const [motionActive, setMotionActive] = useState<boolean>(false);
@@ -2228,11 +2229,11 @@ function App() {
       name: 'New Camera Stream',
       type: 'webcam',
       streamUrl: '0',
-      trackingEnabled: false,
-      motionThreshold: 25,
-      pixelChangeThreshold: 0.02,
-      detectPerson: true,
-      detectVehicle: true,
+      trackingEnabled: DEFAULT_STREAM_CONFIG.trackingEnabled,
+      motionThreshold: DEFAULT_STREAM_CONFIG.motionThreshold,
+      pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
+      detectPerson: DEFAULT_STREAM_CONFIG.detectPerson,
+      detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
     });
     setAddingStreamForDeviceId(deviceId);
     setShowConfigDialog(true);
@@ -4616,12 +4617,10 @@ function App() {
           <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
             style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
-            onClick={closeDialog}
           >
             <div
               className="glass-panel w-full max-w-[480px] p-6 flex flex-col gap-5 relative animate-[slideUp_0.22s_ease-out max-h-[90vh] overflow-hidden"
               style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
-              onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
               <div className="flex items-center justify-between">
@@ -4740,10 +4739,6 @@ function App() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
-          onClick={() => {
-            setShowDeviceConfigDialog(false);
-            setDeviceConfigDeviceId(null);
-          }}
         >
           <div
             className="glass-panel w-full max-w-[720px] p-6 flex flex-col gap-5 relative animate-[slideUp_0.22s_ease-out max-h-[90vh]"

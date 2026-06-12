@@ -1,3 +1,5 @@
+import deviceDefaults from '../../config/edge-device-defaults.json';
+
 export interface EdgeDeviceConfig {
   yoloConfidence?: number | null;
   yoloDevice?: string | null;
@@ -27,27 +29,13 @@ type EffectiveConfig<T> = {
 
 export type EffectiveEdgeDeviceConfig = EffectiveConfig<EdgeDeviceConfig>;
 
+/** Loaded from config/edge-device-defaults.json — do not duplicate values here. */
 export const DEFAULT_DEVICE_CONFIG: EffectiveEdgeDeviceConfig = {
-  yoloConfidence: 0.25,
-  yoloDevice: 'auto',
-  yoloImgsz: 416,
-  yoloDetectInterval: 3,
-  cameraWidth: 640,
-  cameraHeight: 480,
-  cameraFps: 15,
-  clipEncodeFps: 10,
-  cameraStallTimeoutSec: 45,
-  frameStreamFps: 12,
-  previewJpegQuality: 70,
-  previewStallTimeoutSec: 5,
-  recordingMaxSec: 60,
-  recordingEndGraceSec: 5,
-  recordingCooldownSec: 45,
-  minUploadDurationSec: 2,
-  reidConfidenceThreshold: 0.65,
-  reidMinBboxSize: 2500,
-  reidVisibleSec: 1.0,
-  debugLogs: true,
+  ...deviceDefaults.deviceConfig,
+};
+
+export const DEFAULT_STREAM_CONFIG = {
+  ...deviceDefaults.streamDefaults,
 };
 
 export function createDefaultDeviceConfig(): EffectiveEdgeDeviceConfig {

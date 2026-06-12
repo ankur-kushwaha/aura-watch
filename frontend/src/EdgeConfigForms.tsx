@@ -135,7 +135,15 @@ export function DeviceConfigFields({
 
       <Section title="ReID">
         <NumberField label="Confidence threshold" value={config.reidConfidenceThreshold} onChange={(v) => set('reidConfidenceThreshold', v)} min={0.1} max={1} step={0.05} />
-        <NumberField label="Min bbox area (px²)" value={config.reidMinBboxSize} onChange={(v) => set('reidMinBboxSize', v)} min={500} max={50000} step={100} />
+        <NumberField
+          label="Min bbox area (px²)"
+          value={config.reidMinBboxSize}
+          onChange={(v) => set('reidMinBboxSize', v)}
+          min={400}
+          max={50000}
+          step={100}
+          hint="Minimum person box area (width × height). Use 600–800 for overhead/distant cameras; 1500+ for eye-level close-ups."
+        />
         <NumberField label="Visible before crop (sec)" value={config.reidVisibleSec} onChange={(v) => set('reidVisibleSec', v)} min={0.1} max={10} step={0.1} />
       </Section>
 

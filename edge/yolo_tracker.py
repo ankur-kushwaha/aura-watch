@@ -11,6 +11,10 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from device_defaults import device_config_defaults
+
+_DEVICE_DEFAULTS = device_config_defaults()
+
 # COCO class names used by YOLOv8n
 COCO_CLASS_IDS: dict[str, int] = {
     "person": 0,
@@ -142,10 +146,10 @@ class YoloByteTracker:
     def __init__(
         self,
         model_path: Optional[str] = None,
-        confidence: float = 0.25,
-        device: str = "auto",
+        confidence: float = float(_DEVICE_DEFAULTS["yoloConfidence"]),
+        device: str = str(_DEVICE_DEFAULTS["yoloDevice"]),
         class_names: Optional[list[str]] = None,
-        imgsz: int = 416,
+        imgsz: int = int(_DEVICE_DEFAULTS["yoloImgsz"]),
         reid_confidence_threshold: Optional[float] = None,
         reid_min_bbox_size: Optional[int] = None,
         reid_visible_sec: Optional[float] = None,
@@ -166,15 +170,15 @@ class YoloByteTracker:
         self.reid_confidence_threshold = (
             reid_confidence_threshold
             if reid_confidence_threshold is not None
-            else float(os.getenv("REID_CONFIDENCE_THRESHOLD", "0.65"))
+            else float(os.getenv("REID_CONFIDENCE_THRESHOLD", str(_DEVICE_DEFAULTS["reidConfidenceThreshold"])))
         )
         self.reid_min_bbox_size = (
             reid_min_bbox_size
             if reid_min_bbox_size is not None
-            else int(os.getenv("REID_MIN_BBOX_SIZE", "2500"))
+            else int(os.getenv("REID_MIN_BBOX_SIZE", str(_DEVICE_DEFAULTS["reidMinBboxSize"])))
         )
         self.reid_visible_sec = (
-            reid_visible_sec if reid_visible_sec is not None else float(os.getenv("REID_VISIBLE_SEC", "1.0"))
+            reid_visible_sec if reid_visible_sec is not None else float(os.getenv("REID_VISIBLE_SEC", str(_DEVICE_DEFAULTS["reidVisibleSec"])))
         )
 
     def process(
