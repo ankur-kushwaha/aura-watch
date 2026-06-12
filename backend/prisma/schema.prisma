@@ -143,16 +143,6 @@ model ReidDetection {
   identity     ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
 }
 
-model ReidStreamTrackFeedback {
-  id             String   @id @default(auto()) @map("_id") @db.ObjectId
-  type           String   // "same_person" | "different_person"
-  sourceStreamId String
-  sourceTrackId  Int
-  targetStreamId String
-  targetTrackId  Int
-  createdAt      DateTime @default(now())
-}
-
 model ReidFeedback {
   id                String   @id @default(auto()) @map("_id") @db.ObjectId
   type              String   // "confirm" | "reject" | "same_person" | "different_person"

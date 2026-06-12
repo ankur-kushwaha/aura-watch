@@ -66,12 +66,26 @@ async function resolveIdentityLabel(
   if (identityId) {
     const identity = await prisma.reidIdentity.findUnique({
       where: { id: identityId },
-      select: { label: true },
+      select: {
+        label: true,
+        detections: {
+          orderBy: { timestamp: 'desc' },
+          take: 1,
+          select: { cameraName: true, trackId: true },
+        },
+      },
     });
     const trimmed = identity?.label?.trim();
     if (trimmed) {
       return { labelStatus: 'confirmed', label: trimmed };
     }
+    const cover = identity?.detections[0];
+    return {
+      labelStatus: 'confirmed',
+      label: cover
+        ? defaultPersonLabel(cover.cameraName, cover.trackId)
+        : 'Linked identity',
+    };
   }
 
   if (!detectionId) {

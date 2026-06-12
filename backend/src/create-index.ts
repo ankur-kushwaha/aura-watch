@@ -1,14 +1,11 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import dotenv from 'dotenv';
 import * as path from 'path';
+import { createQdrantClientFromEnv } from './services/qdrantClient';
 
 // Load environment variables
 dotenv.config();
 
-const qdrant = new QdrantClient({
-  url: process.env.QDRANT_URL,
-  apiKey: process.env.QDRANT_API_KEY,
-});
+const qdrant = createQdrantClientFromEnv();
 
 const COLLECTION_NAME = 'video_clips';
 

@@ -90,6 +90,14 @@ interface ClipDetectionsResponse {
   reidLog: ClipReidLog;
 }
 
+interface MatchScores {
+  vectorSimilarity: number;
+  timeScore: number;
+  topologyScore: number;
+  finalScore: number;
+  feedbackBoost?: number;
+}
+
 interface PersonClipReference {
   id: string;
   cameraName: string;
@@ -97,7 +105,11 @@ interface PersonClipReference {
   filename: string;
   clipFilename?: string | null;
   clipOffsetMs?: number | null;
+  trackId?: number;
+  identityId?: string | null;
   matchScore?: number;
+  scores?: MatchScores;
+  source: 'query' | 'identity' | 'match';
 }
 
 interface EdgeDevice {
@@ -153,6 +165,8 @@ interface ReidPerson {
   displayName: string;
   coverFilename: string | null;
   coverCameraName: string | null;
+  coverDetectionId?: string | null;
+  coverClipId?: string | null;
   photoCount: number;
   galleryCount?: number;
   lastSeen: string | null;
@@ -177,6 +191,7 @@ interface ReidDetection {
   trackId: number;
   timestamp: string;
   filename: string;
+  clipId?: string | null;
   clipFilename?: string | null;
   clipOffsetMs?: number | null;
   bbox: string;
@@ -208,6 +223,136 @@ const identityCoverUrl = (identityId: string) => {
   const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
   return `${API_BASE}/reid/identities/${identityId}/cover${qs}`;
 };
+
+function IdTooltipChip({
+  label,
+  value,
+  className = '',
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  const [showTip, setShowTip] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const missing = !value || value === '—';
+
+  const stopBubble = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
+  const handleCopy = (e: React.MouseEvent) => {
+    stopBubble(e);
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  if (missing) {
+    return (
+      <span className={`text-[0.55rem] font-mono text-text-muted opacity-60 ${className}`}>
+        {label}: —
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className={`relative inline-flex ${className}`}
+      onMouseEnter={() => setShowTip(true)}
+      onMouseLeave={() => {
+        setShowTip(false);
+        setCopied(false);
+      }}
+      onMouseDown={stopBubble}
+      onClick={stopBubble}
+    >
+      <span className="inline-flex items-center gap-0.5 text-[0.55rem] font-mono text-text-muted hover:text-sky-400 cursor-default select-none">
+        {label}
+        <Info size={10} className="shrink-0 opacity-70" />
+      </span>
+      {showTip && (
+        <div
+          className="absolute bottom-full left-0 mb-1.5 z-[200] w-64 rounded-lg border border-border-glass bg-[rgba(15,17,26,0.98)] p-2.5 shadow-xl backdrop-blur-md"
+          onMouseDown={stopBubble}
+          onClick={stopBubble}
+        >
+          <p className="text-[0.6rem] font-semibold uppercase tracking-wide text-text-muted mb-1">
+            {label}
+          </p>
+          <div className="flex items-start gap-1.5">
+            <code className="flex-1 text-[0.62rem] font-mono text-sky-400 break-all leading-relaxed">
+              {value}
+            </code>
+            <button
+              type="button"
+              onClick={handleCopy}
+              title={`Copy ${label}`}
+              className="btn btn-secondary p-1 shrink-0"
+            >
+              {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EntityIds({
+  identityId,
+  detectionId,
+  clipId,
+  className = '',
+}: {
+  identityId: string;
+  detectionId?: string | null;
+  clipId?: string | null;
+  className?: string;
+}) {
+  return (
+    <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 ${className}`}>
+      <IdTooltipChip label="identity" value={identityId} />
+      {detectionId && <IdTooltipChip label="detection" value={detectionId} />}
+      <IdTooltipChip label="clip" value={clipId ?? '—'} />
+    </div>
+  );
+}
+
+function MatchScoreBreakdown({ scores }: { scores: MatchScores }) {
+  const items: { label: string; value: number; className: string }[] = [
+    { label: 'Embedding', value: scores.vectorSimilarity, className: 'text-[#a78bfa] bg-[rgba(167,139,250,0.12)] border-[rgba(167,139,250,0.2)]' },
+    { label: 'Time', value: scores.timeScore, className: 'text-[#38bdf8] bg-[rgba(56,189,248,0.12)] border-[rgba(56,189,248,0.2)]' },
+    { label: 'Topology', value: scores.topologyScore, className: 'text-[#34d399] bg-[rgba(52,211,153,0.12)] border-[rgba(52,211,153,0.2)]' },
+  ];
+  if (scores.feedbackBoost && scores.feedbackBoost > 0) {
+    items.push({
+      label: 'Feedback',
+      value: scores.feedbackBoost,
+      className: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
+    });
+  }
+  items.push({
+    label: 'Final',
+    value: scores.finalScore,
+    className: 'text-text-primary bg-[rgba(255,255,255,0.08)] border-[rgba(255,255,255,0.12)]',
+  });
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {items.map((item) => (
+        <span
+          key={item.label}
+          className={`text-[0.58rem] px-1.5 py-0.5 rounded-full border ${item.className}`}
+        >
+          {item.label} {Math.round(item.value * 100)}%
+        </span>
+      ))}
+    </div>
+  );
+}
 const CLIPS_PAGE_SIZE = 10;
 const WS_BASE = import.meta.env.DEV ? 'ws://localhost:5000' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 const HUB_HTTP = import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
@@ -587,6 +732,11 @@ function App({ onLogout }: AppProps) {
   const [showFilters, setShowFilters] = useState<boolean>(false);
 
   // Live Camera Feed Video States
+  const [liveFeedOpen, setLiveFeedOpen] = useState<boolean>(true);
+  const liveFeedOpenRef = useRef(liveFeedOpen);
+  useEffect(() => {
+    liveFeedOpenRef.current = liveFeedOpen;
+  }, [liveFeedOpen]);
   const [streamLoading, setStreamLoading] = useState<boolean>(true);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [previewFrozen, setPreviewFrozen] = useState<boolean>(false);
@@ -718,6 +868,24 @@ function App({ onLogout }: AppProps) {
     streamStatusRef.current = status;
   }, [status]);
 
+  const disconnectWS = useCallback(() => {
+    wsIntentionalCloseRef.current = true;
+    if (wsReconnectTimerRef.current) {
+      clearTimeout(wsReconnectTimerRef.current);
+      wsReconnectTimerRef.current = null;
+    }
+    const ws = wsRef.current;
+    if (!ws) return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'unsubscribe_stream' }));
+    }
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.close();
+    wsRef.current = null;
+  }, []);
+
   const connectWS = useCallback(function connect() {
     if (
       wsRef.current &&
@@ -735,8 +903,12 @@ function App({ onLogout }: AppProps) {
     ws.onopen = () => {
       console.log('WebSocket open. Subscribing to selected stream...');
       const currentStreamId = selectedStreamIdRef.current;
-      if (currentStreamId) {
+      if (currentStreamId && liveFeedOpenRef.current) {
         ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: currentStreamId }));
+      }
+      const deviceModal = deviceLogsModalRef.current;
+      if (deviceModal) {
+        ws.send(JSON.stringify({ type: 'subscribe_device', deviceId: deviceModal.deviceId }));
       }
     };
 
@@ -878,6 +1050,12 @@ function App({ onLogout }: AppProps) {
       if (wsIntentionalCloseRef.current) {
         return;
       }
+      const wsStillNeeded =
+        (liveFeedOpenRef.current && !!selectedStreamIdRef.current) ||
+        !!deviceLogsModalRef.current;
+      if (!wsStillNeeded) {
+        return;
+      }
       console.log('WebSocket closed. Reconnecting in 5s...');
       wsReconnectTimerRef.current = setTimeout(connect, 5000);
     };
@@ -957,7 +1135,7 @@ function App({ onLogout }: AppProps) {
 
   // Sync WS subscription when stream changes
   useEffect(() => {
-    if (!selectedStreamId) return;
+    if (!liveFeedOpen || !selectedStreamId) return;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Clear logs for new stream
@@ -967,27 +1145,31 @@ function App({ onLogout }: AppProps) {
 
       wsRef.current.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
     }
-  }, [selectedStreamId]);
+  }, [selectedStreamId, liveFeedOpen]);
 
-  // Establish initial WebSocket connection
+  const wsNeeded = (liveFeedOpen && !!selectedStreamId) || !!deviceLogsModal;
+
+  // Connect WebSocket only while live feed or device logs modal needs it
   useEffect(() => {
+    if (!wsNeeded) {
+      disconnectWS();
+      return;
+    }
     connectWS();
     return () => {
-      wsIntentionalCloseRef.current = true;
-      if (wsReconnectTimerRef.current) {
-        clearTimeout(wsReconnectTimerRef.current);
-        wsReconnectTimerRef.current = null;
-      }
-      const ws = wsRef.current;
-      if (ws) {
-        ws.onmessage = null;
-        ws.onclose = null;
-        ws.onerror = null;
-        ws.close();
-        wsRef.current = null;
-      }
+      disconnectWS();
     };
-  }, [connectWS]);
+  }, [wsNeeded, connectWS, disconnectWS]);
+
+  const closeLiveFeed = useCallback(() => {
+    setLiveFeedOpen(false);
+    setLiveFrame(null);
+    setStreamLoading(false);
+    setPreviewFrozen(false);
+    setMotionActive(false);
+    setMotionRatio(0);
+    lastFrameAtRef.current = 0;
+  }, []);
 
   const fetchReidPeople = useCallback(async () => {
     setLoadingReidPeople(true);
@@ -1117,6 +1299,81 @@ function App({ onLogout }: AppProps) {
     setPersonRefsIdentitySuggestions(suggestions);
   };
 
+  const mapDetectionToRef = (
+    d: ReidDetection,
+    source: PersonClipReference['source'],
+    scores?: MatchScores,
+  ): PersonClipReference => ({
+    id: d.id,
+    cameraName: d.cameraName,
+    timestamp: d.timestamp,
+    filename: d.filename,
+    clipFilename: d.clipFilename,
+    clipOffsetMs: d.clipOffsetMs,
+    trackId: d.trackId,
+    identityId: d.identityId,
+    source,
+    scores,
+    matchScore: scores?.finalScore,
+  });
+
+  const mergePersonRefs = (
+    query: ReidDetection | undefined,
+    journeyDetections: ReidDetection[],
+    trackMatches: Array<{
+      id: string;
+      cameraName: string;
+      timestamp: string;
+      filename: string;
+      clipFilename?: string;
+      clipOffsetMs?: number;
+      trackId?: number;
+      identityId?: string | null;
+      scores?: MatchScores;
+      feedbackBoost?: number;
+    }>,
+  ): PersonClipReference[] => {
+    const refs = new Map<string, PersonClipReference>();
+
+    if (query) {
+      refs.set(query.id, mapDetectionToRef(query, 'query'));
+    }
+
+    for (const d of journeyDetections) {
+      refs.set(d.id, mapDetectionToRef(d, 'identity'));
+    }
+
+    for (const match of trackMatches) {
+      const existing = refs.get(match.id);
+      const scores = match.scores
+        ? { ...match.scores, feedbackBoost: match.feedbackBoost ?? match.scores.feedbackBoost }
+        : undefined;
+      if (existing) {
+        if (scores && existing.source !== 'query') {
+          refs.set(match.id, { ...existing, scores, matchScore: scores.finalScore });
+        }
+        continue;
+      }
+      refs.set(match.id, {
+        id: match.id,
+        cameraName: match.cameraName,
+        timestamp: match.timestamp,
+        filename: match.filename,
+        clipFilename: match.clipFilename,
+        clipOffsetMs: match.clipOffsetMs,
+        trackId: match.trackId,
+        identityId: match.identityId,
+        source: 'match',
+        scores,
+        matchScore: scores?.finalScore,
+      });
+    }
+
+    return [...refs.values()].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
+  };
+
   const reloadPersonRefsJourney = async (identityId: string) => {
     const journeyRes = await apiFetch(`/reid/identities/${identityId}/journey`);
     if (!journeyRes.ok) return;
@@ -1127,14 +1384,41 @@ function App({ onLogout }: AppProps) {
       setPersonRefsLabelConfirmed(true);
       setShowPersonRefsSuggestions(false);
     }
-    setPersonRefs((journey.detections || []).map((d: ReidDetection) => ({
-      id: d.id,
-      cameraName: d.cameraName,
-      timestamp: d.timestamp,
-      filename: d.filename,
-      clipFilename: d.clipFilename,
-      clipOffsetMs: d.clipOffsetMs,
-    })));
+    setPersonRefs((prev) => {
+      const trackMatches = prev
+        .filter((r) => r.source === 'match' && r.scores)
+        .map((r) => ({
+          id: r.id,
+          cameraName: r.cameraName,
+          timestamp: r.timestamp,
+          filename: r.filename,
+          clipFilename: r.clipFilename ?? undefined,
+          clipOffsetMs: r.clipOffsetMs ?? undefined,
+          trackId: r.trackId,
+          identityId: r.identityId,
+          scores: r.scores,
+        }));
+      const query = prev.find((r) => r.source === 'query');
+      return mergePersonRefs(
+        query
+          ? {
+              id: query.id,
+              deviceId: '',
+              cameraName: query.cameraName,
+              trackId: query.trackId ?? 0,
+              timestamp: query.timestamp,
+              filename: query.filename,
+              clipFilename: query.clipFilename,
+              clipOffsetMs: query.clipOffsetMs,
+              bbox: '',
+              className: 'person',
+              identityId: query.identityId,
+            }
+          : undefined,
+        journey.detections || [],
+        trackMatches,
+      );
+    });
   };
 
   const refreshClipDetectionsAfterLabel = async () => {
@@ -1169,40 +1453,24 @@ function App({ onLogout }: AppProps) {
     const initiallyConfirmed = obj.labelStatus === 'confirmed' && !!obj.label?.trim();
     setPersonRefsLabelDraft(initiallyConfirmed ? obj.label! : '');
     setPersonRefsLabelConfirmed(initiallyConfirmed);
-    setShowPersonRefsSuggestions(!initiallyConfirmed);
+    setShowPersonRefsSuggestions(!initiallyConfirmed && !obj.identityId);
     setPersonRefsIdentitySuggestions([]);
     setLoadingPersonRefs(true);
 
     let resolvedIdentityId = obj.identityId ?? null;
 
     try {
-      if (obj.identityId) {
-        const journeyRes = await apiFetch(`/reid/identities/${obj.identityId}/journey`);
-        if (!journeyRes.ok) throw new Error('Failed to load identity journey');
-        const journey = await journeyRes.json();
-        const identityLabel = journey.identity?.label?.trim() || '';
-        if (identityLabel) {
-          setPersonRefsLabelDraft(identityLabel);
-          setPersonRefsLabelConfirmed(true);
-          setShowPersonRefsSuggestions(false);
-        }
+      const [trackRes, journeyRes] = await Promise.all([
+        apiFetch('/reid/track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ detectionId: obj.detectionId, limit: 30 }),
+        }),
+        obj.identityId
+          ? apiFetch(`/reid/identities/${obj.identityId}/journey`)
+          : Promise.resolve(null),
+      ]);
 
-        const refs: PersonClipReference[] = (journey.detections || []).map((d: ReidDetection) => ({
-          id: d.id,
-          cameraName: d.cameraName,
-          timestamp: d.timestamp,
-          filename: d.filename,
-          clipFilename: d.clipFilename,
-          clipOffsetMs: d.clipOffsetMs,
-        }));
-        setPersonRefs(refs);
-      } else {
-
-      const trackRes = await apiFetch('/reid/track', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ detectionId: obj.detectionId, limit: 30 }),
-      });
       if (!trackRes.ok) throw new Error('Failed to search similar detections');
       const trackData = await trackRes.json();
       const query = trackData.query as ReidDetection | undefined;
@@ -1213,47 +1481,35 @@ function App({ onLogout }: AppProps) {
         filename: string;
         clipFilename?: string;
         clipOffsetMs?: number;
-        scores?: { finalScore: number };
+        trackId?: number;
+        identityId?: string | null;
+        scores?: MatchScores;
+        feedbackBoost?: number;
       }>;
 
-      const refs: PersonClipReference[] = [];
-      if (query) {
-        refs.push({
-          id: query.id,
-          cameraName: query.cameraName,
-          timestamp: query.timestamp,
-          filename: query.filename,
-          clipFilename: query.clipFilename,
-          clipOffsetMs: query.clipOffsetMs,
-        });
-        if (query.identityId) {
-          setPersonRefsIdentityId(query.identityId);
-          resolvedIdentityId = query.identityId;
-        }
-        if (query.identity?.label?.trim()) {
-          setPersonRefsLabelDraft(query.identity.label.trim());
+      if (query?.identityId) {
+        setPersonRefsIdentityId(query.identityId);
+        resolvedIdentityId = query.identityId;
+      }
+      if (query?.identity?.label?.trim()) {
+        setPersonRefsLabelDraft(query.identity.label.trim());
+        setPersonRefsLabelConfirmed(true);
+        setShowPersonRefsSuggestions(false);
+      }
+
+      let journeyDetections: ReidDetection[] = [];
+      if (journeyRes && journeyRes.ok) {
+        const journey = await journeyRes.json();
+        const identityLabel = journey.identity?.label?.trim() || '';
+        if (identityLabel) {
+          setPersonRefsLabelDraft(identityLabel);
           setPersonRefsLabelConfirmed(true);
           setShowPersonRefsSuggestions(false);
         }
+        journeyDetections = journey.detections || [];
       }
 
-      for (const match of matches) {
-        if (refs.some((r) => r.id === match.id)) continue;
-        refs.push({
-          id: match.id,
-          cameraName: match.cameraName,
-          timestamp: match.timestamp,
-          filename: match.filename,
-          clipFilename: match.clipFilename,
-          clipOffsetMs: match.clipOffsetMs,
-          matchScore: match.scores?.finalScore,
-        });
-      }
-
-      refs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setPersonRefs(refs);
-      }
-
+      setPersonRefs(mergePersonRefs(query, journeyDetections, matches));
       await loadPersonRefsIdentitySuggestions(resolvedIdentityId);
     } catch (err) {
       console.error('Failed to load person references', err);
@@ -1299,6 +1555,8 @@ function App({ onLogout }: AppProps) {
     if (!personRefsModal?.detectionId) return;
     setSavingPersonRefsLabel(true);
     try {
+      let resolvedIdentityId = personRefsIdentityId;
+
       if (personRefsIdentityId) {
         const res = await apiFetch(`/reid/identities/${personRefsIdentityId}`, {
           method: 'PATCH',
@@ -1322,6 +1580,7 @@ function App({ onLogout }: AppProps) {
           return;
         }
         if (data.detection?.identityId) {
+          resolvedIdentityId = data.detection.identityId;
           setPersonRefsIdentityId(data.detection.identityId);
         }
       }
@@ -1331,8 +1590,9 @@ function App({ onLogout }: AppProps) {
         setShowPersonRefsSuggestions(false);
       }
       await refreshClipDetectionsAfterLabel();
-      if (personRefsIdentityId) {
-        await loadPersonRefsIdentitySuggestions(personRefsIdentityId);
+      if (resolvedIdentityId) {
+        await reloadPersonRefsJourney(resolvedIdentityId);
+        await loadPersonRefsIdentitySuggestions(resolvedIdentityId);
       }
     } catch (err) {
       console.error('Failed to save person label from clip modal', err);
@@ -1623,17 +1883,18 @@ function App({ onLogout }: AppProps) {
 
   // Reset stream loading only when switching streams (not on Recording/Processing status)
   useEffect(() => {
+    if (!liveFeedOpen) return;
     Promise.resolve().then(() => {
       setStreamLoading(true);
       setLiveFrame(null);
       setPreviewFrozen(false);
       lastFrameAtRef.current = 0;
     });
-  }, [selectedStreamId]);
+  }, [selectedStreamId, liveFeedOpen]);
 
   // Detect frozen preview when WS frames stop arriving
   useEffect(() => {
-    if (!selectedStreamId || status === 'Offline') {
+    if (!liveFeedOpen || !selectedStreamId || status === 'Offline') {
       setPreviewFrozen(false);
       return;
     }
@@ -1645,7 +1906,7 @@ function App({ onLogout }: AppProps) {
     }, 1000);
 
     return () => clearInterval(intervalId);
-  }, [selectedStreamId, status]);
+  }, [selectedStreamId, status, liveFeedOpen]);
 
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2007,6 +2268,15 @@ function App({ onLogout }: AppProps) {
 
       {/* NAVIGATION TABS */}
       <div className="flex gap-3 mb-6 bg-[rgba(255,255,255,0.02)] p-1.5 rounded-xl border border-border-glass w-fit">
+      <button
+          onClick={() => setActiveTab('ai')}
+          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'ai'
+            ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
+            : 'text-text-secondary hover:text-text-primary bg-transparent'
+            }`}
+        >
+          <Sparkles size={16} /> Ask Camera AI
+        </button>
         {hasOnlineDevices && (
           <button
             onClick={() => setActiveTab('events')}
@@ -2018,15 +2288,7 @@ function App({ onLogout }: AppProps) {
             <Video size={16} /> Event Archive
           </button>
         )}
-        <button
-          onClick={() => setActiveTab('ai')}
-          className={`py-2 px-4 rounded-lg text-[0.85rem] font-semibold flex items-center gap-2 transition-all duration-200 border-none outline-none ${activeTab === 'ai'
-            ? 'bg-primary text-white shadow-[0_4px_12px_rgba(124,58,237,0.25)]'
-            : 'text-text-secondary hover:text-text-primary bg-transparent'
-            }`}
-        >
-          <Sparkles size={16} /> Ask Camera AI
-        </button>
+        
         {hasOnlineDevices && (
           <button
             onClick={() => setActiveTab('reid')}
@@ -2174,6 +2436,7 @@ function App({ onLogout }: AppProps) {
                                 onClick={() => {
                                   setSelectedStreamId(stream.streamId);
                                   setSelectedDeviceId(dev.deviceId);
+                                  setLiveFeedOpen(true);
                                 }}
                                 className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${isSelected
                                   ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
@@ -2221,11 +2484,11 @@ function App({ onLogout }: AppProps) {
                                   >
                                     {stream.trackingEnabled && isStreamOnline ? (
                                       <>
-                                        <Activity size={10} /> Disable
+                                        <Activity size={10} /> Disable Tracking
                                       </>
                                     ) : (
                                       <>
-                                        <Camera size={10} /> Enable
+                                        <Camera size={10} /> Enable Tracking
                                       </>
                                     )}
                                   </button>
@@ -2269,34 +2532,55 @@ function App({ onLogout }: AppProps) {
           </div>
 
           {/* CAMERA FEED */}
+          {(liveFeedOpen || selectedStreamId) && (
           <div className="glass-panel p-5 relative">
-            <div className="flex justify-between items-center mb-4 gap-2 flex-wrap">
+            <div className={`flex justify-between items-center gap-2 flex-wrap ${liveFeedOpen ? 'mb-4' : ''}`}>
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Video size={18} color="var(--color-secondary)" /> Live Camera Feed
               </h2>
               <div className="flex items-center gap-2 flex-wrap">
-                {status === 'Recording' && (
+                {liveFeedOpen && status === 'Recording' && (
                   <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
                     <span className="w-1.5 h-1.5 rounded-full bg-danger inline-block animate-[pulse-danger_0.8s_infinite]"></span>
                     Recording clip
                   </div>
                 )}
-                {(status === 'Processing Video' || status === 'Processing') && (
+                {liveFeedOpen && (status === 'Processing Video' || status === 'Processing') && (
                   <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(124,58,237,0.15)] text-[#a78bfa] border border-[rgba(124,58,237,0.35)]">
                     <RefreshCw size={11} className="animate-spin" />
                     Summarizing clip
                   </div>
                 )}
-                {motionActive && (
+                {liveFeedOpen && motionActive && (
                   <div className="text-danger text-[0.8rem] font-semibold flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-current inline-block animate-[pulse-danger_0.5s_infinite]"></span>
                     MOTION DETECTED: {(motionRatio * 100).toFixed(1)}%
                   </div>
                 )}
+                {liveFeedOpen ? (
+                  <button
+                    type="button"
+                    onClick={closeLiveFeed}
+                    className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none shrink-0 transition-colors duration-200"
+                    title="Close live feed"
+                    aria-label="Close live feed"
+                  >
+                    <X size={16} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setLiveFeedOpen(true)}
+                    className="btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                  >
+                    <Play size={12} />
+                    Open Feed
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Video Feed Wrapper */}
+            {liveFeedOpen && (
             <div className="bg-[#090d16] rounded-xl w-full relative overflow-hidden border border-[rgba(255,255,255,0.05)] min-h-[200px]">
 
               {selectedStreamId && status !== 'Offline' ? (
@@ -2360,7 +2644,9 @@ function App({ onLogout }: AppProps) {
                 <div className="absolute inset-0 border-2 border-danger pointer-events-none shadow-[inset_0_0_30px_rgba(244,63,94,0.25)] rounded-xl z-20" />
               )}
             </div>
+            )}
           </div>
+          )}
 
 
 
@@ -2372,7 +2658,11 @@ function App({ onLogout }: AppProps) {
             <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3.5 text-[0.85rem] leading-[1.4] text-[#38bdf8] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]" ref={terminalContainerRef}>
               {logs.length === 0 ? (
                 <div className="text-text-muted text-[0.8rem]">
-                  {selectedStreamId ? 'Waiting for stream events...' : 'Select a camera stream to view logs.'}
+                  {selectedStreamId && liveFeedOpen
+                    ? 'Waiting for stream events...'
+                    : selectedStreamId
+                      ? 'Live feed closed. Open feed to view stream events.'
+                      : 'Select a camera stream to view logs.'}
                 </div>
               ) : (
                 logs.map((log, index) => (
@@ -2512,52 +2802,73 @@ function App({ onLogout }: AppProps) {
                                   No objects tracked during this clip.
                                 </p>
                               ) : (
-                                <div className="flex flex-col gap-1.5 mb-2">
+                                <div className="flex flex-col gap-2 mb-2">
                                   {clipDetections.map((obj) => {
                                     const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
+                                    const hasIdentity = !!obj.identityId;
                                     return (
                                       <button
                                         key={obj.trackId}
                                         type="button"
                                         disabled={!isClickablePerson}
                                         onClick={() => openPersonRefsModal(obj)}
-                                        className={`flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary text-left w-full rounded-md px-1 py-0.5 -mx-1 ${
+                                        className={`flex flex-col gap-1.5 text-left w-full rounded-lg px-2 py-2 -mx-1 border border-transparent ${
                                           isClickablePerson
-                                            ? 'hover:bg-[rgba(56,189,248,0.08)] cursor-pointer'
+                                            ? 'hover:bg-[rgba(56,189,248,0.08)] hover:border-[rgba(56,189,248,0.15)] cursor-pointer'
                                             : 'cursor-default'
                                         }`}
                                       >
-                                        {obj.cropFilename && (
-                                          <div className="w-10 h-10 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.2)] shrink-0">
-                                            <img
-                                              src={mediaUrl(`/crops/${obj.cropFilename}`)}
-                                              alt=""
-                                              className="w-full h-full object-cover bg-black"
-                                            />
-                                          </div>
-                                        )}
-                                        <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
-                                          {obj.className}
-                                          {obj.confidence != null && obj.confidence > 0 && (
-                                            <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
+                                        <div className="flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary">
+                                          {obj.cropFilename && (
+                                            <div className="w-10 h-10 rounded-lg overflow-hidden border border-[rgba(56,189,248,0.2)] shrink-0">
+                                              <img
+                                                src={mediaUrl(`/crops/${obj.cropFilename}`)}
+                                                alt=""
+                                                className="w-full h-full object-cover bg-black"
+                                              />
+                                            </div>
                                           )}
-                                        </span>
-                                        {obj.trackId > 0 && (
-                                          <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
-                                        )}
-                                        {obj.labelStatus === 'confirmed' && obj.label && (
-                                          <span className="text-[0.72rem] text-green-400 font-medium">
-                                            {obj.label}
-                                            <span className="text-text-muted font-normal ml-1">(confirmed)</span>
+                                          <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
+                                            {obj.className}
+                                            {obj.confidence != null && obj.confidence > 0 && (
+                                              <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
+                                            )}
                                           </span>
-                                        )}
-                                        {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
-                                          <span className="text-[0.72rem] text-secondary">
-                                            {Math.round(obj.matchScore * 100)}% match · {obj.label}
-                                          </span>
-                                        )}
-                                        {isClickablePerson && (
-                                          <span className="text-[0.65rem] text-primary ml-auto">View appearances →</span>
+                                          {obj.trackId > 0 && (
+                                            <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
+                                          )}
+                                          {isClickablePerson && (
+                                            <span className="text-[0.65rem] text-primary ml-auto">
+                                              {hasIdentity ? 'Timeline & matches →' : 'Identify & matches →'}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {obj.className === 'person' && (
+                                          <div className="pl-12 flex flex-col gap-1">
+                                            {obj.labelStatus === 'confirmed' && obj.label && (
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                <UserCircle size={12} className="text-green-400 shrink-0" />
+                                                <span className="text-[0.72rem] text-green-400 font-medium">{obj.label}</span>
+                                                {hasIdentity && (
+                                                  <IdTooltipChip label="identity" value={obj.identityId!} />
+                                                )}
+                                              </div>
+                                            )}
+                                            {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
+                                              <span className="text-[0.72rem] text-secondary">
+                                                Suggested: {Math.round(obj.matchScore * 100)}% match · {obj.label}
+                                                <span className="text-text-muted ml-1">— click to confirm or choose another</span>
+                                              </span>
+                                            )}
+                                            {obj.labelStatus === 'none' && isClickablePerson && (
+                                              <span className="text-[0.72rem] text-amber-400">
+                                                Unassigned — click to create a new identity or link to existing
+                                              </span>
+                                            )}
+                                            {obj.detectionId && (
+                                              <IdTooltipChip label="detection" value={obj.detectionId} />
+                                            )}
+                                          </div>
                                         )}
                                       </button>
                                     );
@@ -2967,6 +3278,12 @@ function App({ onLogout }: AppProps) {
                                 track {person.streamTracks[0].trackId}
                               </span>
                             ) : null}
+                            <EntityIds
+                              identityId={person.id}
+                              detectionId={person.coverDetectionId}
+                              clipId={person.coverClipId}
+                              className="justify-center"
+                            />
                             </button>
                           </div>
                         );
@@ -3053,6 +3370,14 @@ function App({ onLogout }: AppProps) {
                         <span> · {selectedPerson.streamTracks.length} camera track{selectedPerson.streamTracks.length !== 1 ? 's' : ''}</span>
                       )}
                     </p>
+                    {selectedPerson && (
+                      <EntityIds
+                        identityId={selectedPerson.id}
+                        detectionId={selectedPerson.coverDetectionId}
+                        clipId={selectedPerson.coverClipId}
+                        className="mt-1.5"
+                      />
+                    )}
                     <div className="flex gap-2 mt-2 max-w-md">
                       <input
                         type="text"
@@ -3211,6 +3536,12 @@ function App({ onLogout }: AppProps) {
                                   <span className="text-secondary">track {crop.trackId}</span>
                                   <span className="text-[#a78bfa]">tap to play clip</span>
                                 </div>
+                                <EntityIds
+                                  identityId={crop.identityId || selectedPerson?.id || '—'}
+                                  detectionId={crop.id}
+                                  clipId={crop.clipId}
+                                  className="mt-1"
+                                />
                               </div>
                             </button>
                           </div>
@@ -3304,14 +3635,24 @@ function App({ onLogout }: AppProps) {
                 )}
                 <div className="min-w-0">
                   <h2 className="text-[1.05rem] font-bold text-text-primary">
-                    Person appearances
+                    Detection timeline & matches
                   </h2>
                   <p className="text-[0.72rem] text-text-muted mt-0.5">
                     track {personRefsModal.trackId}
                     {personRefsModal.labelStatus === 'confirmed' && personRefsModal.label
                       ? ` · ${personRefsModal.label}`
-                      : ''}
+                      : personRefsIdentityId
+                        ? ' · linked identity'
+                        : ' · unassigned'}
                   </p>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
+                    {personRefsModal.detectionId && (
+                      <IdTooltipChip label="detection" value={personRefsModal.detectionId} />
+                    )}
+                    {personRefsIdentityId && (
+                      <IdTooltipChip label="identity" value={personRefsIdentityId} />
+                    )}
+                  </div>
                 </div>
               </div>
               <button
@@ -3323,22 +3664,27 @@ function App({ onLogout }: AppProps) {
               </button>
             </div>
 
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={personRefsLabelDraft}
-                onChange={(e) => setPersonRefsLabelDraft(e.target.value)}
-                placeholder="Name this person"
-                className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
-              />
-              <button
-                type="button"
-                onClick={handleSavePersonRefsLabel}
-                disabled={savingPersonRefsLabel}
-                className="btn btn-secondary py-1 px-3 text-[0.75rem] shrink-0"
-              >
-                {savingPersonRefsLabel ? '…' : 'Save label'}
-              </button>
+            <div className="flex flex-col gap-2">
+              <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider">
+                {personRefsIdentityId ? 'Identity label' : 'Create new identity'}
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={personRefsLabelDraft}
+                  onChange={(e) => setPersonRefsLabelDraft(e.target.value)}
+                  placeholder={personRefsIdentityId ? 'Name this person' : 'Enter a name to create identity'}
+                  className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                />
+                <button
+                  type="button"
+                  onClick={handleSavePersonRefsLabel}
+                  disabled={savingPersonRefsLabel || !personRefsLabelDraft.trim()}
+                  className="btn btn-secondary py-1 px-3 text-[0.75rem] shrink-0"
+                >
+                  {savingPersonRefsLabel ? '…' : personRefsIdentityId ? 'Save label' : 'Create'}
+                </button>
+              </div>
             </div>
 
             {!loadingPersonRefs && personRefsIdentitySuggestions.length > 0 && (() => {
@@ -3424,54 +3770,78 @@ function App({ onLogout }: AppProps) {
             <div className="h-px bg-[rgba(255,255,255,0.07)]" />
 
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+              <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider mb-2">
+                Timeline & possible matches
+              </p>
               {loadingPersonRefs ? (
                 <div className="flex justify-center py-10 text-text-muted">
                   <RefreshCw size={20} className="animate-spin" />
                 </div>
               ) : personRefs.length === 0 ? (
                 <p className="text-[0.8rem] text-text-muted text-center py-8">
-                  No other clip appearances found yet.
+                  No appearances or matches found yet.
                 </p>
               ) : (
-                <div className="flex flex-col gap-2">
+                <div className="relative border-l-2 border-[rgba(56,189,248,0.25)] ml-3 pl-5 flex flex-col gap-3">
                   {personRefs.map((ref) => {
                     const isCurrentClip = ref.clipFilename === selectedClip?.filename;
+                    const sourceLabel = ref.source === 'query'
+                      ? 'This detection'
+                      : ref.source === 'identity'
+                        ? 'Same identity'
+                        : 'Possible match';
+                    const sourceClass = ref.source === 'query'
+                      ? 'text-primary bg-primary/10 border-primary/20'
+                      : ref.source === 'identity'
+                        ? 'text-green-400 bg-green-400/10 border-green-400/20'
+                        : 'text-secondary bg-secondary/10 border-secondary/20';
+
                     return (
-                      <button
-                        key={ref.id}
-                        type="button"
-                        disabled={!ref.clipFilename}
-                        onClick={() => openClipFromReference(ref)}
-                        className={`glass-panel p-2.5 flex items-center gap-3 w-full text-left transition-all ${
-                          ref.clipFilename ? 'interactive cursor-pointer hover:border-primary/30' : 'opacity-60 cursor-default'
-                        } ${isCurrentClip ? 'border-primary/40' : ''}`}
-                      >
-                        <div className="w-12 h-12 rounded-md overflow-hidden border border-border-glass shrink-0 bg-black">
-                          <img
-                            src={mediaUrl(`/crops/${ref.filename}`)}
-                            alt=""
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
-                            {isCurrentClip && (
-                              <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
-                            )}
-                            {ref.matchScore != null && (
-                              <span className="text-[0.65rem] text-secondary">
-                                {Math.round(ref.matchScore * 100)}% match
-                              </span>
+                      <div key={ref.id} className="relative">
+                        <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#38bdf8] border-2 border-[#090d16]" />
+                        <button
+                          type="button"
+                          disabled={!ref.clipFilename}
+                          onClick={() => openClipFromReference(ref)}
+                          className={`glass-panel p-2.5 flex items-start gap-3 w-full text-left transition-all ${
+                            ref.clipFilename ? 'interactive cursor-pointer hover:border-primary/30' : 'opacity-60 cursor-default'
+                          } ${isCurrentClip ? 'border-primary/40' : ''}`}
+                        >
+                          <div className="w-12 h-12 rounded-md overflow-hidden border border-border-glass shrink-0 bg-black relative">
+                            <img
+                              src={mediaUrl(`/crops/${ref.filename}`)}
+                              alt=""
+                              className="w-full h-full object-cover"
+                            />
+                            {ref.clipFilename && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                                <Play size={12} className="text-white" fill="white" />
+                              </div>
                             )}
                           </div>
-                          <p className="text-[0.7rem] text-text-muted mt-0.5">
-                            {formatDate(ref.timestamp)}
-                            {ref.clipFilename ? ` · ${ref.clipFilename}` : ''}
-                          </p>
-                        </div>
-                        {ref.clipFilename && <Play size={14} className="text-text-muted shrink-0" />}
-                      </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
+                              <span className={`text-[0.58rem] px-1.5 py-0.5 rounded-full border ${sourceClass}`}>
+                                {sourceLabel}
+                              </span>
+                              {isCurrentClip && (
+                                <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
+                              )}
+                              {ref.trackId != null && ref.trackId > 0 && (
+                                <span className="text-[0.6rem] text-text-muted">track {ref.trackId}</span>
+                              )}
+                            </div>
+                            <p className="text-[0.7rem] text-text-muted mt-0.5">
+                              {formatDate(ref.timestamp)}
+                            </p>
+                            {ref.scores && ref.source === 'match' && (
+                              <MatchScoreBreakdown scores={ref.scores} />
+                            )}
+                            <IdTooltipChip label="detection" value={ref.id} className="mt-1" />
+                          </div>
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -3601,6 +3971,7 @@ function App({ onLogout }: AppProps) {
                 const newStream = await res.json();
                 await fetchDevices();
                 setSelectedStreamId(newStream.streamId);
+                setLiveFeedOpen(true);
                 closeDialog();
               }
             } catch (err) {

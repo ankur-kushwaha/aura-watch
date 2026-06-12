@@ -224,6 +224,7 @@ export async function listPeople(limit = 50, onlineDeviceIds?: string[], orgId?:
           streamId: true,
           trackId: true,
           timestamp: true,
+          clipId: true,
           clipFilename: true,
           clipOffsetMs: true,
         },
@@ -248,6 +249,8 @@ export async function listPeople(limit = 50, onlineDeviceIds?: string[], orgId?:
       displayName,
       coverFilename: cover?.filename ?? null,
       coverCameraName: cover?.cameraName ?? null,
+      coverDetectionId: cover?.id ?? null,
+      coverClipId: cover?.clipId ?? null,
       photoCount: identity._count.detections,
       galleryCount: identity.galleryCount,
       lastSeen: cover?.timestamp?.toISOString() ?? null,
@@ -281,22 +284,41 @@ export async function findSimilarPeople(identityId: string, limit = 8, onlineDev
   }
   if (!searchVector) return [];
 
-  const rejectedPairs = await prisma.reidStreamTrackFeedback.findMany({
-    where: { type: 'different_person' },
-  });
-  const rejectedIdentityPairs = new Set<string>();
-
-  const sourceMappings = await prisma.reidStreamTrackMapping.findMany({
+  const identityDetections = await prisma.reidDetection.findMany({
     where: { identityId },
+    select: { id: true },
   });
-  const sourceKeys = new Set(sourceMappings.map(m => streamTrackKey(m.streamId, m.trackId)));
+  const identityDetectionIds = identityDetections.map((d) => d.id);
 
-  for (const fb of rejectedPairs) {
-    const srcKey = streamTrackKey(fb.sourceStreamId, fb.sourceTrackId);
-    const tgtKey = streamTrackKey(fb.targetStreamId, fb.targetTrackId);
-    if (sourceKeys.has(srcKey) || sourceKeys.has(tgtKey)) {
-      rejectedIdentityPairs.add(`${srcKey}|${tgtKey}`);
-      rejectedIdentityPairs.add(`${tgtKey}|${srcKey}`);
+  const rejectedFeedback = identityDetectionIds.length > 0
+    ? await prisma.reidFeedback.findMany({
+      where: {
+        type: { in: ['reject', 'different_person'] },
+        OR: [
+          { sourceDetectionId: { in: identityDetectionIds } },
+          { targetDetectionId: { in: identityDetectionIds } },
+        ],
+      },
+    })
+    : [];
+
+  const rejectedOtherDetectionIds = new Set<string>();
+  for (const fb of rejectedFeedback) {
+    if (identityDetectionIds.includes(fb.sourceDetectionId)) {
+      rejectedOtherDetectionIds.add(fb.targetDetectionId);
+    } else {
+      rejectedOtherDetectionIds.add(fb.sourceDetectionId);
+    }
+  }
+
+  const rejectedIdentityIds = new Set<string>();
+  if (rejectedOtherDetectionIds.size > 0) {
+    const rejectedDetections = await prisma.reidDetection.findMany({
+      where: { id: { in: [...rejectedOtherDetectionIds] } },
+      select: { identityId: true },
+    });
+    for (const detection of rejectedDetections) {
+      if (detection.identityId) rejectedIdentityIds.add(detection.identityId);
     }
   }
 
@@ -307,13 +329,13 @@ export async function findSimilarPeople(identityId: string, limit = 8, onlineDev
 
   for (const hit of prototypeHits) {
     const hitId = (hit.payload as { identityId?: string })?.identityId;
-    if (!hitId || hitId === identityId) continue;
+    if (!hitId || hitId === identityId || rejectedIdentityIds.has(hitId)) continue;
     identityScores.set(hitId, Math.max(identityScores.get(hitId) ?? 0, hit.score));
   }
 
   for (const hit of cropHits) {
     const payload = hit.payload as { identityId?: string; mongoId?: string };
-    if (!payload?.identityId || payload.identityId === identityId) continue;
+    if (!payload?.identityId || payload.identityId === identityId || rejectedIdentityIds.has(payload.identityId)) continue;
     identityScores.set(
       payload.identityId,
       Math.max(identityScores.get(payload.identityId) ?? 0, hit.score * 0.9),

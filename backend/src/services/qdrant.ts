@@ -1,10 +1,7 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import prisma from './db';
+import { createQdrantClientFromEnv } from './qdrantClient';
 
-const qdrant = new QdrantClient({
-  url: process.env.QDRANT_URL,
-  apiKey: process.env.QDRANT_API_KEY,
-});
+const qdrant = createQdrantClientFromEnv();
 
 const COLLECTION_NAME = 'video_clips';
 

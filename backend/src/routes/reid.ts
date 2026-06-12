@@ -353,13 +353,26 @@ router.post('/feedback/stream-track', async (req: Request, res: Response) => {
   }
 
   try {
-    await prisma.reidStreamTrackFeedback.create({
+    const [sourceDetection, targetDetection] = await Promise.all([
+      prisma.reidDetection.findFirst({
+        where: { streamId: sourceStreamId, trackId: srcTrack },
+        orderBy: { timestamp: 'desc' },
+      }),
+      prisma.reidDetection.findFirst({
+        where: { streamId: targetStreamId, trackId: tgtTrack },
+        orderBy: { timestamp: 'desc' },
+      }),
+    ]);
+
+    if (!sourceDetection || !targetDetection) {
+      return res.status(404).json({ error: 'Could not resolve detections for one or both stream tracks' });
+    }
+
+    await prisma.reidFeedback.create({
       data: {
         type,
-        sourceStreamId,
-        sourceTrackId: srcTrack,
-        targetStreamId,
-        targetTrackId: tgtTrack,
+        sourceDetectionId: sourceDetection.id,
+        targetDetectionId: targetDetection.id,
       },
     });
 
