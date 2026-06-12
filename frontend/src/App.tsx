@@ -151,8 +151,16 @@ interface EdgeDevice {
   name: string;
   status: string;
   lastHeartbeat: string;
+  gitCommit?: string | null;
+  remoteGitCommit?: string | null;
   config?: Record<string, unknown> | null;
   effectiveConfig?: EffectiveEdgeDeviceConfig;
+}
+
+function isEdgeUpdateAvailable(dev: EdgeDevice): boolean {
+  return Boolean(
+    dev.gitCommit && dev.remoteGitCommit && dev.gitCommit !== dev.remoteGitCommit
+  );
 }
 
 interface CameraStream {
@@ -2778,15 +2786,17 @@ function App() {
                           <Power size={11} />
                           {deviceCommandPending === `${dev.deviceId}:reboot` ? 'Rebooting...' : 'Reboot'}
                         </button>
-                        <button
-                          onClick={(e) => handleUpdateService(dev.deviceId, dev.name, e)}
-                          disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:update`}
-                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
-                          title="Force-pull latest code on the edge device"
-                        >
-                          <Download size={11} />
-                          {deviceCommandPending === `${dev.deviceId}:update` ? 'Updating...' : 'Update'}
-                        </button>
+                        {isEdgeUpdateAvailable(dev) && (
+                          <button
+                            onClick={(e) => handleUpdateService(dev.deviceId, dev.name, e)}
+                            disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:update`}
+                            className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
+                            title={`Update available (${dev.gitCommit?.slice(0, 8)} → ${dev.remoteGitCommit?.slice(0, 8)})`}
+                          >
+                            <Download size={11} />
+                            {deviceCommandPending === `${dev.deviceId}:update` ? 'Updating...' : 'Update'}
+                          </button>
+                        )}
                         <button
                           onClick={(e) => openDeviceLogsModal(dev.deviceId, dev.name, e)}
                           className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1"

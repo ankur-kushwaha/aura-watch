@@ -119,7 +119,19 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
  * Edge device registers/announces itself on boot
  */
 router.post('/register', async (req: Request, res: Response) => {
-  const { deviceId, name, enrollmentToken, cameraType, streamUrl, trackingEnabled, motionThreshold, pixelChangeThreshold, status } = req.body;
+  const {
+    deviceId,
+    name,
+    enrollmentToken,
+    cameraType,
+    streamUrl,
+    trackingEnabled,
+    motionThreshold,
+    pixelChangeThreshold,
+    status,
+    gitCommit,
+    remoteGitCommit,
+  } = req.body;
 
   if (!deviceId || !name) {
     return res.status(400).json({ error: 'deviceId and name are required' });
@@ -163,6 +175,14 @@ router.post('/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'enrollmentToken is required for new devices' });
     }
 
+    const versionUpdate: { gitCommit?: string; remoteGitCommit?: string } = {};
+    if (typeof gitCommit === 'string' && gitCommit.trim()) {
+      versionUpdate.gitCommit = gitCommit.trim();
+    }
+    if (typeof remoteGitCommit === 'string' && remoteGitCommit.trim()) {
+      versionUpdate.remoteGitCommit = remoteGitCommit.trim();
+    }
+
     const device = await prisma.edgeDevice.upsert({
       where: { deviceId },
       update: {
@@ -170,6 +190,7 @@ router.post('/register', async (req: Request, res: Response) => {
         orgId,
         status: status || 'Idle',
         lastHeartbeat: new Date(),
+        ...versionUpdate,
       },
       create: {
         deviceId,
@@ -177,6 +198,7 @@ router.post('/register', async (req: Request, res: Response) => {
         orgId,
         status: status || 'Idle',
         lastHeartbeat: new Date(),
+        ...versionUpdate,
       },
     });
 

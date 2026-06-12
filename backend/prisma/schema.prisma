@@ -99,13 +99,15 @@ model VideoClip {
 }
 
 model EdgeDevice {
-  id            String            @id @default(auto()) @map("_id") @db.ObjectId
-  deviceId      String            @unique
-  name          String
-  status        String            @default("Offline") // "Offline", "Online"
-  lastHeartbeat DateTime          @default(now())
-  orgId         String?           @db.ObjectId
-  config        EdgeDeviceConfig?
+  id              String            @id @default(auto()) @map("_id") @db.ObjectId
+  deviceId        String            @unique
+  name            String
+  status          String            @default("Offline") // "Offline", "Online"
+  lastHeartbeat   DateTime          @default(now())
+  gitCommit       String?
+  remoteGitCommit String?
+  orgId           String?           @db.ObjectId
+  config          EdgeDeviceConfig?
   org           Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   streams       CameraStream[]
 }

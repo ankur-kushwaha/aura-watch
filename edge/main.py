@@ -141,6 +141,37 @@ class EdgeAgent:
             except Exception:
                 pass
 
+    def _check_git_versions(self) -> dict[str, Optional[str]]:
+        """Compare local HEAD with origin on boot; used to surface update availability in the UI."""
+        try:
+            repo_root = self._find_repo_root()
+            if not os.path.isdir(os.path.join(repo_root, ".git")):
+                return {"gitCommit": None, "remoteGitCommit": None}
+
+            local_result = self._run_git(repo_root, ["rev-parse", "HEAD"], timeout=15)
+            if local_result.returncode != 0:
+                return {"gitCommit": None, "remoteGitCommit": None}
+            local_commit = local_result.stdout.strip()
+
+            branch_result = self._run_git(repo_root, ["symbolic-ref", "--short", "HEAD"], timeout=15)
+            if branch_result.returncode != 0:
+                return {"gitCommit": local_commit, "remoteGitCommit": None}
+            branch = branch_result.stdout.strip()
+
+            fetch_result = self._run_git(repo_root, ["fetch", "origin", branch], timeout=60)
+            if fetch_result.returncode != 0:
+                return {"gitCommit": local_commit, "remoteGitCommit": None}
+
+            remote_result = self._run_git(repo_root, ["rev-parse", f"origin/{branch}"], timeout=15)
+            if remote_result.returncode != 0:
+                return {"gitCommit": local_commit, "remoteGitCommit": None}
+            remote_commit = remote_result.stdout.strip()
+
+            return {"gitCommit": local_commit, "remoteGitCommit": remote_commit}
+        except Exception as exc:
+            print(f"[Edge] Git version check failed: {exc}")
+            return {"gitCommit": None, "remoteGitCommit": None}
+
     def register_device(self) -> dict[str, Any]:
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/register"
         # Backwards compatible parameters if hub expects single-stream fields
@@ -157,6 +188,22 @@ class EdgeAgent:
         enrollment_token = os.getenv("ENROLLMENT_TOKEN", "").strip()
         if enrollment_token:
             payload["enrollmentToken"] = enrollment_token
+
+        version_info = self._check_git_versions()
+        if version_info.get("gitCommit"):
+            payload["gitCommit"] = version_info["gitCommit"]
+        if version_info.get("remoteGitCommit"):
+            payload["remoteGitCommit"] = version_info["remoteGitCommit"]
+        local_commit = version_info.get("gitCommit")
+        remote_commit = version_info.get("remoteGitCommit")
+        if local_commit and remote_commit:
+            if local_commit != remote_commit:
+                print(
+                    f"[Edge] Update available: local {local_commit[:8]} != remote {remote_commit[:8]}"
+                )
+            else:
+                print(f"[Edge] Git version up to date ({local_commit[:8]})")
+
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
         return response.json()
