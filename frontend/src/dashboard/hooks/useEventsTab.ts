@@ -218,7 +218,6 @@ export function useEventsTab({
       return [normalized, ...prev];
     });
     setClipsTotal((prev) => prev + 1);
-    setSelectedClip(normalized);
   }, [onlineDeviceIds]);
 
   const handleSelectClip = useCallback((clip: VideoClip) => {
