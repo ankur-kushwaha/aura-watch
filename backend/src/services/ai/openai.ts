@@ -100,7 +100,9 @@ Include specific details such as:
 - Any motion or changes detected.
 - Objects, people, animals, or vehicles that appear.
 - Actions taken (e.g., a person walking, a door opening, a car driving by).
-Be objective, precise, and descriptive. Do not assume context not shown in the video.`
+- For each person clearly visible, include searchable visual attributes when discernible: approximate age group (child, teen, adult, elderly), perceived gender presentation, clothing colors and types (e.g., red jacket, blue jeans), and accessories (hat, backpack, bag).
+- For each vehicle clearly visible, include searchable attributes when discernible: color, type/body style (sedan, SUV, truck, van, motorcycle, bicycle), and distinguishing features (e.g., roof rack, trailer, license plate visible).
+Be objective, precise, and descriptive. Only state attributes you can reasonably infer from visible appearance; use cautious wording when uncertain. Do not assume context not shown in the video.`
               },
               ...base64Frames.map(frame => ({
                 type: 'image_url' as const,
