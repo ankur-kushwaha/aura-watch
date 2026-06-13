@@ -939,6 +939,13 @@ function App() {
     }
   }, [isMobileViewport]);
 
+  const closeMobileLeftSidebarOnButtonClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (!isMobileViewport) return;
+    if ((e.target as HTMLElement).closest('button')) {
+      setLeftSidebarOpen(false);
+    }
+  }, [isMobileViewport]);
+
   // RAG Q&A states
   const [query, setQuery] = useState<string>('');
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; clips?: RagResponseClip[]; reidDetections?: { id: string; cameraName: string; trackId: number; timestamp: string; filename: string; className: string; deviceId?: string | null }[] }[]>([]);
@@ -2961,6 +2968,7 @@ function App() {
             transition-transform duration-300 ease-out
             lg:relative lg:z-auto lg:w-auto lg:overflow-visible lg:p-0 lg:bg-transparent lg:border-r-0 lg:shadow-none
             ${leftSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+          onClickCapture={closeMobileLeftSidebarOnButtonClick}
         >
           <div className="flex justify-between items-center lg:hidden mb-1">
             <span className="text-[0.85rem] font-semibold text-text-secondary">Devices & Cameras</span>
