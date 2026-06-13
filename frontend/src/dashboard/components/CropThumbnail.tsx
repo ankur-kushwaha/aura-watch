@@ -7,12 +7,17 @@ import { mediaUrl } from '../utils/media';
 export function CropThumbnail({
   filename,
   size = 'sm',
+  lazy = false,
+  playOnClick = true,
   onPreview,
   onPlayClip,
   clipPlayback,
 }: {
   filename: string;
   size?: 'sm' | 'md';
+  lazy?: boolean;
+  /** When false, click opens crop preview even if clip playback is available. */
+  playOnClick?: boolean;
   onPreview: (filename: string) => void;
   onPlayClip?: (opts: CropClipPlayback & { cropFilename: string }) => void | Promise<void>;
   clipPlayback?: CropClipPlayback;
@@ -22,7 +27,7 @@ export function CropThumbnail({
   const btnRef = useRef<HTMLButtonElement>(null);
   const src = mediaUrl(`/crops/${filename}`);
   const thumbClass = size === 'sm' ? 'w-10 h-10' : 'w-12 h-12';
-  const hasVideo = !!(clipPlayback?.clipFilename || clipPlayback?.detectionId);
+  const hasVideo = playOnClick && !!(clipPlayback?.clipFilename || clipPlayback?.detectionId);
 
   const updateHoverPos = () => {
     const rect = btnRef.current?.getBoundingClientRect();
@@ -57,7 +62,7 @@ export function CropThumbnail({
         } transition-colors`}
         title={hasVideo ? 'Hover to preview crop · Click to play clip' : 'Hover or click to enlarge'}
       >
-        <img src={src} alt="" className={`w-full h-full ${REID_CROP_IMG}`} />
+        <img src={src} alt="" loading={lazy ? 'lazy' : undefined} className={`w-full h-full ${REID_CROP_IMG}`} />
       </button>
       {hovering && createPortal(
         <div

@@ -21,7 +21,7 @@ import type {
   VideoClip,
 } from '../../types';
 import { formatDate } from '../../utils/format';
-import { identityCoverUrl } from '../../utils/media';
+import { identityCoverUrl, mediaUrl } from '../../utils/media';
 import { buildScoreBasedTimeline } from '../../utils/reid';
 import { CropThumbnail } from '../CropThumbnail';
 import { IdsInfoIcon } from '../IdsInfoIcon';
@@ -31,8 +31,6 @@ export interface PersonAppearancesDialogProps {
   detection: ClipObjectDetection | null;
   onClose: () => void;
   selectedClip: VideoClip | null;
-  clips: VideoClip[];
-  onSelectClip: (clip: VideoClip) => void;
   onClipDetectionsRefresh: () => void | Promise<void>;
   onCropPreview: (filename: string) => void;
   onPlayClip: (opts: CropClipPlayback & { cropFilename: string }) => void | Promise<void>;
@@ -56,8 +54,6 @@ export function PersonAppearancesDialog({
   detection,
   onClose,
   selectedClip,
-  clips,
-  onSelectClip,
   onClipDetectionsRefresh,
   onCropPreview,
   onPlayClip,
@@ -289,13 +285,15 @@ export function PersonAppearancesDialog({
     }
   };
 
-  const openClipFromReference = (ref: PersonClipReference) => {
-    if (!ref.clipFilename) return;
-    const clip = clips.find((c) => c.filename === ref.clipFilename);
-    if (clip) {
-      onSelectClip(clip);
-      onClose();
-    }
+  const playReferenceClip = (ref: PersonClipReference) => {
+    if (!ref.clipFilename && !ref.id) return;
+    void onPlayClip({
+      cropFilename: ref.filename,
+      clipFilename: ref.clipFilename,
+      clipOffsetMs: ref.clipOffsetMs,
+      cameraName: ref.cameraName,
+      detectionId: ref.id,
+    });
   };
 
   const editingIdentity = !identityId || !labelConfirmed || showSuggestions;
@@ -315,18 +313,33 @@ export function PersonAppearancesDialog({
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             {detection?.cropFilename && (
-              <CropThumbnail
-                filename={detection.cropFilename}
-                size="md"
-                onPreview={onCropPreview}
-                onPlayClip={onPlayClip}
-                clipPlayback={{
-                  clipFilename: selectedClip?.filename,
-                  clipOffsetMs: 0,
-                  cameraName: selectedClip?.camera ?? detection.label ?? 'Camera',
-                  detectionId: detection.detectionId,
-                }}
-              />
+              <div className="relative shrink-0">
+                <CropThumbnail
+                  filename={detection.cropFilename}
+                  size="md"
+                  lazy
+                  playOnClick={false}
+                  onPreview={onCropPreview}
+                />
+                {(selectedClip?.filename || detection.detectionId) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void onPlayClip({
+                        cropFilename: detection.cropFilename!,
+                        clipFilename: selectedClip?.filename,
+                        clipOffsetMs: 0,
+                        cameraName: selectedClip?.camera ?? detection.label ?? 'Camera',
+                        detectionId: detection.detectionId,
+                      });
+                    }}
+                    className="absolute bottom-0.5 right-0.5 p-1 rounded bg-black/75 hover:bg-black/90 border border-white/10 transition-colors"
+                    title="Play clip"
+                  >
+                    <Play size={10} className="text-white" fill="white" />
+                  </button>
+                )}
+              </div>
             )}
             <div className="min-w-0">
               <DialogTitle>Detection timeline & matches</DialogTitle>
@@ -424,8 +437,11 @@ export function PersonAppearancesDialog({
                           </div>
                         ) : (
                           <img
-                            src={identityCoverUrl(suggestion.id)}
+                            src={suggestion.coverFilename
+                              ? mediaUrl(`/crops/${suggestion.coverFilename}`)
+                              : identityCoverUrl(suggestion.id)}
                             alt=""
+                            loading="lazy"
                             onError={() => {
                               setBrokenCovers((prev) => new Set(prev).add(suggestion.id));
                             }}
@@ -484,56 +500,47 @@ export function PersonAppearancesDialog({
                   <div key={ref.id} className="relative">
                     <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#38bdf8] border-2 border-[#090d16]" />
                     <div className={`glass-panel p-2.5 flex items-start gap-3 w-full ${isCurrentClip ? 'border-primary/40' : ''}`}>
-                      <button
-                        type="button"
-                        disabled={!ref.clipFilename}
-                        onClick={() => openClipFromReference(ref)}
-                        className={`flex items-start gap-3 flex-1 min-w-0 text-left bg-transparent border-none p-0 ${
-                          ref.clipFilename ? 'cursor-pointer' : 'opacity-60 cursor-default'
-                        }`}
-                      >
-                        <div className="relative shrink-0">
-                          <CropThumbnail
-                            filename={ref.filename}
-                            size="md"
-                            onPreview={onCropPreview}
-                            onPlayClip={onPlayClip}
-                            clipPlayback={{
-                              clipFilename: ref.clipFilename,
-                              clipOffsetMs: ref.clipOffsetMs,
-                              cameraName: ref.cameraName,
-                              detectionId: ref.id,
-                            }}
-                          />
-                          {ref.clipFilename && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg pointer-events-none">
-                              <Play size={12} className="text-white" fill="white" />
-                            </div>
+                      <div className="relative shrink-0">
+                        <CropThumbnail
+                          filename={ref.filename}
+                          size="md"
+                          lazy
+                          playOnClick={false}
+                          onPreview={onCropPreview}
+                        />
+                        {(ref.clipFilename || ref.id) && (
+                          <button
+                            type="button"
+                            onClick={() => playReferenceClip(ref)}
+                            className="absolute bottom-0.5 right-0.5 p-1 rounded bg-black/75 hover:bg-black/90 border border-white/10 transition-colors"
+                            title="Play clip"
+                          >
+                            <Play size={10} className="text-white" fill="white" />
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
+                          <span className={`text-[0.58rem] px-1.5 py-0.5 rounded-full border ${sourceClass}`}>
+                            {sourceLabel}
+                          </span>
+                          {isCurrentClip && (
+                            <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
                           )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
-                            <span className={`text-[0.58rem] px-1.5 py-0.5 rounded-full border ${sourceClass}`}>
-                              {sourceLabel}
+                          {ref.trackId != null && ref.trackId > 0 && (
+                            <span className="text-[0.6rem] text-text-muted">track {ref.trackId}</span>
+                          )}
+                          {ref.matchScore != null && !isQuery && (
+                            <span className="text-[0.6rem] text-secondary font-semibold">
+                              {Math.round(ref.matchScore * 100)}% match
                             </span>
-                            {isCurrentClip && (
-                              <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
-                            )}
-                            {ref.trackId != null && ref.trackId > 0 && (
-                              <span className="text-[0.6rem] text-text-muted">track {ref.trackId}</span>
-                            )}
-                            {ref.matchScore != null && !isQuery && (
-                              <span className="text-[0.6rem] text-secondary font-semibold">
-                                {Math.round(ref.matchScore * 100)}% match
-                              </span>
-                            )}
-                            <IdsInfoIcon ids={[{ label: 'detection', value: ref.id }]} />
-                          </div>
-                          <p className="text-[0.7rem] text-text-muted mt-0.5">{formatDate(ref.timestamp)}</p>
-                          {ref.scores && !isQuery && <MatchScoreBreakdown scores={ref.scores} />}
+                          )}
+                          <IdsInfoIcon ids={[{ label: 'detection', value: ref.id }]} />
                         </div>
-                      </button>
+                        <p className="text-[0.7rem] text-text-muted mt-0.5">{formatDate(ref.timestamp)}</p>
+                        {ref.scores && !isQuery && <MatchScoreBreakdown scores={ref.scores} />}
+                      </div>
                       {!isQuery && (
                         <div className="flex flex-col gap-1 shrink-0">
                           <button

@@ -30,9 +30,7 @@ export function EventsTab({ events }: EventsTabProps) {
     orgSettings,
     deviceNameById,
     onlineDeviceIds,
-    hasOnlineDevices,
     isMobileViewport,
-    clips,
     clipsTotal,
     loadingClips,
     loadingMoreClips,
@@ -342,7 +340,6 @@ export function EventsTab({ events }: EventsTabProps) {
         streams={events.streams}
         onlineDeviceIds={onlineDeviceIds}
         visibleClipIds={visibleClipIds}
-        hasOnlineDevices={hasOnlineDevices}
       />
 
       <MobileClipPreviewDialog
@@ -373,8 +370,6 @@ export function EventsTab({ events }: EventsTabProps) {
         detection={personRefsDetection}
         onClose={() => setPersonRefsDetection(null)}
         selectedClip={selectedClip}
-        clips={clips}
-        onSelectClip={handleSelectClip}
         onClipDetectionsRefresh={refreshClipDetections}
         onCropPreview={setCropPreviewFilename}
         onPlayClip={playDetectionClip}
