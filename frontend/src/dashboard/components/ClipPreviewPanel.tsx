@@ -1,4 +1,5 @@
 import { Activity, Clock, Cpu, Fingerprint, Loader2, ScanSearch, ScrollText, Sparkles, UserCircle } from 'lucide-react';
+import { useState } from 'react';
 import type { OrgSettings } from '../../api';
 import type { ClipObjectDetection, ClipReidLog, CropClipPlayback, VideoClip } from '../types';
 import { getClipDetectionCount } from '../utils/clips';
@@ -43,17 +44,25 @@ export function ClipPreviewPanel({
   const detectionSummary = clip.summary?.trim();
   const aiSummary = clip.aiSummary?.trim();
   const canGenerateAiSummary = orgSettings.aiChat && !!onGenerateAiSummary;
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col gap-3">
-      <div className={`bg-[#000] rounded-xl overflow-hidden ${videoHeightClass} border border-[rgba(255,255,255,0.08)] shrink-0`}>
+      <div className={`bg-[#000] rounded-xl overflow-hidden ${videoHeightClass} border border-[rgba(255,255,255,0.08)] shrink-0 relative`}>
         <video
           key={clip.id}
           src={mediaUrl(`/videos/${clip.filename}`)}
           controls
           autoPlay
+          onError={() => setVideoError('Could not load clip from the edge device. It may be offline or busy — try again in a few seconds.')}
+          onLoadedData={() => setVideoError(null)}
           className="w-full h-full object-contain"
         />
+        {videoError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-4 text-center">
+            <p className="text-[0.75rem] text-amber-300 leading-snug">{videoError}</p>
+          </div>
+        )}
       </div>
       <div>
         <div className="flex justify-between items-start mb-1.5 flex-wrap gap-2">

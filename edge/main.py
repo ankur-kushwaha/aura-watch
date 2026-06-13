@@ -390,6 +390,7 @@ class EdgeAgent:
             "clip_track_events": [],
             "clip_track_events_lock": threading.Lock(),
             "track_snapshot_last_at": 0.0,
+            "vehicle_appearance_tracks": set(),
             "recording_started_at_mono": None,
             "recording_started_at_ms": None,
         }
@@ -617,9 +618,12 @@ class EdgeAgent:
                                     "kind": "snapshot",
                                 }
                                 if is_vehicle_class(detection.class_name):
-                                    appearance = analyze_vehicle_from_frame(frame, detection.bbox)
-                                    if appearance:
-                                        event["appearance"] = appearance
+                                    seen_vehicle_tracks = p_data.setdefault("vehicle_appearance_tracks", set())
+                                    if detection.track_id not in seen_vehicle_tracks:
+                                        appearance = analyze_vehicle_from_frame(frame, detection.bbox)
+                                        if appearance:
+                                            event["appearance"] = appearance
+                                            seen_vehicle_tracks.add(detection.track_id)
                                 p_data["clip_track_events"].append(event)
                 if new_detection and tracking_on:
                     names = ", ".join(sorted({d.class_name for d in detections}))
@@ -771,6 +775,7 @@ class EdgeAgent:
             with p_data["clip_track_events_lock"]:
                 p_data["clip_track_events"] = []
             p_data["track_snapshot_last_at"] = 0.0
+            p_data["vehicle_appearance_tracks"] = set()
 
         config = self.streams_config.get(stream_id)
         name = config.name if config else stream_id
@@ -1263,7 +1268,12 @@ class EdgeAgent:
                     state = "enabled" if stream_state else "disabled"
 
             elif msg_type == "request_stream_file":
-                self._handle_stream_file_request(data["requestId"], data["filename"])
+                threading.Thread(
+                    target=self._handle_stream_file_request,
+                    args=(data["requestId"], data["filename"]),
+                    name=f"stream-file-{data.get('filename', 'unknown')}",
+                    daemon=True,
+                ).start()
 
             elif msg_type == "delete_clip_file":
                 filename = data.get("filename", "")
