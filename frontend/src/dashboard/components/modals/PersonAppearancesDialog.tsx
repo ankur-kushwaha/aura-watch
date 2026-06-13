@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Play,
   RefreshCw,
@@ -23,7 +23,8 @@ import type {
 import { formatDate } from '../../utils/format';
 import { mediaUrl } from '../../utils/media';
 import { buildScoreBasedTimeline } from '../../utils/reid';
-import { CropThumbnail, DeferredCropImage, useDeferredLoad } from '../CropThumbnail';
+import { useDeferredLoad } from '../../hooks/useDeferredLoad';
+import { CropThumbnail, DeferredCropImage } from '../CropThumbnail';
 import { IdsInfoIcon } from '../IdsInfoIcon';
 import { MatchScoreBreakdown } from '../MatchScoreBreakdown';
 import { TimelineClipPlaybackDialog } from './TimelineClipPlaybackDialog';
@@ -50,6 +51,24 @@ async function fetchTrackTimeline(detectionId: string) {
   };
 }
 
+function getInitialIdentityState(detection: ClipObjectDetection) {
+  const initiallyConfirmed = detection.labelStatus === 'confirmed' && !!detection.label?.trim();
+  return {
+    identityId: detection.identityId ?? null,
+    labelDraft: initiallyConfirmed ? detection.label! : '',
+    labelConfirmed: initiallyConfirmed,
+    showSuggestions: !initiallyConfirmed && !detection.identityId,
+  };
+}
+
+interface PersonAppearancesDialogBodyProps {
+  detection: ClipObjectDetection;
+  onClose: () => void;
+  selectedClip: VideoClip | null;
+  onClipDetectionsRefresh: () => void | Promise<void>;
+  onCropPreview: (filename: string) => void;
+}
+
 export function PersonAppearancesDialog({
   detection,
   onClose,
@@ -57,19 +76,41 @@ export function PersonAppearancesDialog({
   onClipDetectionsRefresh,
   onCropPreview,
 }: PersonAppearancesDialogProps) {
+  return (
+    <Dialog open={!!detection} onOpenChange={(open) => { if (!open) onClose(); }}>
+      {detection && (
+        <PersonAppearancesDialogBody
+          key={detection.detectionId}
+          detection={detection}
+          onClose={onClose}
+          selectedClip={selectedClip}
+          onClipDetectionsRefresh={onClipDetectionsRefresh}
+          onCropPreview={onCropPreview}
+        />
+      )}
+    </Dialog>
+  );
+}
+
+function PersonAppearancesDialogBody({
+  detection,
+  onClose,
+  selectedClip,
+  onClipDetectionsRefresh,
+  onCropPreview,
+}: PersonAppearancesDialogBodyProps) {
+  const initialIdentity = getInitialIdentityState(detection);
   const [personRefs, setPersonRefs] = useState<PersonClipReference[]>([]);
   const [clipPlayback, setClipPlayback] = useState<TimelineVideoPlayback | null>(null);
-  const [identityId, setIdentityId] = useState<string | null>(null);
+  const [identityId, setIdentityId] = useState<string | null>(initialIdentity.identityId);
   const [identitySuggestions, setIdentitySuggestions] = useState<ReidPersonMatch[]>([]);
-  const [labelDraft, setLabelDraft] = useState('');
-  const [labelConfirmed, setLabelConfirmed] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(true);
-  const [loading, setLoading] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(initialIdentity.labelDraft);
+  const [labelConfirmed, setLabelConfirmed] = useState(initialIdentity.labelConfirmed);
+  const [showSuggestions, setShowSuggestions] = useState(initialIdentity.showSuggestions);
+  const [loading, setLoading] = useState(true);
   const [savingLabel, setSavingLabel] = useState(false);
   const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
   const [brokenCovers, setBrokenCovers] = useState<Set<string>>(new Set());
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
 
   const loadIdentitySuggestions = useCallback(async (forIdentityId: string | null) => {
     const suggestions: ReidPersonMatch[] = [];
@@ -139,39 +180,18 @@ export function PersonAppearancesDialog({
   }, []);
 
   useEffect(() => {
-    const detectionId = detection?.detectionId;
-    if (!detectionId || detection.className !== 'person') {
-      setClipPlayback(null);
-      setPersonRefs([]);
-      setIdentityId(null);
-      setIdentitySuggestions([]);
-      setLabelDraft('');
-      setLabelConfirmed(false);
-      setShowSuggestions(true);
-      setBrokenCovers(new Set());
-      return;
-    }
-
     let cancelled = false;
-    const initiallyConfirmed = detection.labelStatus === 'confirmed' && !!detection.label?.trim();
-    setPersonRefs([]);
-    setIdentityId(detection.identityId ?? null);
-    setLabelDraft(initiallyConfirmed ? detection.label! : '');
-    setLabelConfirmed(initiallyConfirmed);
-    setShowSuggestions(!initiallyConfirmed && !detection.identityId);
-    setIdentitySuggestions([]);
-    setLoading(true);
 
     void (async () => {
       try {
-        const resolvedIdentityId = await reloadTimeline(detectionId);
+        const resolvedIdentityId = await reloadTimeline(detection.detectionId!);
         if (cancelled) return;
         await loadIdentitySuggestions(resolvedIdentityId ?? detection.identityId ?? null);
       } catch (err) {
         console.error('Failed to load person references', err);
         if (!cancelled) {
           alert('Could not load appearances for this person.');
-          onCloseRef.current();
+          onClose();
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -179,10 +199,10 @@ export function PersonAppearancesDialog({
     })();
 
     return () => { cancelled = true; };
-  }, [detection?.detectionId, detection?.className, loadIdentitySuggestions, reloadTimeline]);
+  }, [detection.detectionId, detection.identityId, loadIdentitySuggestions, onClose, reloadTimeline]);
 
   const handleAssignIdentity = async (suggestion: ReidPersonMatch) => {
-    if (!detection?.detectionId) return;
+    if (!detection.detectionId) return;
     setSavingLabel(true);
     try {
       const res = await apiFetch(`/reid/detections/${detection.detectionId}/assign-identity`, {
@@ -213,7 +233,7 @@ export function PersonAppearancesDialog({
   };
 
   const handleSaveLabel = async () => {
-    if (!detection?.detectionId) return;
+    if (!detection.detectionId) return;
     setSavingLabel(true);
     try {
       let resolvedIdentityId = identityId;
@@ -263,7 +283,7 @@ export function PersonAppearancesDialog({
   };
 
   const handleFeedback = async (targetDetectionId: string, type: 'confirm' | 'reject') => {
-    const sourceDetectionId = personRefs.find((r) => r.source === 'query')?.id ?? detection?.detectionId;
+    const sourceDetectionId = personRefs.find((r) => r.source === 'query')?.id ?? detection.detectionId;
     if (!sourceDetectionId || sourceDetectionId === targetDetectionId) return;
 
     const key = `${type}:${sourceDetectionId}:${targetDetectionId}`;
@@ -279,7 +299,7 @@ export function PersonAppearancesDialog({
         alert(data.error || 'Failed to save feedback');
         return;
       }
-      if (detection?.detectionId) {
+      if (detection.detectionId) {
         await reloadTimeline(detection.detectionId);
       }
     } catch (err) {
@@ -325,7 +345,7 @@ export function PersonAppearancesDialog({
   };
 
   const playQueryClip = async () => {
-    if (!detection?.cropFilename) return;
+    if (!detection.cropFilename) return;
 
     let clipFilename = selectedClip?.filename;
     let clipOffsetMs = 0;
@@ -371,36 +391,23 @@ export function PersonAppearancesDialog({
   const queryId = personRefs.find((r) => r.source === 'query')?.id;
 
   return (
-    <Dialog open={!!detection} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <>
       <DialogContent className="max-w-[640px] p-6 flex flex-col gap-4 max-h-[85vh]">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            {detection?.cropFilename && (
-              <div className="relative shrink-0">
-                <CropThumbnail
-                  filename={detection.cropFilename}
-                  size="md"
-                  showHoverPreview={false}
-                  playOnClick={false}
-                  onPreview={onCropPreview}
-                />
-                {(selectedClip?.filename || detection.detectionId) && (
-                  <button
-                    type="button"
-                    onClick={() => { void playQueryClip(); }}
-                    className="absolute bottom-0.5 right-0.5 p-1 rounded bg-black/75 hover:bg-black/90 border border-white/10 transition-colors"
-                    title="Play clip"
-                  >
-                    <Play size={10} className="text-white" fill="white" />
-                  </button>
-                )}
-              </div>
+            {detection.cropFilename && (
+              <CropThumbnail
+                filename={detection.cropFilename}
+                size="md"
+                showHoverPreview={false}
+                playOnClick={false}
+                onPreview={onCropPreview}
+              />
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <DialogTitle>Detection timeline & matches</DialogTitle>
               <p className="text-[0.72rem] text-text-muted mt-0.5">
-                track {detection?.trackId}
-                {detection?.labelStatus === 'confirmed' && detection?.label
+                {detection.labelStatus === 'confirmed' && detection.label
                   ? ` · ${detection.label}`
                   : identityId
                     ? ' · linked identity'
@@ -409,19 +416,31 @@ export function PersonAppearancesDialog({
               <IdsInfoIcon
                 className="mt-1"
                 ids={[
-                  ...(detection?.detectionId ? [{ label: 'detection', value: detection.detectionId }] : []),
+                  ...(detection.detectionId ? [{ label: 'detection', value: detection.detectionId }] : []),
                   ...(identityId ? [{ label: 'identity', value: identityId }] : []),
                 ]}
               />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)] shrink-0"
-          >
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {detection.cropFilename && (selectedClip?.filename || detection.detectionId) && (
+              <button
+                type="button"
+                onClick={() => { void playQueryClip(); }}
+                className="btn btn-secondary p-2 rounded-lg hover:border-primary/40 hover:text-primary"
+                title="Play clip"
+              >
+                <Play size={16} fill="currentColor" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)] shrink-0"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {!editingIdentity ? (
@@ -460,7 +479,7 @@ export function PersonAppearancesDialog({
                 value={labelDraft}
                 onChange={(e) => setLabelDraft(e.target.value)}
                 placeholder={identityId ? 'Name this person' : 'Enter a name to create identity'}
-                className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
+                className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-border-glass text-text-primary"
               />
               <button
                 type="button"
@@ -541,27 +560,15 @@ export function PersonAppearancesDialog({
 
                 return (
                   <div key={ref.id} className="relative">
-                    <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#38bdf8] border-2 border-[#090d16]" />
+                    <div className="absolute left-[-23px] top-4 w-2.5 h-2.5 rounded-full bg-[#38bdf8] border-2 border-[#090d16]" />
                     <div className={`glass-panel p-2.5 flex items-start gap-3 w-full ${isCurrentClip ? 'border-primary/40' : ''}`}>
-                      <div className="relative shrink-0">
-                        <DeferredCropImage
-                          filename={ref.filename}
-                          size="md"
-                          eager={isQuery}
-                          onClick={() => onCropPreview(ref.filename)}
-                          title="Click to enlarge crop"
-                        />
-                        {(ref.clipFilename || ref.id) && (
-                          <button
-                            type="button"
-                            onClick={() => { void playReferenceClip(ref); }}
-                            className="absolute bottom-0.5 right-0.5 p-1 rounded bg-black/75 hover:bg-black/90 border border-white/10 transition-colors"
-                            title="Play clip"
-                          >
-                            <Play size={10} className="text-white" fill="white" />
-                          </button>
-                        )}
-                      </div>
+                      <DeferredCropImage
+                        filename={ref.filename}
+                        size="md"
+                        eager={isQuery}
+                        onClick={() => onCropPreview(ref.filename)}
+                        title="Click to enlarge crop"
+                      />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
@@ -571,9 +578,7 @@ export function PersonAppearancesDialog({
                           {isCurrentClip && (
                             <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
                           )}
-                          {ref.trackId != null && ref.trackId > 0 && (
-                            <span className="text-[0.6rem] text-text-muted">track {ref.trackId}</span>
-                          )}
+                         
                           {ref.matchScore != null && !isQuery && (
                             <span className="text-[0.6rem] text-secondary font-semibold">
                               {Math.round(ref.matchScore * 100)}% match
@@ -584,28 +589,40 @@ export function PersonAppearancesDialog({
                         <p className="text-[0.7rem] text-text-muted mt-0.5">{formatDate(ref.timestamp)}</p>
                         {ref.scores && !isQuery && <MatchScoreBreakdown scores={ref.scores} />}
                       </div>
-                      {!isQuery && (
-                        <div className="flex flex-col gap-1 shrink-0">
+                      <div className="flex flex-col gap-1.5 shrink-0 self-center">
+                        {(ref.clipFilename || ref.id) && (
                           <button
                             type="button"
-                            title="Same person"
-                            disabled={!!feedbackPending}
-                            onClick={() => { void handleFeedback(ref.id, 'confirm'); }}
-                            className="btn btn-secondary p-1.5 border-none hover:text-green-400"
+                            onClick={() => { void playReferenceClip(ref); }}
+                            className="btn btn-secondary p-2 rounded-lg hover:border-primary/40 hover:text-primary"
+                            title="Play clip"
                           >
-                            <ThumbsUp size={13} className={feedbackPending === confirmKey ? 'animate-pulse' : ''} />
+                            <Play size={16} fill="currentColor" />
                           </button>
-                          <button
-                            type="button"
-                            title="Different person"
-                            disabled={!!feedbackPending}
-                            onClick={() => { void handleFeedback(ref.id, 'reject'); }}
-                            className="btn btn-secondary p-1.5 border-none hover:text-danger"
-                          >
-                            <ThumbsDown size={13} className={feedbackPending === rejectKey ? 'animate-pulse' : ''} />
-                          </button>
-                        </div>
-                      )}
+                        )}
+                        {!isQuery && (
+                          <>
+                            <button
+                              type="button"
+                              title="Same person"
+                              disabled={!!feedbackPending}
+                              onClick={() => { void handleFeedback(ref.id, 'confirm'); }}
+                              className="btn btn-secondary p-1.5 border-none hover:text-green-400"
+                            >
+                              <ThumbsUp size={13} className={feedbackPending === confirmKey ? 'animate-pulse' : ''} />
+                            </button>
+                            <button
+                              type="button"
+                              title="Different person"
+                              disabled={!!feedbackPending}
+                              onClick={() => { void handleFeedback(ref.id, 'reject'); }}
+                              className="btn btn-secondary p-1.5 border-none hover:text-danger"
+                            >
+                              <ThumbsDown size={13} className={feedbackPending === rejectKey ? 'animate-pulse' : ''} />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -620,7 +637,7 @@ export function PersonAppearancesDialog({
         onClose={() => setClipPlayback(null)}
         nested
       />
-    </Dialog>
+    </>
   );
 }
 

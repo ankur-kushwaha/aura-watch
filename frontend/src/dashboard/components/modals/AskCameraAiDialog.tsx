@@ -53,9 +53,6 @@ export function AskCameraAiDialog({
   const [showFilters, setShowFilters] = useState(false);
   const [clipPlayback, setClipPlayback] = useState<TimelineVideoPlayback | null>(null);
   const [previewClip, setPreviewClip] = useState<VideoClip | null>(null);
-  const [loadingPreviewDetections, setLoadingPreviewDetections] = useState(false);
-  const [previewDetections, setPreviewDetections] = useState<ClipObjectDetection[]>([]);
-  const [previewReidLog, setPreviewReidLog] = useState<ClipReidLog | null>(null);
 
   const getRagClipFilename = (clip: RagResponseClip) =>
     clip.filename || clip.filepath.split(/[/\\]/).pop() || '';
@@ -85,37 +82,6 @@ export function AskCameraAiDialog({
     if (!clip.deviceId) return visibleClipIds.has(clip.id);
     return onlineDeviceIds.has(clip.deviceId);
   };
-
-  useEffect(() => {
-    if (!previewClip) {
-      setPreviewDetections([]);
-      setPreviewReidLog(null);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingPreviewDetections(true);
-
-    apiFetch(`/clips/${previewClip.id}/detections`)
-      .then(async (res) => {
-        if (cancelled || !res.ok) return;
-        const data = await res.json();
-        if (cancelled) return;
-        if (Array.isArray(data)) {
-          setPreviewDetections(data);
-          setPreviewReidLog(null);
-        } else {
-          setPreviewDetections(Array.isArray(data.objects) ? data.objects : []);
-          setPreviewReidLog(data.reidLog ?? null);
-        }
-      })
-      .catch((err) => console.error('Failed to load clip detections', err))
-      .finally(() => {
-        if (!cancelled) setLoadingPreviewDetections(false);
-      });
-
-    return () => { cancelled = true; };
-  }, [previewClip?.id]);
 
   const playPreviewDetectionClip = async (opts: CropClipPlayback & { cropFilename: string }) => {
     let clipFilename = opts.clipFilename;
@@ -407,15 +373,10 @@ export function AskCameraAiDialog({
           </div>
           <div className="flex-1 overflow-y-auto p-4">
             {previewClip && (
-              <ClipPreviewPanel
+              <RagClipPreviewPanel
+                key={previewClip.id}
                 clip={previewClip}
-                videoHeightClass="h-[min(40vh,280px)]"
                 orgSettings={orgSettings}
-                loadingClipDetections={loadingPreviewDetections}
-                clipDetections={previewDetections}
-                clipReidLog={previewReidLog}
-                onOpenPersonRefs={() => {}}
-                onCropPreview={() => {}}
                 onPlayDetectionClip={playPreviewDetectionClip}
               />
             )}
@@ -428,5 +389,57 @@ export function AskCameraAiDialog({
         onClose={() => setClipPlayback(null)}
       />
     </Dialog>
+  );
+}
+
+function RagClipPreviewPanel({
+  clip,
+  orgSettings,
+  onPlayDetectionClip,
+}: {
+  clip: VideoClip;
+  orgSettings: OrgSettings;
+  onPlayDetectionClip: (opts: CropClipPlayback & { cropFilename: string }) => void | Promise<void>;
+}) {
+  const [loadingClipDetections, setLoadingClipDetections] = useState(true);
+  const [clipDetections, setClipDetections] = useState<ClipObjectDetection[]>([]);
+  const [clipReidLog, setClipReidLog] = useState<ClipReidLog | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void apiFetch(`/clips/${clip.id}/detections`)
+      .then(async (res) => {
+        if (cancelled || !res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (Array.isArray(data)) {
+          setClipDetections(data);
+          setClipReidLog(null);
+        } else {
+          setClipDetections(Array.isArray(data.objects) ? data.objects : []);
+          setClipReidLog(data.reidLog ?? null);
+        }
+      })
+      .catch((err) => console.error('Failed to load clip detections', err))
+      .finally(() => {
+        if (!cancelled) setLoadingClipDetections(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [clip.id]);
+
+  return (
+    <ClipPreviewPanel
+      clip={clip}
+      videoHeightClass="h-[min(40vh,280px)]"
+      orgSettings={orgSettings}
+      loadingClipDetections={loadingClipDetections}
+      clipDetections={clipDetections}
+      clipReidLog={clipReidLog}
+      onOpenPersonRefs={() => {}}
+      onCropPreview={() => {}}
+      onPlayDetectionClip={onPlayDetectionClip}
+    />
   );
 }

@@ -34,12 +34,12 @@ const DialogContent = React.forwardRef<
   DialogContentProps
 >(({ className, children, showCloseButton = false, stackLevel = 'default', ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay className={stackLevel === 'nested' ? 'z-[60]' : undefined} />
+    <DialogOverlay className={stackLevel === 'nested' ? 'z-60' : undefined} />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
         'glass-panel fixed left-1/2 top-1/2 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 p-6 shadow-2xl duration-200 animate-[slideUp_0.22s_ease-out] focus:outline-none',
-        stackLevel === 'nested' ? 'z-[60]' : 'z-50',
+        stackLevel === 'nested' ? 'z-60' : 'z-50',
         className,
       )}
       {...props}

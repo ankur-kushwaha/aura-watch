@@ -1,34 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { User } from 'lucide-react';
 import { REID_CROP_IMG } from '../constants';
+import { useDeferredLoad } from '../hooks/useDeferredLoad';
 import type { CropClipPlayback } from '../types';
 import { mediaUrl } from '../utils/media';
-
-export function useDeferredLoad(enabled: boolean) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [shouldLoad, setShouldLoad] = useState(!enabled);
-
-  useEffect(() => {
-    if (!enabled) return;
-    const el = ref.current;
-    if (!el) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setShouldLoad(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: '80px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [enabled]);
-
-  return { ref, shouldLoad };
-}
 
 export function DeferredCropImage({
   filename,
@@ -156,7 +132,7 @@ export function CropThumbnail({
       </button>
       {showHoverPreview && hovering && canShowImage && createPortal(
         <div
-          className="fixed z-[10001] pointer-events-none"
+          className="fixed z-10001 pointer-events-none"
           style={{ top: hoverPos.top, left: hoverPos.left }}
         >
           <img
