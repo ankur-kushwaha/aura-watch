@@ -3,6 +3,12 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from './components/ui/dialog';
+import {
   Camera,
   Settings,
   Play,
@@ -630,19 +636,6 @@ function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Prom
   const [enrollmentToken, setEnrollmentToken] = useState<string>('');
   const [generatingToken, setGeneratingToken] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [open]);
-
   const installCmd = buildInstallCmd(enrollmentToken);
 
   const handleGenerateToken = async () => {
@@ -683,42 +676,26 @@ function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Prom
         <Info size={15} />
       </button>
 
-      {open && createPortal(
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="device-install-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm border-none cursor-default"
-            onClick={() => setOpen(false)}
-            aria-label="Close dialog"
-          />
-
-          <div className="glass-panel relative z-[10000] w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <h3
-                  id="device-install-title"
-                  className="text-[0.95rem] font-bold text-primary flex items-center gap-2"
-                >
-                  <Plus size={16} /> Add a New Edge Device
-                </h3>
-                <p className="text-[0.8rem] text-text-secondary mt-1 leading-relaxed">
-                  Generate an enrollment token, then run the install command on your target device (Linux / macOS).
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="btn btn-secondary p-1.5 rounded-md shrink-0"
-                aria-label="Close"
-              >
-                <X size={16} />
-              </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-6">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <DialogTitle className="text-[0.95rem] text-primary flex items-center gap-2">
+                <Plus size={16} /> Add a New Edge Device
+              </DialogTitle>
+              <DialogDescription className="mt-1 leading-relaxed">
+                Generate an enrollment token, then run the install command on your target device (Linux / macOS).
+              </DialogDescription>
             </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="btn btn-secondary p-1.5 rounded-md shrink-0"
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
 
             <button
               type="button"
@@ -770,10 +747,8 @@ function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Prom
             <p className="text-[0.72rem] text-text-muted mt-4 leading-relaxed">
               The command installs the edge agent, connects via WebSocket, and registers the device with your organization.
             </p>
-          </div>
-        </div>,
-        document.body,
-      )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -2277,6 +2252,50 @@ function App() {
     });
     setAddingStreamForDeviceId(deviceId);
     setShowConfigDialog(true);
+  };
+
+  const closeStreamConfigDialog = () => {
+    setShowConfigDialog(false);
+    setAddingStreamForDeviceId(null);
+  };
+
+  const handleStreamConfigDialogSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!config.detectPerson && !config.detectVehicle) {
+      alert('Select at least one detection target: Person or Vehicle.');
+      return;
+    }
+    if (addingStreamForDeviceId) {
+      try {
+        const res = await apiFetch('/streams', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId: addingStreamForDeviceId,
+            name: config.name,
+            cameraType: config.type,
+            streamUrl: config.streamUrl,
+            trackingEnabled: config.trackingEnabled,
+            motionThreshold: config.motionThreshold ?? 25,
+            pixelChangeThreshold: config.pixelChangeThreshold ?? 0.02,
+            detectPerson: config.detectPerson,
+            detectVehicle: config.detectVehicle,
+          }),
+        });
+        if (res.ok) {
+          const newStream = await res.json();
+          await fetchDevices();
+          setSelectedStreamId(newStream.streamId);
+          setLiveFeedOpen(true);
+          closeStreamConfigDialog();
+        }
+      } catch (err) {
+        console.error('Failed to create stream', err);
+      }
+    } else {
+      await handleConfigSubmit(e);
+      closeStreamConfigDialog();
+    }
   };
 
   const openDeviceConfigDialog = (dev: EdgeDevice, e?: React.MouseEvent) => {
@@ -4026,25 +4045,14 @@ function App() {
       </div>
 
       {/* ASK CAMERA AI DIALOG */}
-      {showAskAiDialog && orgSettings.aiChat && createPortal(
-        <div
-          className="fixed inset-0 z-[10003] flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="ask-camera-ai-title"
+      <Dialog open={showAskAiDialog && orgSettings.aiChat} onOpenChange={setShowAskAiDialog}>
+        <DialogContent
+          className="max-w-6xl min-h-[80vh] max-h-[92vh] flex flex-col p-5 sm:p-6 top-1/2"
         >
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm border-none cursor-default"
-            onClick={() => setShowAskAiDialog(false)}
-            aria-label="Close dialog"
-          />
-
-          <div className="glass-panel relative z-[10004] w-full max-w-6xl min-h-[80vh] max-h-[92vh] flex flex-col p-5 sm:p-6 shadow-2xl">
             <div className="flex justify-between items-center gap-3 mb-4 shrink-0">
-              <h2 id="ask-camera-ai-title" className="text-[1.25rem] flex items-center gap-2">
+              <DialogTitle id="ask-camera-ai-title" className="text-[1.25rem] flex items-center gap-2">
                 <Sparkles size={20} color="var(--color-primary)" /> Ask Camera AI
-              </h2>
+              </DialogTitle>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -4287,24 +4295,21 @@ function App() {
                 <Send size={16} />
               </button>
             </form>
-          </div>
-        </div>,
-        document.body,
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* MOBILE CLIP PREVIEW DIALOG */}
-      {clipPreviewOpen && selectedClip && isMobileViewport && createPortal(
-        <div
-          className="fixed inset-0 z-[10004] flex flex-col lg:hidden"
-          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.85)' }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Event clip preview"
+      <Dialog
+        open={clipPreviewOpen && !!selectedClip && isMobileViewport}
+        onOpenChange={(open) => { if (!open) closeClipPreview(); }}
+      >
+        <DialogContent
+          className="inset-0 top-0 left-0 max-w-none w-full h-full translate-x-0 translate-y-0 flex flex-col p-0 rounded-none lg:hidden"
         >
           <div className="flex items-center justify-between gap-3 p-4 border-b border-border-glass shrink-0">
             <div className="min-w-0">
-              <h2 className="text-[1rem] font-bold text-text-primary truncate">{selectedClip.camera}</h2>
-              <p className="text-[0.72rem] text-text-muted truncate">{formatClipListDateTime(selectedClip.timestamp)}</p>
+              <DialogTitle className="text-[1rem] truncate">{selectedClip?.camera}</DialogTitle>
+              <p className="text-[0.72rem] text-text-muted truncate">{selectedClip ? formatClipListDateTime(selectedClip.timestamp) : ''}</p>
             </div>
             <button
               type="button"
@@ -4316,22 +4321,14 @@ function App() {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
-            {renderClipPreviewPanel(selectedClip, 'h-[min(40vh,280px)]')}
+            {selectedClip && renderClipPreviewPanel(selectedClip, 'h-[min(40vh,280px)]')}
           </div>
-        </div>,
-        document.body,
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* CROP IMAGE PREVIEW */}
-      {cropPreviewFilename && (
-        <div
-          className="fixed inset-0 z-[10002] flex items-center justify-center p-6"
-          style={{ backdropFilter: 'blur(8px)', background: 'rgba(9,13,22,0.85)' }}
-          onClick={() => setCropPreviewFilename(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Crop preview"
-        >
+      <Dialog open={!!cropPreviewFilename} onOpenChange={(open) => { if (!open) setCropPreviewFilename(null); }}>
+        <DialogContent className="max-w-none w-auto border-none bg-transparent shadow-none p-6 flex items-center justify-center">
           <button
             type="button"
             onClick={() => setCropPreviewFilename(null)}
@@ -4340,33 +4337,25 @@ function App() {
           >
             <X size={18} />
           </button>
-          <img
-            src={mediaUrl(`/crops/${cropPreviewFilename}`)}
-            alt="ReID crop preview"
-            className="max-w-[min(90vw,560px)] max-h-[85vh] object-contain rounded-xl border border-[rgba(56,189,248,0.3)] shadow-2xl bg-black"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
+          {cropPreviewFilename && (
+            <img
+              src={mediaUrl(`/crops/${cropPreviewFilename}`)}
+              alt="ReID crop preview"
+              className="max-w-[min(90vw,560px)] max-h-[85vh] object-contain rounded-xl border border-[rgba(56,189,248,0.3)] shadow-2xl bg-black"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* TIMELINE CLIP PLAYBACK MODAL */}
-      {timelineVideo && (
-        <div
-          className="fixed inset-0 z-[10003] flex items-center justify-center p-4"
-          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
-          onClick={() => setTimelineVideo(null)}
-        >
-          <div
-            className="glass-panel w-full max-w-[720px] p-5 flex flex-col gap-4 relative animate-[slideUp_0.22s_ease-out]"
-            style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
+      <Dialog open={!!timelineVideo} onOpenChange={(open) => { if (!open) setTimelineVideo(null); }}>
+        <DialogContent className="max-w-[720px] p-5 flex flex-col gap-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-[1rem] font-bold text-text-primary">{timelineVideo.cameraName}</h2>
-                <p className="text-[0.75rem] text-text-muted mt-0.5">
+                <DialogTitle>{timelineVideo?.cameraName}</DialogTitle>
+                <DialogDescription className="mt-0.5">
                   Clip playback from timeline detection
-                </p>
+                </DialogDescription>
               </div>
               <button
                 type="button"
@@ -4377,6 +4366,7 @@ function App() {
               </button>
             </div>
             <div className="bg-[#000] rounded-xl overflow-hidden border border-[rgba(255,255,255,0.08)]">
+              {timelineVideo && (
               <video
                 ref={timelineVideoRef}
                 key={timelineVideo.filename}
@@ -4385,7 +4375,9 @@ function App() {
                 preload="metadata"
                 className="w-full max-h-[420px] object-contain"
               />
+              )}
             </div>
+            {timelineVideo && (
             <div className="flex items-center gap-3">
               <img
                 src={mediaUrl(`/crops/${timelineVideo.cropFilename}`)}
@@ -4398,25 +4390,16 @@ function App() {
                   : 'Press play to watch this clip.'}
               </p>
             </div>
-          </div>
-        </div>
-      )}
+            )}
+        </DialogContent>
+      </Dialog>
 
       {/* PERSON APPEARANCES MODAL (from clip viewer) */}
-      {personRefsModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
-          onClick={closePersonRefsModal}
-        >
-          <div
-            className="glass-panel w-full max-w-[640px] p-6 flex flex-col gap-4 relative animate-[slideUp_0.22s_ease-out] max-h-[85vh]"
-            style={{ boxShadow: '0 24px 80px rgba(56,189,248,0.2), 0 0 0 1px rgba(56,189,248,0.15)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
+      <Dialog open={!!personRefsModal} onOpenChange={(open) => { if (!open) closePersonRefsModal(); }}>
+        <DialogContent className="max-w-[640px] p-6 flex flex-col gap-4 max-h-[85vh]">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                {personRefsModal.cropFilename && (
+                {personRefsModal?.cropFilename && (
                   <CropThumbnail
                     filename={personRefsModal.cropFilename}
                     size="md"
@@ -4431,12 +4414,12 @@ function App() {
                   />
                 )}
                 <div className="min-w-0">
-                  <h2 className="text-[1.05rem] font-bold text-text-primary">
+                  <DialogTitle>
                     Detection timeline & matches
-                  </h2>
+                  </DialogTitle>
                   <p className="text-[0.72rem] text-text-muted mt-0.5">
-                    track {personRefsModal.trackId}
-                    {personRefsModal.labelStatus === 'confirmed' && personRefsModal.label
+                    track {personRefsModal?.trackId}
+                    {personRefsModal?.labelStatus === 'confirmed' && personRefsModal?.label
                       ? ` · ${personRefsModal.label}`
                       : personRefsIdentityId
                         ? ' · linked identity'
@@ -4445,7 +4428,7 @@ function App() {
                   <IdsInfoIcon
                     className="mt-1"
                     ids={[
-                      ...(personRefsModal.detectionId
+                      ...(personRefsModal?.detectionId
                         ? [{ label: 'detection', value: personRefsModal.detectionId }]
                         : []),
                       ...(personRefsIdentityId
@@ -4703,37 +4686,27 @@ function App() {
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* DEVICE LOGS MODAL */}
-      {deviceLogsModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
-          onClick={closeDeviceLogsModal}
-        >
-          <div
-            className="glass-panel w-full max-w-[720px] p-6 flex flex-col gap-4 relative animate-[slideUp_0.22s_ease-out] max-h-[85vh]"
-            style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
+      <Dialog open={!!deviceLogsModal} onOpenChange={(open) => { if (!open) closeDeviceLogsModal(); }}>
+        <DialogContent className="max-w-[720px] p-6 flex flex-col gap-4 max-h-[85vh]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
                   <ScrollText size={18} color="var(--color-primary)" />
                 </div>
                 <div>
-                  <h2 className="text-[1.05rem] font-bold text-text-primary">
-                    Device Logs — {deviceLogsModal.name}
-                  </h2>
-                  <p className="text-[0.72rem] text-text-muted mt-0.5">{deviceLogsModal.deviceId}</p>
+                  <DialogTitle>
+                    Device Logs — {deviceLogsModal?.name}
+                  </DialogTitle>
+                  <p className="text-[0.72rem] text-text-muted mt-0.5">{deviceLogsModal?.deviceId}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => fetchJournalLogs(deviceLogsModal.deviceId)}
+                  onClick={() => deviceLogsModal && fetchJournalLogs(deviceLogsModal.deviceId)}
                   disabled={loadingJournalLogs}
                   className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
                 >
@@ -4784,99 +4757,44 @@ function App() {
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
-      {/* STREAM CONFIG DIALOG MODAL */}
       {/* STREAM CONFIG DIALOG MODAL — handles both Add and Edit modes */}
-      {showConfigDialog && (() => {
-        const isAddMode = !!addingStreamForDeviceId;
-        const configStream = !isAddMode ? streams.find(s => s.streamId === selectedStreamId) : null;
-
-        const closeDialog = () => {
-          setShowConfigDialog(false);
-          setAddingStreamForDeviceId(null);
-        };
-
-        const handleSubmit = async (e: React.FormEvent) => {
-          e.preventDefault();
-          if (!config.detectPerson && !config.detectVehicle) {
-            alert('Select at least one detection target: Person or Vehicle.');
-            return;
-          }
-          if (isAddMode) {
-            // CREATE new stream
-            try {
-              const res = await apiFetch('/streams', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  deviceId: addingStreamForDeviceId,
-                  name: config.name,
-                  cameraType: config.type,
-                  streamUrl: config.streamUrl,
-                  trackingEnabled: config.trackingEnabled,
-                  motionThreshold: config.motionThreshold ?? 25,
-                  pixelChangeThreshold: config.pixelChangeThreshold ?? 0.02,
-                  detectPerson: config.detectPerson,
-                  detectVehicle: config.detectVehicle,
-                }),
-              });
-              if (res.ok) {
-                const newStream = await res.json();
-                await fetchDevices();
-                setSelectedStreamId(newStream.streamId);
-                setLiveFeedOpen(true);
-                closeDialog();
-              }
-            } catch (err) {
-              console.error('Failed to create stream', err);
-            }
-          } else {
-            // UPDATE existing stream
-            await handleConfigSubmit(e);
-            closeDialog();
-          }
-        };
-
-        return (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
-          >
-            <div
-              className="glass-panel w-full max-w-[480px] p-6 flex flex-col gap-5 relative animate-[slideUp_0.22s_ease-out max-h-[90vh] overflow-hidden"
-              style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
-            >
-              {/* Header */}
+      <Dialog
+        open={showConfigDialog}
+        onOpenChange={(open) => { if (!open) closeStreamConfigDialog(); }}
+      >
+        <DialogContent
+          className="max-w-[480px] p-6 flex flex-col gap-5 max-h-[90vh] overflow-hidden"
+        >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
-                    {isAddMode ? <Plus size={18} color="var(--color-primary)" /> : <Settings size={18} color="var(--color-primary)" />}
+                    {addingStreamForDeviceId ? <Plus size={18} color="var(--color-primary)" /> : <Settings size={18} color="var(--color-primary)" />}
                   </div>
                   <div>
-                    <h2 className="text-[1.05rem] font-bold text-text-primary">
-                      {isAddMode ? 'Add Camera Stream' : 'Configure Stream'}
-                    </h2>
-                    {configStream && (
-                      <p className="text-[0.72rem] text-text-muted mt-0.5">{configStream.name}</p>
+                    <DialogTitle>
+                      {addingStreamForDeviceId ? 'Add Camera Stream' : 'Configure Stream'}
+                    </DialogTitle>
+                    {!addingStreamForDeviceId && streams.find((s) => s.streamId === selectedStreamId) && (
+                      <p className="text-[0.72rem] text-text-muted mt-0.5">
+                        {streams.find((s) => s.streamId === selectedStreamId)?.name}
+                      </p>
                     )}
                   </div>
                 </div>
                 <button
-                  onClick={closeDialog}
+                  onClick={closeStreamConfigDialog}
                   className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
                 >
                   <X size={16} />
                 </button>
               </div>
 
-              {/* Divider */}
               <div className="h-px bg-[rgba(255,255,255,0.07)]" />
 
-              {/* Config Form */}
-              <form onSubmit={handleSubmit} className="flex flex-col gap-4 overflow-y-auto min-h-0">
+              <form onSubmit={handleStreamConfigDialogSubmit} className="flex flex-col gap-4 overflow-y-auto min-h-0">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[0.78rem] text-text-secondary font-medium">Camera Name</label>
@@ -4944,7 +4862,7 @@ function App() {
                 <div className="flex gap-2.5 justify-end pt-1">
                   <button
                     type="button"
-                    onClick={closeDialog}
+                    onClick={closeStreamConfigDialog}
                     className="btn btn-secondary py-2 px-4 text-[0.85rem]"
                   >
                     Cancel
@@ -4953,32 +4871,32 @@ function App() {
                     type="submit"
                     className="btn btn-primary py-2 px-5 text-[0.85rem]"
                   >
-                    {isAddMode ? 'Create Stream' : 'Apply Configuration'}
+                    {addingStreamForDeviceId ? 'Create Stream' : 'Apply Configuration'}
                   </button>
                 </div>
               </form>
-            </div>
-          </div>
-        );
-      })()}
+        </DialogContent>
+      </Dialog>
 
-      {showDeviceConfigDialog && deviceConfigDeviceId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backdropFilter: 'blur(6px)', background: 'rgba(9,13,22,0.75)' }}
+      <Dialog
+        open={showDeviceConfigDialog && !!deviceConfigDeviceId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowDeviceConfigDialog(false);
+            setDeviceConfigDeviceId(null);
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-[720px] p-6 flex flex-col gap-5 max-h-[90vh]"
         >
-          <div
-            className="glass-panel w-full max-w-[720px] p-6 flex flex-col gap-5 relative animate-[slideUp_0.22s_ease-out max-h-[90vh]"
-            style={{ boxShadow: '0 24px 80px rgba(124,58,237,0.25), 0 0 0 1px rgba(124,58,237,0.2)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
                   <SlidersHorizontal size={18} color="var(--color-primary)" />
                 </div>
                 <div>
-                  <h2 className="text-[1.05rem] font-bold text-text-primary">Device Settings</h2>
+                  <DialogTitle>Device Settings</DialogTitle>
                   <p className="text-[0.72rem] text-text-muted mt-0.5">{deviceConfigName}</p>
                 </div>
               </div>
@@ -5034,9 +4952,8 @@ function App() {
                 </div>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
         </>
       )}
     </div>
