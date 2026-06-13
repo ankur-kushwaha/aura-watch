@@ -281,6 +281,9 @@ type CropClipPlayback = {
   detectionId?: string;
 };
 
+/** Reid crops are pre-clipped person JPEGs — always object-contain, never object-cover. */
+const REID_CROP_IMG = 'object-contain bg-black';
+
 function CropThumbnail({
   filename,
   size = 'sm',
@@ -334,7 +337,7 @@ function CropThumbnail({
         } transition-colors`}
         title={hasVideo ? 'Hover to preview crop · Click to play clip' : 'Hover or click to enlarge'}
       >
-        <img src={src} alt="" className="w-full h-full object-cover" />
+        <img src={src} alt="" className={`w-full h-full ${REID_CROP_IMG}`} />
       </button>
       {hovering && createPortal(
         <div
@@ -344,7 +347,7 @@ function CropThumbnail({
           <img
             src={src}
             alt=""
-            className="w-56 max-h-80 object-contain rounded-xl border border-[rgba(56,189,248,0.35)] shadow-2xl bg-black"
+            className="w-56 max-h-80 rounded-xl border border-[rgba(56,189,248,0.35)] shadow-2xl bg-black object-contain"
           />
         </div>,
         document.body,
@@ -3743,7 +3746,7 @@ function App() {
                                   onError={() => {
                                     setBrokenIdentityCovers((prev) => new Set(prev).add(person.id));
                                   }}
-                                  className="w-full h-full object-cover"
+                                  className={`w-full h-full ${REID_CROP_IMG}`}
                                 />
                               )}
                               {person.photoCount > 1 && (
@@ -3838,7 +3841,7 @@ function App() {
                             setBrokenIdentityCovers((prev) => new Set(prev).add(selectedPerson.id));
                           }
                         }}
-                        className="w-full h-full object-cover"
+                        className={`w-full h-full ${REID_CROP_IMG}`}
                       />
                     ) : (
                       <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
@@ -3945,7 +3948,7 @@ function App() {
                                   onError={() => {
                                     setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
                                   }}
-                                  className="w-full h-full object-cover"
+                                  className={`w-full h-full ${REID_CROP_IMG}`}
                                 />
                               )}
                             </div>
@@ -4004,7 +4007,7 @@ function App() {
                                 <img
                                   src={mediaUrl(`/crops/${crop.filename}`)}
                                   alt=""
-                                  className="w-12 h-12 rounded-lg object-cover bg-black"
+                                  className={`w-12 h-12 rounded-lg ${REID_CROP_IMG}`}
                                 />
                                 <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
                                   {isLoadingClip ? (
@@ -4240,7 +4243,7 @@ function App() {
                                   <img
                                     src={imageUrl}
                                     alt={`Track ${det.trackId}`}
-                                    className="w-full h-full object-cover"
+                                    className={`w-full h-full ${REID_CROP_IMG}`}
                                   />
                                   <div className="absolute bottom-1 right-1 text-[0.6rem] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono">
                                     ID:{det.trackId}
@@ -4382,7 +4385,7 @@ function App() {
               <img
                 src={mediaUrl(`/crops/${timelineVideo.cropFilename}`)}
                 alt=""
-                className="w-12 h-12 rounded-lg object-cover bg-black shrink-0"
+                className={`w-12 h-12 rounded-lg shrink-0 ${REID_CROP_IMG}`}
               />
               <p className="text-[0.75rem] text-text-secondary">
                 {timelineVideo.offsetMs > 0
@@ -4542,7 +4545,7 @@ function App() {
                                   onError={() => {
                                     setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
                                   }}
-                                  className="w-full h-full object-cover"
+                                  className={`w-full h-full ${REID_CROP_IMG}`}
                                 />
                               )}
                             </div>

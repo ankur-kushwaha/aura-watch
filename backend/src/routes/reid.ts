@@ -68,17 +68,16 @@ export interface ReidDetectionInput {
   className: string;
   clipFilename?: string;
   clipOffsetMs?: number;
+  frameWidth?: number;
+  frameHeight?: number;
 }
 
 export async function processReidDetectionFromCropFile(input: ReidDetectionInput): Promise<any> {
-  const { deviceId, streamId, trackId, timestamp, filename, bbox, className, clipFilename, clipOffsetMs } = input;
+  const {
+    deviceId, streamId, trackId, timestamp, filename, bbox, className,
+    clipFilename, clipOffsetMs, frameWidth, frameHeight,
+  } = input;
   const filepath = path.join(CROPS_DIR, filename);
-
-  const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
-  const cameraName = stream?.name ?? 'Unknown Camera';
-
-  console.log(`[ReID Router] Running OSNet embedding extraction for ${filename}...`);
-  const vector = await reidWorker.generateEmbedding(filepath);
 
   let resolvedClipFilename = clipFilename ?? null;
   let resolvedClipOffsetMs = clipOffsetMs ?? null;
@@ -90,6 +89,36 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
     }
   }
   const resolvedClipId = await resolveClipIdFromFilename(resolvedClipFilename);
+
+  const existing = await prisma.reidDetection.findFirst({ where: { filename } });
+  if (existing) {
+    const needsUpdate = resolvedClipFilename && (
+      existing.clipFilename !== resolvedClipFilename
+      || existing.clipOffsetMs !== resolvedClipOffsetMs
+    );
+    if (needsUpdate) {
+      await prisma.reidDetection.update({
+        where: { id: existing.id },
+        data: {
+          clipId: resolvedClipId,
+          clipFilename: resolvedClipFilename,
+          clipOffsetMs: resolvedClipOffsetMs,
+          frameWidth: frameWidth ?? existing.frameWidth,
+          frameHeight: frameHeight ?? existing.frameHeight,
+        },
+      });
+    }
+    return prisma.reidDetection.findUnique({
+      where: { id: existing.id },
+      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
+    });
+  }
+
+  const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
+  const cameraName = stream?.name ?? 'Unknown Camera';
+
+  console.log(`[ReID Router] Running OSNet embedding extraction for ${filename}...`);
+  const vector = await reidWorker.generateEmbedding(filepath);
 
   const detection = await prisma.reidDetection.create({
     data: {
@@ -104,6 +133,8 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
       clipId: resolvedClipId,
       clipFilename: resolvedClipFilename,
       clipOffsetMs: resolvedClipOffsetMs,
+      frameWidth: frameWidth ?? null,
+      frameHeight: frameHeight ?? null,
     },
   });
 
@@ -144,6 +175,7 @@ export async function processReidTrackEventsFromClip(
 ): Promise<{ succeeded: number; failures: { trackId: number; error: string }[] }> {
   if (!trackEvents.length) return { succeeded: 0, failures: [] };
 
+  const resolvedClipId = await resolveClipIdFromFilename(clipFilename);
   let succeeded = 0;
   const failures: { trackId: number; error: string }[] = [];
   for (const event of trackEvents) {
@@ -152,14 +184,40 @@ export async function processReidTrackEventsFromClip(
     const cropPath = path.join(CROPS_DIR, filename);
 
     try {
-      await extractCropFromClip(
-        clipPath,
-        event.offsetMs,
-        event.bbox,
-        cropPath,
-        frameWidth,
-        frameHeight,
-      );
+      const existingDetection = await prisma.reidDetection.findFirst({ where: { filename } });
+
+      if (existingDetection) {
+        await prisma.reidDetection.update({
+          where: { id: existingDetection.id },
+          data: {
+            clipId: resolvedClipId,
+            clipFilename,
+            clipOffsetMs: event.offsetMs,
+            frameWidth: frameWidth ?? existingDetection.frameWidth,
+            frameHeight: frameHeight ?? existingDetection.frameHeight,
+          },
+        });
+        succeeded++;
+        console.log(
+          `[ReID Router] Linked edge-uploaded crop to clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
+        );
+        continue;
+      }
+
+      if (!fs.existsSync(cropPath)) {
+        await extractCropFromClip(
+          clipPath,
+          event.offsetMs,
+          event.bbox,
+          cropPath,
+          frameWidth,
+          frameHeight,
+        );
+        console.log(
+          `[ReID Router] Extracted ReID crop from clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
+        );
+      }
+
       await processReidDetectionFromCropFile({
         deviceId,
         streamId,
@@ -170,11 +228,10 @@ export async function processReidTrackEventsFromClip(
         className: event.className || 'person',
         clipFilename,
         clipOffsetMs: event.offsetMs,
+        frameWidth,
+        frameHeight,
       });
       succeeded++;
-      console.log(
-        `[ReID Router] Extracted ReID crop from clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
-      );
     } catch (err: any) {
       failures.push({ trackId: event.trackId, error: err.message });
       console.error(
@@ -212,6 +269,12 @@ export async function handleCropUpload(req: Request, res: Response) {
 
       const filename = `crop_${timestamp.getTime()}_${deviceId}_${trackId}.jpg`;
       const filepath = path.join(CROPS_DIR, filename);
+
+      const existing = await prisma.reidDetection.findFirst({ where: { filename } });
+      if (existing && fs.existsSync(filepath)) {
+        console.log(`[ReID Router] Crop already processed for ${filename}`);
+        return res.status(200).json({ success: true, detectionId: existing.id });
+      }
 
       fs.writeFileSync(filepath, buffer);
       console.log(`[ReID Router] Saved crop file to ${filepath}`);

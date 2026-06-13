@@ -114,7 +114,14 @@ class VisionPipeline:
                         crop = frame[y1:y2, x1:x2]
                         ok, jpeg_buf = cv2.imencode(".jpg", crop)
                         if ok:
-                            self.on_reid_crop(jpeg_buf.tobytes(), d.track_id, d.confidence, d.bbox, d.class_name)
+                            clipped_bbox = (x1, y1, x2, y2)
+                            self.on_reid_crop(
+                                jpeg_buf.tobytes(),
+                                d.track_id,
+                                d.confidence,
+                                clipped_bbox,
+                                d.class_name,
+                            )
 
             clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
             if clip_encoder:

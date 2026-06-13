@@ -171,6 +171,8 @@ model ReidDetection {
   clip         VideoClip?    @relation(fields: [clipId], references: [id], onDelete: SetNull)
   clipFilename String?
   clipOffsetMs Int?
+  frameWidth   Int?
+  frameHeight  Int?
   bbox         String        // "x1,y1,x2,y2"
   className    String
   identityId   String?       @db.ObjectId

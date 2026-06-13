@@ -76,6 +76,8 @@ export async function regenerateCropFromDetection(
     clipId: string | null;
     clipFilename: string | null;
     clipOffsetMs: number | null;
+    frameWidth?: number | null;
+    frameHeight?: number | null;
   },
   fetchFileFromEdge: EdgeFileFetcher,
 ): Promise<string | null> {
@@ -88,12 +90,16 @@ export async function regenerateCropFromDetection(
   if (!resolved) return null;
 
   const cropPath = path.join(CROPS_DIR, detection.filename);
+  const frameWidth = detection.frameWidth ?? undefined;
+  const frameHeight = detection.frameHeight ?? undefined;
   try {
     await extractCropFromClip(
       resolved.clipPath,
       enriched.clipOffsetMs,
       detection.bbox,
       cropPath,
+      frameWidth,
+      frameHeight,
     );
     return cropPath;
   } catch (err: any) {
@@ -120,6 +126,8 @@ type CropDetection = {
   clipId: string | null;
   clipFilename: string | null;
   clipOffsetMs: number | null;
+  frameWidth?: number | null;
+  frameHeight?: number | null;
 };
 
 /** Resolve crop bytes from local storage, edge proxy, or clip extraction. */

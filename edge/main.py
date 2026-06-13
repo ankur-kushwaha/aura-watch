@@ -489,6 +489,8 @@ class EdgeAgent:
                 started_mono = p_data.get("recording_started_at_mono")
                 if p_data.get("is_recording") and started_mono is not None:
                     offset_ms = int((time.monotonic() - started_mono) * 1000)
+                    started_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)
+                    detection_ms = started_ms + offset_ms
                     bbox_str = ",".join(map(str, bbox))
                     event = {
                         "trackId": track_id,
@@ -499,6 +501,12 @@ class EdgeAgent:
                     }
                     with p_data["clip_track_events_lock"]:
                         p_data["clip_track_events"].append(event)
+                    threading.Thread(
+                        target=self._upload_reid_crop,
+                        args=(stream_id, crop_jpeg, track_id, confidence, bbox),
+                        kwargs={"timestamp_ms": detection_ms},
+                        daemon=True,
+                    ).start()
                     return
 
                 threading.Thread(
@@ -608,10 +616,19 @@ class EdgeAgent:
                 p_data["preview_stalled"] = False
                 self._ws_send({"type": "preview_resumed", "streamId": stream_id})
 
-    def _upload_reid_crop(self, stream_id: str, crop_jpeg: bytes, track_id: int, confidence: float, bbox: tuple[int, int, int, int]):
+    def _upload_reid_crop(
+        self,
+        stream_id: str,
+        crop_jpeg: bytes,
+        track_id: int,
+        confidence: float,
+        bbox: tuple[int, int, int, int],
+        *,
+        timestamp_ms: int | None = None,
+    ):
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/{self.device_id}/reid/crop"
         bbox_str = ",".join(map(str, bbox))
-        timestamp_ms = int(time.time() * 1000)
+        timestamp_ms = timestamp_ms if timestamp_ms is not None else int(time.time() * 1000)
         filename = f"crop_{timestamp_ms}_{self.device_id}_{track_id}.jpg"
         local_path = os.path.join(LOCAL_CROPS_DIR, filename)
         try:
@@ -653,6 +670,7 @@ class EdgeAgent:
             p_data["is_recording"] = True
             p_data["last_detection_at"] = time.monotonic()
             p_data["recording_started_at_mono"] = time.monotonic()
+            p_data["recording_started_at_ms"] = int(time.time() * 1000)
             with p_data["clip_track_events_lock"]:
                 p_data["clip_track_events"] = []
 
@@ -686,7 +704,7 @@ class EdgeAgent:
         min_upload_duration_sec = runtime.min_upload_duration_sec if runtime else _DEFAULT_RUNTIME.min_upload_duration_sec
         clip_encode_fps = runtime.clip_encode_fps if runtime else _DEFAULT_RUNTIME.clip_encode_fps
 
-        timestamp_ms = int(time.time() * 1000)
+        timestamp_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)
         p_data["recording_started_at_ms"] = timestamp_ms
         filename = f"clip_{timestamp_ms}_{stream_id}.mp4"
         output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
