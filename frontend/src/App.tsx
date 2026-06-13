@@ -164,6 +164,47 @@ interface EdgeDevice {
   effectiveConfig?: EffectiveEdgeDeviceConfig;
 }
 
+interface DeviceSystemMetrics {
+  hostname?: string;
+  platform?: string;
+  cpu_percent?: number | null;
+  cpu_count?: number;
+  load_avg?: number[] | null;
+  memory_total_bytes?: number;
+  memory_used_bytes?: number;
+  memory_available_bytes?: number;
+  swap_total_bytes?: number;
+  swap_used_bytes?: number;
+  disk_total_bytes?: number;
+  disk_used_bytes?: number;
+  disk_free_bytes?: number;
+  uptime_seconds?: number | null;
+  timestamp?: number;
+}
+
+function formatBytes(bytes?: number): string {
+  if (bytes == null || Number.isNaN(bytes)) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatPercent(used?: number, total?: number): string {
+  if (used == null || total == null || total <= 0) return '—';
+  return `${Math.round((used / total) * 100)}%`;
+}
+
+function formatUptime(seconds?: number | null): string {
+  if (seconds == null || Number.isNaN(seconds)) return '—';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 function isEdgeUpdateAvailable(dev: EdgeDevice): boolean {
   return Boolean(
     dev.gitCommit && dev.remoteGitCommit && dev.gitCommit !== dev.remoteGitCommit
@@ -785,6 +826,10 @@ function App() {
   const [deviceLogs, setDeviceLogs] = useState<{ message: string; timestamp: string }[]>([]);
   const [journalLogs, setJournalLogs] = useState<string>('');
   const [loadingJournalLogs, setLoadingJournalLogs] = useState<boolean>(false);
+  const [deviceMetricsModal, setDeviceMetricsModal] = useState<{ deviceId: string; name: string } | null>(null);
+  const [deviceMetrics, setDeviceMetrics] = useState<DeviceSystemMetrics | null>(null);
+  const [deviceMetricsError, setDeviceMetricsError] = useState<string>('');
+  const [loadingDeviceMetrics, setLoadingDeviceMetrics] = useState<boolean>(false);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
 
   // ReID States
@@ -2441,6 +2486,30 @@ function App() {
     }
   }, []);
 
+  const fetchDeviceMetrics = useCallback(async (deviceId: string) => {
+    setLoadingDeviceMetrics(true);
+    setDeviceMetricsError('');
+    try {
+      const res = await apiFetch(`/devices/${deviceId}/metrics`);
+      const data = await res.json();
+      if (res.ok) {
+        setDeviceMetrics(data.metrics || null);
+        if (!data.metrics) {
+          setDeviceMetricsError('No metrics returned from device.');
+        }
+      } else {
+        setDeviceMetrics(null);
+        setDeviceMetricsError(data.error || 'Failed to fetch device metrics');
+      }
+    } catch (err) {
+      console.error('Failed to fetch device metrics', err);
+      setDeviceMetrics(null);
+      setDeviceMetricsError('Failed to fetch device metrics');
+    } finally {
+      setLoadingDeviceMetrics(false);
+    }
+  }, []);
+
   const openDeviceLogsModal = (deviceId: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setDeviceLogs([]);
@@ -2460,6 +2529,20 @@ function App() {
     setDeviceLogsModal(null);
     setDeviceLogs([]);
     setJournalLogs('');
+  };
+
+  const openDeviceMetricsModal = (deviceId: string, name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeviceMetrics(null);
+    setDeviceMetricsError('');
+    setDeviceMetricsModal({ deviceId, name });
+    fetchDeviceMetrics(deviceId);
+  };
+
+  const closeDeviceMetricsModal = () => {
+    setDeviceMetricsModal(null);
+    setDeviceMetrics(null);
+    setDeviceMetricsError('');
   };
 
   useEffect(() => {
@@ -3103,6 +3186,14 @@ function App() {
                           title="View Device Logs"
                         >
                           <ScrollText size={11} /> Logs
+                        </button>
+                        <button
+                          onClick={(e) => openDeviceMetricsModal(dev.deviceId, dev.name, e)}
+                          disabled={!isDeviceOnline || loadingDeviceMetrics}
+                          className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
+                          title="View Device Metrics"
+                        >
+                          <Activity size={11} /> Metrics
                         </button>
                         <button
                           onClick={(e) => openDeviceConfigDialog(dev, e)}
@@ -4760,6 +4851,169 @@ function App() {
                 </div>
               </div>
             </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* DEVICE METRICS MODAL */}
+      <Dialog open={!!deviceMetricsModal} onOpenChange={(open) => { if (!open) closeDeviceMetricsModal(); }}>
+        <DialogContent className="max-w-[560px] p-6 flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
+                <Activity size={18} color="var(--color-primary)" />
+              </div>
+              <div>
+                <DialogTitle>
+                  Device Metrics — {deviceMetricsModal?.name}
+                </DialogTitle>
+                <p className="text-[0.72rem] text-text-muted mt-0.5">{deviceMetricsModal?.deviceId}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => deviceMetricsModal && fetchDeviceMetrics(deviceMetricsModal.deviceId)}
+                disabled={loadingDeviceMetrics}
+                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
+              >
+                <RefreshCw size={12} className={loadingDeviceMetrics ? 'animate-spin' : ''} />
+                Refresh
+              </button>
+              <button
+                onClick={closeDeviceMetricsModal}
+                className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="h-px bg-[rgba(255,255,255,0.07)]" />
+
+          {loadingDeviceMetrics && !deviceMetrics ? (
+            <div className="text-text-muted text-[0.85rem] py-8 text-center">Fetching metrics from device...</div>
+          ) : deviceMetricsError ? (
+            <div className="text-danger text-[0.85rem] py-6 text-center">{deviceMetricsError}</div>
+          ) : deviceMetrics ? (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-3 text-[0.78rem]">
+                <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3">
+                  <div className="text-text-muted text-[0.68rem] uppercase tracking-wide">Hostname</div>
+                  <div className="font-medium mt-1 truncate">{deviceMetrics.hostname || '—'}</div>
+                </div>
+                <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3">
+                  <div className="text-text-muted text-[0.68rem] uppercase tracking-wide">Uptime</div>
+                  <div className="font-medium mt-1">{formatUptime(deviceMetrics.uptime_seconds)}</div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3.5">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[0.8rem] font-semibold text-text-secondary">CPU</span>
+                  <span className="text-[0.78rem] text-text-primary">
+                    {deviceMetrics.cpu_percent != null ? `${deviceMetrics.cpu_percent}%` : '—'}
+                    {deviceMetrics.cpu_count ? ` • ${deviceMetrics.cpu_count} cores` : ''}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-300"
+                    style={{ width: `${Math.min(100, Math.max(0, deviceMetrics.cpu_percent ?? 0))}%` }}
+                  />
+                </div>
+                {deviceMetrics.load_avg && (
+                  <p className="text-[0.68rem] text-text-muted mt-2">
+                    Load avg: {deviceMetrics.load_avg.map((v) => v.toFixed(2)).join(' / ')}
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3.5">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[0.8rem] font-semibold text-text-secondary">RAM</span>
+                  <span className="text-[0.78rem] text-text-primary">
+                    {formatBytes(deviceMetrics.memory_used_bytes)} / {formatBytes(deviceMetrics.memory_total_bytes)}
+                    {' '}({formatPercent(deviceMetrics.memory_used_bytes, deviceMetrics.memory_total_bytes)})
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-emerald-400 transition-all duration-300"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.max(
+                          0,
+                          ((deviceMetrics.memory_used_bytes ?? 0) / Math.max(deviceMetrics.memory_total_bytes ?? 1, 1)) * 100
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-[0.68rem] text-text-muted mt-2">
+                  Available: {formatBytes(deviceMetrics.memory_available_bytes)}
+                </p>
+              </div>
+
+              {(deviceMetrics.swap_total_bytes ?? 0) > 0 && (
+                <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3.5">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-[0.8rem] font-semibold text-text-secondary">Swap</span>
+                    <span className="text-[0.78rem] text-text-primary">
+                      {formatBytes(deviceMetrics.swap_used_bytes)} / {formatBytes(deviceMetrics.swap_total_bytes)}
+                      {' '}({formatPercent(deviceMetrics.swap_used_bytes, deviceMetrics.swap_total_bytes)})
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-amber-400 transition-all duration-300"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            0,
+                            ((deviceMetrics.swap_used_bytes ?? 0) / Math.max(deviceMetrics.swap_total_bytes ?? 1, 1)) * 100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3.5">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[0.8rem] font-semibold text-text-secondary">Disk (/)</span>
+                  <span className="text-[0.78rem] text-text-primary">
+                    {formatBytes(deviceMetrics.disk_used_bytes)} / {formatBytes(deviceMetrics.disk_total_bytes)}
+                    {' '}({formatPercent(deviceMetrics.disk_used_bytes, deviceMetrics.disk_total_bytes)})
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-sky-400 transition-all duration-300"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.max(
+                          0,
+                          ((deviceMetrics.disk_used_bytes ?? 0) / Math.max(deviceMetrics.disk_total_bytes ?? 1, 1)) * 100
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-[0.68rem] text-text-muted mt-2">
+                  Free: {formatBytes(deviceMetrics.disk_free_bytes)}
+                </p>
+              </div>
+
+              {deviceMetrics.platform && (
+                <p className="text-[0.68rem] text-text-muted text-center">{deviceMetrics.platform}</p>
+              )}
+            </div>
+          ) : (
+            <div className="text-text-muted text-[0.85rem] py-6 text-center">No metrics available.</div>
+          )}
         </DialogContent>
       </Dialog>
 

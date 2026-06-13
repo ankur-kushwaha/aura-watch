@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -57,6 +58,82 @@ LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage",
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
 DEBUG_LOGS = _DEFAULT_RUNTIME.debug_logs
 PREVIEW_STALL_TIMEOUT_SEC = _DEFAULT_RUNTIME.preview_stall_timeout_sec
+
+
+def _read_proc_meminfo() -> dict[str, int]:
+    info: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as handle:
+            for line in handle:
+                key, value = line.split(":", 1)
+                info[key.strip()] = int(value.strip().split()[0]) * 1024
+    except OSError:
+        pass
+    return info
+
+
+def _cpu_usage_percent(interval: float = 0.15) -> float | None:
+    try:
+        def snapshot() -> tuple[int, int]:
+            with open("/proc/stat", encoding="utf-8") as handle:
+                parts = handle.readline().split()[1:]
+            values = [int(part) for part in parts]
+            idle = values[3] + (values[4] if len(values) > 4 else 0)
+            return idle, sum(values)
+
+        idle1, total1 = snapshot()
+        time.sleep(interval)
+        idle2, total2 = snapshot()
+        delta_total = total2 - total1
+        if delta_total <= 0:
+            return None
+        return round(100.0 * (1.0 - (idle2 - idle1) / delta_total), 1)
+    except OSError:
+        return None
+
+
+def collect_system_metrics() -> dict[str, Any]:
+    mem = _read_proc_meminfo()
+    mem_total = mem.get("MemTotal", 0)
+    mem_available = mem.get("MemAvailable", mem.get("MemFree", 0))
+    mem_used = max(0, mem_total - mem_available)
+
+    swap_total = mem.get("SwapTotal", 0)
+    swap_free = mem.get("SwapFree", 0)
+    swap_used = max(0, swap_total - swap_free)
+
+    disk = shutil.disk_usage("/")
+
+    uptime_sec: float | None = None
+    try:
+        with open("/proc/uptime", encoding="utf-8") as handle:
+            uptime_sec = float(handle.readline().split()[0])
+    except OSError:
+        pass
+
+    load_avg: list[float] | None = None
+    try:
+        load_avg = [round(value, 2) for value in os.getloadavg()]
+    except (OSError, AttributeError):
+        pass
+
+    return {
+        "hostname": platform.node(),
+        "platform": platform.platform(),
+        "cpu_percent": _cpu_usage_percent(),
+        "cpu_count": os.cpu_count() or 1,
+        "load_avg": load_avg,
+        "memory_total_bytes": mem_total,
+        "memory_used_bytes": mem_used,
+        "memory_available_bytes": mem_available,
+        "swap_total_bytes": swap_total,
+        "swap_used_bytes": swap_used,
+        "disk_total_bytes": disk.total,
+        "disk_used_bytes": disk.used,
+        "disk_free_bytes": disk.free,
+        "uptime_seconds": uptime_sec,
+        "timestamp": time.time(),
+    }
 
 
 @dataclass
@@ -1053,6 +1130,16 @@ class EdgeAgent:
                 respond(False, error="journalctl not found on this device.")
             except Exception as exc:
                 respond(False, error=f"Failed to fetch logs: {exc}")
+            return
+
+        if command == "fetch_metrics":
+            try:
+                if platform.system() != "Linux":
+                    respond(False, error="System metrics are only available on Linux edge devices.")
+                    return
+                respond(True, metrics=collect_system_metrics())
+            except Exception as exc:
+                respond(False, error=f"Failed to collect metrics: {exc}")
             return
 
         respond(False, error=f"Unknown device command: {command}")

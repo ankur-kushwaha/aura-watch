@@ -447,6 +447,30 @@ router.post('/:deviceId/command/update-service', async (req: Request, res: Respo
 });
 
 /**
+ * GET /api/devices/:deviceId/metrics
+ * Fetch current host metrics (CPU, RAM, disk) from the edge device on demand
+ */
+router.get('/:deviceId/metrics', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const result = await sendDeviceCommand(deviceId, 'fetch_metrics', {}, 20000);
+    res.json({ metrics: result.metrics || null, message: result.message });
+  } catch (error: any) {
+    const status = error.message === 'Device is offline' ? 503 : 500;
+    res.status(status).json({ error: error.message || 'Failed to fetch device metrics' });
+  }
+});
+
+/**
  * GET /api/devices/:deviceId/logs
  * Fetch recent journalctl logs from the edge device's aura-watch-edge service
  */
