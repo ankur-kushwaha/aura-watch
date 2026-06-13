@@ -40,7 +40,7 @@ export function EventsTab({ events }: EventsTabProps) {
     clipReidLog,
     loadingClipDetections,
     personRefsDetection,
-    setPersonRefsDetection,
+    closePersonRefsModal,
     cropPreviewFilename,
     setCropPreviewFilename,
     clipPreviewOpen,
@@ -368,11 +368,10 @@ export function EventsTab({ events }: EventsTabProps) {
 
       <PersonAppearancesDialog
         detection={personRefsDetection}
-        onClose={() => setPersonRefsDetection(null)}
+        onClose={closePersonRefsModal}
         selectedClip={selectedClip}
         onClipDetectionsRefresh={refreshClipDetections}
         onCropPreview={setCropPreviewFilename}
-        onPlayClip={playDetectionClip}
       />
     </>
   );

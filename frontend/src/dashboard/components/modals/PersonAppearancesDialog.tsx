@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Play,
   RefreshCw,
@@ -12,20 +12,21 @@ import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialo
 import { REID_CROP_IMG } from '../../constants';
 import type {
   ClipObjectDetection,
-  CropClipPlayback,
   PersonClipReference,
   ReidDetection,
   ReidPerson,
   ReidPersonMatch,
+  TimelineVideoPlayback,
   TrackMatchRow,
   VideoClip,
 } from '../../types';
 import { formatDate } from '../../utils/format';
-import { identityCoverUrl, mediaUrl } from '../../utils/media';
+import { mediaUrl } from '../../utils/media';
 import { buildScoreBasedTimeline } from '../../utils/reid';
-import { CropThumbnail } from '../CropThumbnail';
+import { CropThumbnail, DeferredCropImage, useDeferredLoad } from '../CropThumbnail';
 import { IdsInfoIcon } from '../IdsInfoIcon';
 import { MatchScoreBreakdown } from '../MatchScoreBreakdown';
+import { TimelineClipPlaybackDialog } from './TimelineClipPlaybackDialog';
 
 export interface PersonAppearancesDialogProps {
   detection: ClipObjectDetection | null;
@@ -33,7 +34,6 @@ export interface PersonAppearancesDialogProps {
   selectedClip: VideoClip | null;
   onClipDetectionsRefresh: () => void | Promise<void>;
   onCropPreview: (filename: string) => void;
-  onPlayClip: (opts: CropClipPlayback & { cropFilename: string }) => void | Promise<void>;
 }
 
 async function fetchTrackTimeline(detectionId: string) {
@@ -56,9 +56,9 @@ export function PersonAppearancesDialog({
   selectedClip,
   onClipDetectionsRefresh,
   onCropPreview,
-  onPlayClip,
 }: PersonAppearancesDialogProps) {
   const [personRefs, setPersonRefs] = useState<PersonClipReference[]>([]);
+  const [clipPlayback, setClipPlayback] = useState<TimelineVideoPlayback | null>(null);
   const [identityId, setIdentityId] = useState<string | null>(null);
   const [identitySuggestions, setIdentitySuggestions] = useState<ReidPersonMatch[]>([]);
   const [labelDraft, setLabelDraft] = useState('');
@@ -68,6 +68,8 @@ export function PersonAppearancesDialog({
   const [savingLabel, setSavingLabel] = useState(false);
   const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
   const [brokenCovers, setBrokenCovers] = useState<Set<string>>(new Set());
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const loadIdentitySuggestions = useCallback(async (forIdentityId: string | null) => {
     const suggestions: ReidPersonMatch[] = [];
@@ -137,7 +139,9 @@ export function PersonAppearancesDialog({
   }, []);
 
   useEffect(() => {
-    if (!detection?.detectionId || detection.className !== 'person') {
+    const detectionId = detection?.detectionId;
+    if (!detectionId || detection.className !== 'person') {
+      setClipPlayback(null);
       setPersonRefs([]);
       setIdentityId(null);
       setIdentitySuggestions([]);
@@ -160,14 +164,14 @@ export function PersonAppearancesDialog({
 
     void (async () => {
       try {
-        const resolvedIdentityId = await reloadTimeline(detection.detectionId!);
+        const resolvedIdentityId = await reloadTimeline(detectionId);
         if (cancelled) return;
         await loadIdentitySuggestions(resolvedIdentityId ?? detection.identityId ?? null);
       } catch (err) {
         console.error('Failed to load person references', err);
         if (!cancelled) {
           alert('Could not load appearances for this person.');
-          onClose();
+          onCloseRef.current();
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -175,7 +179,7 @@ export function PersonAppearancesDialog({
     })();
 
     return () => { cancelled = true; };
-  }, [detection, loadIdentitySuggestions, onClose, reloadTimeline]);
+  }, [detection?.detectionId, detection?.className, loadIdentitySuggestions, reloadTimeline]);
 
   const handleAssignIdentity = async (suggestion: ReidPersonMatch) => {
     if (!detection?.detectionId) return;
@@ -285,15 +289,74 @@ export function PersonAppearancesDialog({
     }
   };
 
-  const playReferenceClip = (ref: PersonClipReference) => {
+  const playReferenceClip = async (ref: PersonClipReference) => {
     if (!ref.clipFilename && !ref.id) return;
-    void onPlayClip({
-      cropFilename: ref.filename,
-      clipFilename: ref.clipFilename,
-      clipOffsetMs: ref.clipOffsetMs,
-      cameraName: ref.cameraName,
-      detectionId: ref.id,
-    });
+
+    let clipFilename = ref.clipFilename;
+    let clipOffsetMs = ref.clipOffsetMs ?? 0;
+
+    if (!clipFilename && ref.id) {
+      try {
+        const res = await apiFetch(`/reid/detections/${ref.id}/source-clip`);
+        if (!res.ok) {
+          onCropPreview(ref.filename);
+          return;
+        }
+        const data = await res.json();
+        clipFilename = data.clipFilename;
+        clipOffsetMs = data.clipOffsetMs ?? 0;
+      } catch (err) {
+        console.error('Failed to resolve clip for detection', err);
+        onCropPreview(ref.filename);
+        return;
+      }
+    }
+
+    if (clipFilename) {
+      setClipPlayback({
+        filename: clipFilename,
+        offsetMs: clipOffsetMs,
+        cameraName: ref.cameraName,
+        cropFilename: ref.filename,
+      });
+    } else {
+      onCropPreview(ref.filename);
+    }
+  };
+
+  const playQueryClip = async () => {
+    if (!detection?.cropFilename) return;
+
+    let clipFilename = selectedClip?.filename;
+    let clipOffsetMs = 0;
+
+    if (!clipFilename && detection.detectionId) {
+      try {
+        const res = await apiFetch(`/reid/detections/${detection.detectionId}/source-clip`);
+        if (!res.ok) {
+          onCropPreview(detection.cropFilename);
+          return;
+        }
+        const data = await res.json();
+        clipFilename = data.clipFilename;
+        clipOffsetMs = data.clipOffsetMs ?? 0;
+      } catch (err) {
+        console.error('Failed to resolve clip for detection', err);
+        onCropPreview(detection.cropFilename);
+        return;
+      }
+    }
+
+    if (clipFilename) {
+      setClipPlayback({
+        filename: clipFilename,
+        offsetMs: clipOffsetMs,
+        cameraName: selectedClip?.camera ?? detection.label ?? 'Camera',
+        cropFilename: detection.cropFilename,
+      });
+    } else {
+      onCropPreview(detection.cropFilename);
+    }
   };
 
   const editingIdentity = !identityId || !labelConfirmed || showSuggestions;
@@ -317,22 +380,14 @@ export function PersonAppearancesDialog({
                 <CropThumbnail
                   filename={detection.cropFilename}
                   size="md"
-                  lazy
+                  showHoverPreview={false}
                   playOnClick={false}
                   onPreview={onCropPreview}
                 />
                 {(selectedClip?.filename || detection.detectionId) && (
                   <button
                     type="button"
-                    onClick={() => {
-                      void onPlayClip({
-                        cropFilename: detection.cropFilename!,
-                        clipFilename: selectedClip?.filename,
-                        clipOffsetMs: 0,
-                        cameraName: selectedClip?.camera ?? detection.label ?? 'Camera',
-                        detectionId: detection.detectionId,
-                      });
-                    }}
+                    onClick={() => { void playQueryClip(); }}
                     className="absolute bottom-0.5 right-0.5 p-1 rounded bg-black/75 hover:bg-black/90 border border-white/10 transition-colors"
                     title="Play clip"
                   >
@@ -430,25 +485,13 @@ export function PersonAppearancesDialog({
                       onClick={() => { void handleAssignIdentity(suggestion); }}
                       className="glass-panel interactive flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-left disabled:opacity-50"
                     >
-                      <div className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black">
-                        {brokenCovers.has(suggestion.id) ? (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <UserCircle size={14} className="text-text-muted" />
-                          </div>
-                        ) : (
-                          <img
-                            src={suggestion.coverFilename
-                              ? mediaUrl(`/crops/${suggestion.coverFilename}`)
-                              : identityCoverUrl(suggestion.id)}
-                            alt=""
-                            loading="lazy"
-                            onError={() => {
-                              setBrokenCovers((prev) => new Set(prev).add(suggestion.id));
-                            }}
-                            className={`w-full h-full ${REID_CROP_IMG}`}
-                          />
-                        )}
-                      </div>
+                      <IdentitySuggestionAvatar
+                        suggestion={suggestion}
+                        broken={brokenCovers.has(suggestion.id)}
+                        onBroken={() => {
+                          setBrokenCovers((prev) => new Set(prev).add(suggestion.id));
+                        }}
+                      />
                       <div className="min-w-0">
                         <span className="text-[0.75rem] font-semibold text-text-primary block truncate max-w-[140px]">
                           {suggestion.displayName}
@@ -501,17 +544,17 @@ export function PersonAppearancesDialog({
                     <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#38bdf8] border-2 border-[#090d16]" />
                     <div className={`glass-panel p-2.5 flex items-start gap-3 w-full ${isCurrentClip ? 'border-primary/40' : ''}`}>
                       <div className="relative shrink-0">
-                        <CropThumbnail
+                        <DeferredCropImage
                           filename={ref.filename}
                           size="md"
-                          lazy
-                          playOnClick={false}
-                          onPreview={onCropPreview}
+                          eager={isQuery}
+                          onClick={() => onCropPreview(ref.filename)}
+                          title="Click to enlarge crop"
                         />
                         {(ref.clipFilename || ref.id) && (
                           <button
                             type="button"
-                            onClick={() => playReferenceClip(ref)}
+                            onClick={() => { void playReferenceClip(ref); }}
                             className="absolute bottom-0.5 right-0.5 p-1 rounded bg-black/75 hover:bg-black/90 border border-white/10 transition-colors"
                             title="Play clip"
                           >
@@ -571,6 +614,52 @@ export function PersonAppearancesDialog({
           )}
         </div>
       </DialogContent>
+
+      <TimelineClipPlaybackDialog
+        playback={clipPlayback}
+        onClose={() => setClipPlayback(null)}
+        nested
+      />
     </Dialog>
+  );
+}
+
+function IdentitySuggestionAvatar({
+  suggestion,
+  broken,
+  onBroken,
+}: {
+  suggestion: ReidPersonMatch;
+  broken: boolean;
+  onBroken: () => void;
+}) {
+  const { ref, shouldLoad } = useDeferredLoad(true);
+
+  if (broken || !suggestion.coverFilename) {
+    return (
+      <div className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black flex items-center justify-center">
+        <UserCircle size={14} className="text-text-muted" />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black"
+    >
+      {shouldLoad ? (
+        <img
+          src={mediaUrl(`/crops/${suggestion.coverFilename}`)}
+          alt=""
+          onError={onBroken}
+          className={`w-full h-full ${REID_CROP_IMG}`}
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-[#0a0f1a]">
+          <UserCircle size={14} className="text-text-muted/50" />
+        </div>
+      )}
+    </div>
   );
 }

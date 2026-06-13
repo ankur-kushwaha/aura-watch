@@ -7,9 +7,11 @@ import { mediaUrl } from '../../utils/media';
 export interface TimelineClipPlaybackDialogProps {
   playback: TimelineVideoPlayback | null;
   onClose: () => void;
+  /** Render above another open dialog. */
+  nested?: boolean;
 }
 
-export function TimelineClipPlaybackDialog({ playback, onClose }: TimelineClipPlaybackDialogProps) {
+export function TimelineClipPlaybackDialog({ playback, onClose, nested = false }: TimelineClipPlaybackDialogProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export function TimelineClipPlaybackDialog({ playback, onClose }: TimelineClipPl
 
   return (
     <Dialog open={!!playback} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-[720px] p-5 flex flex-col gap-4">
+      <DialogContent stackLevel={nested ? 'nested' : 'default'} className="max-w-[720px] p-5 flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <DialogTitle>{playback?.cameraName}</DialogTitle>

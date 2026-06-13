@@ -25,18 +25,21 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  /** Use `nested` when stacking a dialog above another open dialog. */
+  stackLevel?: 'default' | 'nested';
 };
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, showCloseButton = false, ...props }, ref) => (
+>(({ className, children, showCloseButton = false, stackLevel = 'default', ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay />
+    <DialogOverlay className={stackLevel === 'nested' ? 'z-[60]' : undefined} />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'glass-panel fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 p-6 shadow-2xl duration-200 animate-[slideUp_0.22s_ease-out] focus:outline-none',
+        'glass-panel fixed left-1/2 top-1/2 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 p-6 shadow-2xl duration-200 animate-[slideUp_0.22s_ease-out] focus:outline-none',
+        stackLevel === 'nested' ? 'z-[60]' : 'z-50',
         className,
       )}
       {...props}

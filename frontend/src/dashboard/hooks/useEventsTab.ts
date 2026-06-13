@@ -235,6 +235,10 @@ export function useEventsTab({
     setPersonRefsDetection(obj);
   }, []);
 
+  const closePersonRefsModal = useCallback(() => {
+    setPersonRefsDetection(null);
+  }, []);
+
   const refreshClipDetections = useCallback(async () => {
     if (!selectedClip) return;
     const detRes = await apiFetch(`/clips/${selectedClip.id}/detections`);
@@ -346,6 +350,7 @@ export function useEventsTab({
     loadingClipDetections,
     personRefsDetection,
     setPersonRefsDetection,
+    closePersonRefsModal,
     cropPreviewFilename,
     setCropPreviewFilename,
     clipPreviewOpen,
