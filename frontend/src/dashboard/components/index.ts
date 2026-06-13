@@ -9,3 +9,4 @@ export { EntityIds, IdsInfoIcon } from './IdsInfoIcon';
 export { MatchScoreBreakdown } from './MatchScoreBreakdown';
 export { OrgInfoBadge } from './OrgInfoBadge';
 export * from './modals';
+export * from './tabs';
