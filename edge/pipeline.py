@@ -31,7 +31,7 @@ class PipelineSettings:
 
 
 FrameCallback = Callable[[np.ndarray], None]
-DetectionCallback = Callable[[list, bool], None]
+DetectionCallback = Callable[[list, bool, np.ndarray], None]
 ReidCallback = Callable[[bytes, int, float, tuple[int, int, int, int], str], None]
 ClipEncoderGetter = Callable[[], Optional[ClipEncoder]]
 
@@ -101,7 +101,7 @@ class VisionPipeline:
             )
 
             if self.on_detections:
-                self.on_detections(detections, new_detection)
+                self.on_detections(detections, new_detection, frame)
 
             if self.on_reid_crop and stabilized:
                 h_f, w_f = frame.shape[:2]

@@ -19,6 +19,7 @@ import {
 } from '../modals';
 import type { EventsTabState } from '../../hooks/useEventsTab';
 import { formatClipDuration, formatClipListDateTime, getClipDetectionCount } from '../../utils';
+import { getClipListPreview } from '../../utils/summary';
 
 export interface EventsTabProps {
   events: EventsTabState;
@@ -67,6 +68,9 @@ export function EventsTab({ events }: EventsTabProps) {
     loadMoreClips,
     handleSelectClip,
     closeClipPreview,
+    generatingAiSummary,
+    aiSummaryError,
+    handleGenerateAiSummary,
     openPersonRefsModal,
     refreshClipDetections,
     playDetectionClip,
@@ -271,9 +275,9 @@ export function EventsTab({ events }: EventsTabProps) {
                                     </span>
                                   )}
                                 </div>
-                                {orgSettings.videoSummary && c.summary && (
+                                {orgSettings.videoSummary && getClipListPreview(c) && (
                                   <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
-                                    {c.summary}
+                                    {getClipListPreview(c)}
                                   </p>
                                 )}
                               </div>
@@ -318,6 +322,9 @@ export function EventsTab({ events }: EventsTabProps) {
                         loadingClipDetections={loadingClipDetections}
                         clipDetections={clipDetections}
                         clipReidLog={clipReidLog}
+                        generatingAiSummary={generatingAiSummary}
+                        aiSummaryError={aiSummaryError}
+                        onGenerateAiSummary={handleGenerateAiSummary}
                         onOpenPersonRefs={openPersonRefsModal}
                         onCropPreview={setCropPreviewFilename}
                         onPlayDetectionClip={playDetectionClip}
@@ -326,7 +333,7 @@ export function EventsTab({ events }: EventsTabProps) {
                       <div className="h-full flex flex-col justify-center items-center border border-dashed border-border-glass rounded-xl text-text-muted p-5 text-center">
                         <Video size={32} className="text-text-muted mb-2.5 mx-auto" />
                         <p className="text-[0.85rem] font-semibold">No Event Selected</p>
-                        <p className="text-[0.75rem] mt-1 max-w-[220px] mx-auto">Select a clip from the history list to play and view the AI summary.</p>
+                        <p className="text-[0.75rem] mt-1 max-w-[220px] mx-auto">Select a clip from the history list to play and view detection details.</p>
                       </div>
                     )}
                   </div>

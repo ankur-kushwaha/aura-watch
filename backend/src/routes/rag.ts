@@ -4,6 +4,7 @@ import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
 import prisma from '../services/db';
 import { getOrgOnlineDeviceIds } from '../services/orgScope';
 import { getOrgSettings } from '../services/orgSettings';
+import { buildClipSearchText } from '../services/yoloSummary';
 
 const router = Router();
 
@@ -131,7 +132,8 @@ router.post('/query', async (req: Request, res: Response) => {
         id: payload.mongoId,
         camera: payload.camera,
         timestamp: payload.timestamp,
-        summary: payload.summary,
+        summary: payload.summary ?? '',
+        aiSummary: payload.aiSummary ?? null,
         filepath: payload.filepath,
         filename: filename,
         deviceId: payload.deviceId ?? null,

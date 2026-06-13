@@ -1,5 +1,6 @@
 import prisma from './db';
 import { createQdrantClientFromEnv } from './qdrantClient';
+import { buildClipSearchText } from './yoloSummary';
 
 const qdrant = createQdrantClientFromEnv();
 
@@ -223,6 +224,8 @@ export async function fallbackSearchClips(
           filename: clip.filename,
           timestamp: clip.timestamp.toISOString(),
           summary: clip.summary,
+          aiSummary: clip.aiSummary,
+          searchText: buildClipSearchText(clip.summary, clip.aiSummary),
           camera: clip.camera,
           deviceId: clip.deviceId,
           streamId: clip.streamId,
@@ -234,12 +237,20 @@ export async function fallbackSearchClips(
     const matchingClips = await prisma.videoClip.findMany({
       where: {
         ...baseWhere,
-        OR: terms.map(term => ({
-          summary: {
-            contains: term,
-            mode: 'insensitive' as const,
-          }
-        }))
+        OR: terms.flatMap(term => ([
+          {
+            summary: {
+              contains: term,
+              mode: 'insensitive' as const,
+            },
+          },
+          {
+            aiSummary: {
+              contains: term,
+              mode: 'insensitive' as const,
+            },
+          },
+        ])),
       },
       take: limit,
       orderBy: { timestamp: 'desc' },
@@ -247,7 +258,7 @@ export async function fallbackSearchClips(
 
     // Score based on term matches
     return matchingClips.map(clip => {
-      const summaryLower = clip.summary.toLowerCase();
+      const summaryLower = buildClipSearchText(clip.summary, clip.aiSummary).toLowerCase();
       let matchedCount = 0;
       terms.forEach(term => {
         if (summaryLower.includes(term)) matchedCount++;
@@ -264,6 +275,8 @@ export async function fallbackSearchClips(
           filename: clip.filename,
           timestamp: clip.timestamp.toISOString(),
           summary: clip.summary,
+          aiSummary: clip.aiSummary,
+          searchText: buildClipSearchText(clip.summary, clip.aiSummary),
           camera: clip.camera,
           deviceId: clip.deviceId,
           streamId: clip.streamId,

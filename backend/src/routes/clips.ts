@@ -3,7 +3,9 @@ import type { Prisma } from '@prisma/client';
 import prisma from '../services/db';
 import { deleteClipVector, deleteClipVectors } from '../services/qdrant';
 import { getClipDetectionsResponse } from '../services/clipDetections';
+import { generateClipAiSummary } from '../services/clipAiSummary';
 import { orgClipWhere, assertClipInOrg, getOrgDeviceIds } from '../services/orgScope';
+import { getOrgSettings } from '../services/orgSettings';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -138,6 +140,36 @@ router.get('/:id/detections', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching clip detections:', error);
     res.status(500).json({ error: 'Failed to fetch clip detections' });
+  }
+});
+
+/**
+ * POST /api/clips/:id/ai-summary
+ * Generate an AI vision summary on demand and re-index the clip for search.
+ */
+router.post('/:id/ai-summary', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    if (!(await assertClipInOrg(id, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Clip not found' });
+    }
+
+    const orgSettings = await getOrgSettings(req.auth.orgId);
+    if (!orgSettings.aiChat) {
+      return res.status(403).json({ error: 'AI features are disabled for this organization.' });
+    }
+
+    const result = await generateClipAiSummary(id);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error generating AI summary:', error);
+    const message = error?.message || 'Failed to generate AI summary';
+    const status = message.includes('not found') ? 404 : message.includes('offline') ? 503 : 500;
+    res.status(status).json({ error: message });
   }
 });
 

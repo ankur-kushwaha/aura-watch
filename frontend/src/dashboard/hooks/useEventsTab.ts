@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { apiFetch, type OrgSettings } from '../../api';
+import { apiFetch, generateClipAiSummary, type OrgSettings } from '../../api';
 import { CLIPS_PAGE_SIZE } from '../constants';
 import type {
   CameraStream,
@@ -46,6 +46,8 @@ export function useEventsTab({
   const [clipPreviewOpen, setClipPreviewOpen] = useState(false);
   const [timelineVideo, setTimelineVideo] = useState<TimelineVideoPlayback | null>(null);
   const [showAskAiDialog, setShowAskAiDialog] = useState(false);
+  const [generatingAiSummary, setGeneratingAiSummary] = useState(false);
+  const [aiSummaryError, setAiSummaryError] = useState<string | null>(null);
   const [clipFilterDeviceId, setClipFilterDeviceId] = useState('');
   const [clipFilterStreamId, setClipFilterStreamId] = useState('');
   const [clipFilterStartTime, setClipFilterStartTime] = useState('');
@@ -221,10 +223,32 @@ export function useEventsTab({
 
   const handleSelectClip = useCallback((clip: VideoClip) => {
     setSelectedClip(clip);
+    setAiSummaryError(null);
     if (isMobileViewport) {
       setClipPreviewOpen(true);
     }
   }, [isMobileViewport]);
+
+  const handleGenerateAiSummary = useCallback(async () => {
+    if (!selectedClip || generatingAiSummary) return;
+
+    setGeneratingAiSummary(true);
+    setAiSummaryError(null);
+    try {
+      const result = await generateClipAiSummary(selectedClip.id);
+      const updatedClip: VideoClip = {
+        ...selectedClip,
+        summary: result.summary,
+        aiSummary: result.aiSummary,
+      };
+      setSelectedClip(updatedClip);
+      setClips((prev) => prev.map((clip) => (clip.id === updatedClip.id ? updatedClip : clip)));
+    } catch (err) {
+      setAiSummaryError(err instanceof Error ? err.message : 'Failed to generate AI summary');
+    } finally {
+      setGeneratingAiSummary(false);
+    }
+  }, [selectedClip, generatingAiSummary]);
 
   const closeClipPreview = useCallback(() => {
     setClipPreviewOpen(false);
@@ -378,6 +402,9 @@ export function useEventsTab({
     handleNewClip,
     handleSelectClip,
     closeClipPreview,
+    generatingAiSummary,
+    aiSummaryError,
+    handleGenerateAiSummary,
     openPersonRefsModal,
     refreshClipDetections,
     playDetectionClip,

@@ -1,4 +1,4 @@
-import { Activity, Clock, Cpu, Fingerprint, ScrollText, Sparkles, UserCircle } from 'lucide-react';
+import { Activity, Clock, Cpu, Fingerprint, Loader2, ScanSearch, ScrollText, Sparkles, UserCircle } from 'lucide-react';
 import type { OrgSettings } from '../../api';
 import type { ClipObjectDetection, ClipReidLog, CropClipPlayback, VideoClip } from '../types';
 import { getClipDetectionCount } from '../utils/clips';
@@ -15,6 +15,9 @@ export interface ClipPreviewPanelProps {
   loadingClipDetections: boolean;
   clipDetections: ClipObjectDetection[];
   clipReidLog: ClipReidLog | null;
+  generatingAiSummary?: boolean;
+  aiSummaryError?: string | null;
+  onGenerateAiSummary?: () => void;
   onOpenPersonRefs: (obj: ClipObjectDetection) => void;
   onCropPreview: (filename: string) => void;
   onPlayDetectionClip: (opts: CropClipPlayback & { cropFilename: string }) => void | Promise<void>;
@@ -28,12 +31,18 @@ export function ClipPreviewPanel({
   loadingClipDetections,
   clipDetections,
   clipReidLog,
+  generatingAiSummary = false,
+  aiSummaryError = null,
+  onGenerateAiSummary,
   onOpenPersonRefs,
   onCropPreview,
   onPlayDetectionClip,
 }: ClipPreviewPanelProps) {
   const selectedDurationLabel = formatClipDuration(clip.duration);
   const selectedDetectionCount = getClipDetectionCount(clip);
+  const detectionSummary = clip.summary?.trim();
+  const aiSummary = clip.aiSummary?.trim();
+  const canGenerateAiSummary = orgSettings.aiChat && !!onGenerateAiSummary;
 
   return (
     <div className="flex flex-col gap-3">
@@ -75,13 +84,54 @@ export function ClipPreviewPanel({
           </div>
         </div>
         {orgSettings.videoSummary && (
-          <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
-            <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase mb-1 tracking-wider flex items-center gap-1">
-              <Sparkles size={12} />Video Summary
+          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
+            <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-1 tracking-wider flex items-center gap-1">
+              <ScanSearch size={12} />Detection Summary
             </p>
             <p className="text-[0.8rem] text-text-secondary leading-[1.4]">
-              {clip.summary || 'No summary available.'}
+              {detectionSummary || 'No detection metadata available for this clip.'}
             </p>
+          </div>
+        )}
+        {orgSettings.aiChat && (
+          <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5 mt-3">
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase tracking-wider flex items-center gap-1">
+                <Sparkles size={12} />AI Summary
+              </p>
+              {canGenerateAiSummary && !aiSummary && (
+                <button
+                  type="button"
+                  onClick={onGenerateAiSummary}
+                  disabled={generatingAiSummary}
+                  className="btn btn-secondary text-[0.68rem] py-1 px-2 shrink-0 flex items-center gap-1"
+                >
+                  {generatingAiSummary ? (
+                    <>
+                      <Loader2 size={11} className="animate-spin" />
+                      Generating…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={11} />
+                      Generate
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+            {aiSummary ? (
+              <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{aiSummary}</p>
+            ) : (
+              <p className="text-[0.75rem] text-text-muted leading-[1.4]">
+                {generatingAiSummary
+                  ? 'Analyzing clip with AI vision…'
+                  : 'Generate an AI summary on demand for clothing, actions, and scene details.'}
+              </p>
+            )}
+            {aiSummaryError && (
+              <p className="text-[0.72rem] text-red-400 mt-1.5">{aiSummaryError}</p>
+            )}
           </div>
         )}
         {orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0 || clipReidLog) && (
@@ -138,6 +188,16 @@ export function ClipPreviewPanel({
                         </span>
                         {obj.trackId > 0 && (
                           <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
+                        )}
+                        {obj.className === 'person' && (obj.upperColor || obj.lowerColor) && (
+                          <span className="text-[0.68rem] text-text-muted capitalize">
+                            {[obj.upperColor, obj.lowerColor].filter(Boolean).join(' / ')}
+                          </span>
+                        )}
+                        {obj.vehicleColor && (
+                          <span className="text-[0.68rem] text-text-muted capitalize">
+                            {obj.vehicleColor}
+                          </span>
                         )}
                         {isClickablePerson && (
                           <span className="text-[0.65rem] text-primary ml-auto">

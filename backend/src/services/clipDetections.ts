@@ -3,17 +3,27 @@ import { retrieveReidVectors, searchIdentityPrototypes } from './qdrant';
 import { defaultPersonLabel } from './reidPeople';
 import { cropExistsLocally } from './cropResolve';
 import type { ReidTrackEvent } from '../routes/reid';
+import type { TrackAppearance } from './cropAppearance';
+import { buildAppearanceMap } from './yoloSummary';
 
 export interface ClipDetectedObjectInput {
   trackId: number;
   className: string;
   confidence: number;
+  heightRatio?: number;
+  upperColor?: string;
+  lowerColor?: string;
+  vehicleColor?: string;
 }
 
 export interface ClipObjectDisplay {
   trackId: number;
   className: string;
   confidence?: number;
+  heightRatio?: number;
+  upperColor?: string;
+  lowerColor?: string;
+  vehicleColor?: string;
   detectionId?: string;
   identityId?: string | null;
   cropFilename?: string;
@@ -55,6 +65,27 @@ export function aggregateTrackEvents(trackEvents: ReidTrackEvent[]): ClipDetecte
   }
 
   return [...byTrack.values()].sort((a, b) => a.trackId - b.trackId);
+}
+
+export function enrichDetectedObjects(
+  objects: ClipDetectedObjectInput[],
+  trackEvents: ReidTrackEvent[],
+  analyzedAppearances?: Map<number, TrackAppearance>,
+): ClipDetectedObjectInput[] {
+  const appearanceByTrack = buildAppearanceMap(trackEvents, analyzedAppearances);
+
+  return objects.map((object) => {
+    const appearance = appearanceByTrack.get(object.trackId);
+    if (!appearance) return object;
+
+    return {
+      ...object,
+      heightRatio: appearance.heightRatio ?? object.heightRatio,
+      upperColor: appearance.upperColor ?? object.upperColor,
+      lowerColor: appearance.lowerColor ?? object.lowerColor,
+      vehicleColor: appearance.vehicleColor ?? object.vehicleColor,
+    };
+  });
 }
 
 async function resolveIdentityLabel(
@@ -183,6 +214,10 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
       trackId: object.trackId,
       className: object.className,
       confidence: object.confidence > 0 ? object.confidence : undefined,
+      heightRatio: object.heightRatio,
+      upperColor: object.upperColor,
+      lowerColor: object.lowerColor,
+      vehicleColor: object.vehicleColor,
       detectionId: detection?.id,
       identityId: detection?.identityId ?? null,
       cropFilename: detection?.filename,

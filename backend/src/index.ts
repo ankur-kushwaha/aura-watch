@@ -26,14 +26,15 @@ import { requireAuth } from './middleware/auth';
 import { bootstrapMultiOrg } from './services/bootstrap';
 import { getDeviceOrgId } from './services/orgScope';
 import { getOrgSettings } from './services/orgSettings';
-import { initQdrant, upsertClipVector } from './services/qdrant';
-import { aggregateTrackEvents, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
+import { initQdrant } from './services/qdrant';
+import { aggregateTrackEvents, enrichDetectedObjects, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
+import { indexClipForSemanticSearch } from './services/clipIndex';
+import { buildYoloSummary } from './services/yoloSummary';
+import { analyzeVehicleAppearancesFromClip, mergeAppearanceMaps } from './services/cropAppearance';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
 import { resolveCropImageBuffer } from './services/cropResolve';
 import { registerEdgeFileFetcher } from './services/edgeFileFetch';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
-import { summarizeVideo, generateTextEmbedding } from './services/ai';
-import { transcodeForGemini } from './services/videoTranscode';
 import prisma from './services/db';
 import { getEffectiveStreamStatus } from './services/deviceStatus';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
@@ -391,8 +392,6 @@ async function processVideoClipInBackground(
   const orgId = await getDeviceOrgId(deviceId);
   const orgSettings = orgId ? await getOrgSettings(orgId) : null;
 
-  let geminiPath: string | null = null;
-
   try {
     const reidFromClipPromise =
       orgSettings?.reidProcessing !== false && trackEvents.length > 0
@@ -406,20 +405,34 @@ async function processVideoClipInBackground(
             frameWidth,
             frameHeight,
           )
-        : Promise.resolve({ succeeded: 0, failures: [] as { trackId: number; error: string }[] });
+        : Promise.resolve({ succeeded: 0, failures: [] as { trackId: number; error: string }[], appearances: new Map() });
+
+    const vehicleAppearancePromise =
+      orgSettings?.videoSummary !== false && trackEvents.length > 0
+        ? analyzeVehicleAppearancesFromClip(filepath, trackEvents, frameWidth, frameHeight)
+        : Promise.resolve(new Map());
+
+    const [reidResult, vehicleAppearances] = await Promise.all([
+      reidFromClipPromise,
+      vehicleAppearancePromise,
+    ]);
+    const appearances = mergeAppearanceMaps(reidResult.appearances, vehicleAppearances);
+    const reidCropsExtracted = reidResult.succeeded;
 
     let summary = '';
     if (orgSettings?.videoSummary !== false) {
-      geminiPath = await transcodeForGemini(filepath);
-      const summaryPath = geminiPath !== filepath ? geminiPath : filepath;
-      summary = await summarizeVideo(summaryPath, cameraName);
-      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generated successfully.`);
+      summary = buildYoloSummary(
+        trackEvents,
+        cameraName,
+        duration,
+        frameWidth,
+        frameHeight,
+        appearances,
+      );
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Detection summary generated from YOLO metadata.`);
     } else {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Video summary disabled for this organization.`);
     }
-
-    const reidResult = await reidFromClipPromise;
-    const reidCropsExtracted = reidResult.succeeded;
 
     if (orgSettings?.reidProcessing === false && trackEvents.length > 0) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] ReID processing disabled for this organization.`);
@@ -488,7 +501,9 @@ async function processVideoClipInBackground(
       }
     }
 
-    const detectedObjects = trackEvents.length > 0 ? aggregateTrackEvents(trackEvents) : undefined;
+    const detectedObjects = trackEvents.length > 0
+      ? enrichDetectedObjects(aggregateTrackEvents(trackEvents), trackEvents, appearances)
+      : undefined;
 
     // 2. Save metadata to MongoDB via Prisma
     const clipDb = await prisma.videoClip.create({
@@ -509,17 +524,7 @@ async function processVideoClipInBackground(
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
 
     if (orgSettings?.semanticSearch !== false && summary.trim()) {
-      const vector = await generateTextEmbedding(summary);
-      await upsertClipVector(clipDb.id, vector, {
-        filepath,
-        filename,
-        timestamp: timestamp.toISOString(),
-        summary,
-        camera: cameraName,
-        deviceId: deviceId,
-        streamId: streamId,
-        ...(orgId ? { orgId } : {}),
-      });
+      await indexClipForSemanticSearch(clipDb, orgId ?? undefined);
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Successfully indexed clip in Qdrant.`);
     } else if (orgSettings?.semanticSearch === false) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Semantic search indexing disabled for this organization.`);
@@ -532,14 +537,6 @@ async function processVideoClipInBackground(
     console.error(`[Pipeline Error] Failed to process ${filename}:`, error);
     broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);
   } finally {
-    if (geminiPath && geminiPath !== filepath && fs.existsSync(geminiPath)) {
-      try {
-        fs.unlinkSync(geminiPath);
-      } catch (err: any) {
-        console.error(`[Cloud Hub] Failed to delete gemini transcode ${geminiPath}:`, err);
-      }
-    }
-
     // Delete temporary backend video file
     if (fs.existsSync(filepath)) {
       try {

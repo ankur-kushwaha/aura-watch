@@ -6,6 +6,10 @@ export interface VideoClipDetectedObject {
   trackId: number;
   className: string;
   confidence: number;
+  heightRatio?: number;
+  upperColor?: string;
+  lowerColor?: string;
+  vehicleColor?: string;
 }
 
 export interface VideoClip {
@@ -14,6 +18,7 @@ export interface VideoClip {
   filename: string;
   timestamp: string;
   summary: string;
+  aiSummary?: string | null;
   duration: number;
   camera: string;
   deviceId?: string;
@@ -26,6 +31,10 @@ export interface ClipObjectDetection {
   trackId: number;
   className: string;
   confidence?: number;
+  heightRatio?: number;
+  upperColor?: string;
+  lowerColor?: string;
+  vehicleColor?: string;
   detectionId?: string;
   identityId?: string | null;
   cropFilename?: string;
@@ -137,6 +146,7 @@ export interface RagResponseClip {
   camera: string;
   timestamp: string;
   summary: string;
+  aiSummary?: string | null;
   filepath: string;
   filename?: string;
   deviceId?: string | null;

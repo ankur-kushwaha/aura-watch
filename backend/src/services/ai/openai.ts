@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import OpenAI from 'openai';
 import { AIService } from './types';
+import { formatClipContextSummary } from '../yoloSummary';
 
 const execAsync = promisify(exec);
 
@@ -319,7 +320,7 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
 
             const contexts = searchResults.map((result: any, i: number) => {
               const payload = result.payload;
-              return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
+              return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${formatClipContextSummary(payload)}`;
             });
             const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
 

@@ -66,6 +66,7 @@ export function AskCameraAiDialog({
       filename,
       timestamp: clip.timestamp,
       summary: clip.summary,
+      aiSummary: clip.aiSummary,
       duration: 0,
       camera: clip.camera,
       deviceId: clip.deviceId ?? undefined,

@@ -23,6 +23,7 @@ import websocket
 from dotenv import load_dotenv
 
 from camera import CameraCapture
+from crop_appearance import analyze_crop_jpeg, analyze_vehicle_from_frame, is_vehicle_class
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
     ClipEncoder,
@@ -403,6 +404,7 @@ class EdgeAgent:
             "preview_stalled": False,
             "clip_track_events": [],
             "clip_track_events_lock": threading.Lock(),
+            "track_snapshot_last_at": 0.0,
             "recording_started_at_mono": None,
             "recording_started_at_ms": None,
         }
@@ -569,13 +571,17 @@ class EdgeAgent:
                     started_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)
                     detection_ms = started_ms + offset_ms
                     bbox_str = ",".join(map(str, bbox))
+                    appearance = analyze_crop_jpeg(crop_jpeg, bbox)
                     event = {
                         "trackId": track_id,
                         "bbox": bbox_str,
                         "offsetMs": offset_ms,
                         "confidence": round(confidence, 4),
                         "className": class_name,
+                        "kind": "reid",
                     }
+                    if appearance:
+                        event["appearance"] = appearance
                     with p_data["clip_track_events_lock"]:
                         p_data["clip_track_events"].append(event)
                     threading.Thread(
@@ -592,7 +598,7 @@ class EdgeAgent:
                     daemon=True,
                 ).start()
 
-            def on_detections(detections, new_detection):
+            def on_detections(detections, new_detection, frame):
                 p_data = self.pipelines.get(stream_id)
                 if not p_data:
                     return
@@ -601,6 +607,35 @@ class EdgeAgent:
                 with p_data["detection_lock"]:
                     if detections:
                         p_data["last_detection_at"] = time.monotonic()
+                if (
+                    p_data.get("is_recording")
+                    and p_data.get("recording_started_at_mono") is not None
+                    and detections
+                ):
+                    now = time.monotonic()
+                    last_snapshot_at = p_data.get("track_snapshot_last_at", 0.0)
+                    if now - last_snapshot_at >= 0.5:
+                        p_data["track_snapshot_last_at"] = now
+                        started_mono = p_data["recording_started_at_mono"]
+                        offset_ms = int((now - started_mono) * 1000)
+                        with p_data["clip_track_events_lock"]:
+                            for detection in detections:
+                                if detection.track_id is None:
+                                    continue
+                                bbox_str = ",".join(map(str, detection.bbox))
+                                event = {
+                                    "trackId": detection.track_id,
+                                    "bbox": bbox_str,
+                                    "offsetMs": offset_ms,
+                                    "confidence": round(detection.confidence, 4),
+                                    "className": detection.class_name,
+                                    "kind": "snapshot",
+                                }
+                                if is_vehicle_class(detection.class_name):
+                                    appearance = analyze_vehicle_from_frame(frame, detection.bbox)
+                                    if appearance:
+                                        event["appearance"] = appearance
+                                p_data["clip_track_events"].append(event)
                 if new_detection and tracking_on:
                     names = ", ".join(sorted({d.class_name for d in detections}))
                     if not self._try_start_clip_recording(stream_id, names):
@@ -750,6 +785,7 @@ class EdgeAgent:
             p_data["recording_started_at_ms"] = int(time.time() * 1000)
             with p_data["clip_track_events_lock"]:
                 p_data["clip_track_events"] = []
+            p_data["track_snapshot_last_at"] = 0.0
 
         config = self.streams_config.get(stream_id)
         name = config.name if config else stream_id

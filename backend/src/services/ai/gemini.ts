@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import * as fs from 'fs';
 import { AIService } from './types';
+import { formatClipContextSummary } from '../yoloSummary';
 
 export class GeminiService implements AIService {
   private ai: GoogleGenAI;
@@ -289,7 +290,7 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
 
             const contexts = searchResults.map((result: any, i: number) => {
               const payload = result.payload;
-              return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${payload.summary}`;
+              return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${formatClipContextSummary(payload)}`;
             });
             const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
 

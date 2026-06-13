@@ -27,6 +27,8 @@ import {
 import { extractCropFromClip } from '../services/reidClipExtract';
 import { enrichDetectionWithClipSource, resolveClipForDetection } from '../services/reidClipResolve';
 import { resolveClipIdFromFilename } from '../services/clipLink';
+import { selectReidTrackEvents } from '../services/yoloSummary';
+import { analyzePersonAppearance, analyzeVehicleAppearancesFromClip, mergeAppearanceMaps, type TrackAppearance } from '../services/cropAppearance';
 import { getOrgOnlineDeviceIds, assertIdentityInOrg, getDeviceOrgId } from '../services/orgScope';
 
 const router = Router();
@@ -56,6 +58,13 @@ export interface ReidTrackEvent {
   offsetMs: number;
   confidence: number;
   className: string;
+  kind?: 'snapshot' | 'reid';
+  appearance?: {
+    heightRatio?: number;
+    upperColor?: string;
+    lowerColor?: string;
+    vehicleColor?: string;
+  };
 }
 
 export interface ReidDetectionInput {
@@ -172,13 +181,19 @@ export async function processReidTrackEventsFromClip(
   trackEvents: ReidTrackEvent[],
   frameWidth?: number,
   frameHeight?: number,
-): Promise<{ succeeded: number; failures: { trackId: number; error: string }[] }> {
-  if (!trackEvents.length) return { succeeded: 0, failures: [] };
+): Promise<{
+  succeeded: number;
+  failures: { trackId: number; error: string }[];
+  appearances: Map<number, TrackAppearance>;
+}> {
+  const reidEvents = selectReidTrackEvents(trackEvents);
+  if (!reidEvents.length) return { succeeded: 0, failures: [], appearances: new Map() };
 
   const resolvedClipId = await resolveClipIdFromFilename(clipFilename);
   let succeeded = 0;
   const failures: { trackId: number; error: string }[] = [];
-  for (const event of trackEvents) {
+  const appearances = new Map<number, TrackAppearance>();
+  for (const event of reidEvents) {
     const timestamp = new Date(clipStartMs + event.offsetMs);
     const filename = `crop_${timestamp.getTime()}_${deviceId}_${event.trackId}.jpg`;
     const cropPath = path.join(CROPS_DIR, filename);
@@ -197,6 +212,12 @@ export async function processReidTrackEventsFromClip(
             frameHeight: frameHeight ?? existingDetection.frameHeight,
           },
         });
+        if (fs.existsSync(cropPath)) {
+          appearances.set(
+            event.trackId,
+            await analyzePersonAppearance(event.bbox, cropPath),
+          );
+        }
         succeeded++;
         console.log(
           `[ReID Router] Linked edge-uploaded crop to clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
@@ -231,6 +252,10 @@ export async function processReidTrackEventsFromClip(
         frameWidth,
         frameHeight,
       });
+      appearances.set(
+        event.trackId,
+        await analyzePersonAppearance(event.bbox, cropPath),
+      );
       succeeded++;
     } catch (err: any) {
       failures.push({ trackId: event.trackId, error: err.message });
@@ -241,7 +266,7 @@ export async function processReidTrackEventsFromClip(
     }
   }
 
-  return { succeeded, failures };
+  return { succeeded, failures, appearances };
 }
 
 /**
