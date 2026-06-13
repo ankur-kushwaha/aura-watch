@@ -87,6 +87,7 @@ export default function DashboardApp() {
   const [deviceLogsDevice, setDeviceLogsDevice] = useState<{ deviceId: string; name: string } | null>(null);
   const [deviceMetricsDevice, setDeviceMetricsDevice] = useState<{ deviceId: string; name: string } | null>(null);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
+  const [refreshingDevices, setRefreshingDevices] = useState(false);
 
   useEffect(() => {
     fetchMe()
@@ -244,6 +245,19 @@ export default function DashboardApp() {
       setLoadingDevices(false);
     }
   }, []);
+
+  const refreshDevices = useCallback(async () => {
+    setRefreshingDevices(true);
+    try {
+      await apiFetch('/devices/check-versions', { method: 'POST' });
+      await fetchDevices();
+    } catch (err) {
+      console.error('Failed to refresh device versions', err);
+      await fetchDevices();
+    } finally {
+      setRefreshingDevices(false);
+    }
+  }, [fetchDevices]);
 
   useEffect(() => {
     if (location.pathname === '/app' || location.pathname === '/app/') {
@@ -641,6 +655,7 @@ export default function DashboardApp() {
       } else {
         const detail = data.output ? `\n\n${data.output}` : '';
         alert((data.message || 'Update complete') + detail);
+        await refreshDevices();
       }
     } catch (err) {
       console.error('Failed to update service', err);
@@ -841,10 +856,12 @@ export default function DashboardApp() {
                 <DeviceInstallTooltip onGenerateToken={handleGenerateEnrollmentToken} />
               </h2>
               <button
-                onClick={() => fetchDevices()}
-                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
+                onClick={() => refreshDevices()}
+                disabled={refreshingDevices}
+                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1 disabled:opacity-50"
               >
-                <RefreshCw size={12} /> Refresh List
+                <RefreshCw size={12} className={refreshingDevices ? 'animate-spin' : ''} />
+                {refreshingDevices ? 'Checking...' : 'Refresh List'}
               </button>
             </div>
 

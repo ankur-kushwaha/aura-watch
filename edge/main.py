@@ -220,7 +220,7 @@ class EdgeAgent:
                 pass
 
     def _check_git_versions(self) -> dict[str, Optional[str]]:
-        """Compare local HEAD with origin on boot; used to surface update availability in the UI."""
+        """Compare local HEAD with origin; triggered on demand from the dashboard refresh action."""
         try:
             repo_root = self._find_repo_root()
             if not os.path.isdir(os.path.join(repo_root, ".git")):
@@ -266,21 +266,6 @@ class EdgeAgent:
         enrollment_token = os.getenv("ENROLLMENT_TOKEN", "").strip()
         if enrollment_token:
             payload["enrollmentToken"] = enrollment_token
-
-        version_info = self._check_git_versions()
-        if version_info.get("gitCommit"):
-            payload["gitCommit"] = version_info["gitCommit"]
-        if version_info.get("remoteGitCommit"):
-            payload["remoteGitCommit"] = version_info["remoteGitCommit"]
-        local_commit = version_info.get("gitCommit")
-        remote_commit = version_info.get("remoteGitCommit")
-        if local_commit and remote_commit:
-            if local_commit != remote_commit:
-                print(
-                    f"[Edge] Update available: local {local_commit[:8]} != remote {remote_commit[:8]}"
-                )
-            else:
-                print(f"[Edge] Git version up to date ({local_commit[:8]})")
 
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
@@ -1176,6 +1161,28 @@ class EdgeAgent:
                 respond(True, metrics=collect_system_metrics())
             except Exception as exc:
                 respond(False, error=f"Failed to collect metrics: {exc}")
+            return
+
+        if command == "check_version":
+            try:
+                version_info = self._check_git_versions()
+                local_commit = version_info.get("gitCommit")
+                remote_commit = version_info.get("remoteGitCommit")
+                if local_commit and remote_commit:
+                    if local_commit != remote_commit:
+                        self.send_log(
+                            f"Update available: local {local_commit[:8]} != remote {remote_commit[:8]}"
+                        )
+                    else:
+                        self.send_log(f"Git version up to date ({local_commit[:8]})")
+                respond(
+                    True,
+                    message="Version check complete.",
+                    gitCommit=local_commit,
+                    remoteGitCommit=remote_commit,
+                )
+            except Exception as exc:
+                respond(False, error=f"Version check failed: {exc}")
             return
 
         respond(False, error=f"Unknown device command: {command}")

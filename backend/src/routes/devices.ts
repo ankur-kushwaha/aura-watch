@@ -88,6 +88,70 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/devices/check-versions
+ * Ask online edge devices to compare local vs remote git commits and refresh stored versions.
+ */
+router.post('/check-versions', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    const devices = await prisma.edgeDevice.findMany({
+      where: { orgId: req.auth.orgId },
+      orderBy: { lastHeartbeat: 'desc' },
+    });
+
+    const results = await Promise.allSettled(
+      devices.map(async (device) => {
+        try {
+          const result = await sendDeviceCommand(device.deviceId, 'check_version', {}, 90000);
+          const versionUpdate: { gitCommit?: string | null; remoteGitCommit?: string | null } = {};
+
+          if (typeof result.gitCommit === 'string' && result.gitCommit.trim()) {
+            versionUpdate.gitCommit = result.gitCommit.trim();
+          }
+          if (typeof result.remoteGitCommit === 'string' && result.remoteGitCommit.trim()) {
+            versionUpdate.remoteGitCommit = result.remoteGitCommit.trim();
+          }
+
+          if (Object.keys(versionUpdate).length > 0) {
+            await prisma.edgeDevice.update({
+              where: { deviceId: device.deviceId },
+              data: versionUpdate,
+            });
+          }
+
+          return {
+            deviceId: device.deviceId,
+            checked: true,
+            gitCommit: versionUpdate.gitCommit ?? device.gitCommit,
+            remoteGitCommit: versionUpdate.remoteGitCommit ?? device.remoteGitCommit,
+          };
+        } catch (error: any) {
+          return {
+            deviceId: device.deviceId,
+            checked: false,
+            error: error.message || 'Version check failed',
+          };
+        }
+      }),
+    );
+
+    notifyDevicesChanged();
+
+    const checked = results.map((result) =>
+      result.status === 'fulfilled' ? result.value : { checked: false, error: 'Version check failed' },
+    );
+
+    res.json({ checked });
+  } catch (error) {
+    console.error('Error checking device versions:', error);
+    res.status(500).json({ error: 'Failed to check device versions' });
+  }
+});
+
+/**
  * GET /api/devices/:deviceId
  * Get details of a single device
  */
