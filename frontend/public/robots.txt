@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+Disallow: /app/
+Disallow: /admin/
+Disallow: /login
+Disallow: /register
+
+Sitemap: https://aura-watch.adboardtools.com/sitemap.xml

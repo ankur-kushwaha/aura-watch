@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { injectStructuredData, landingStructuredData } from './seo.ts';
 import {
   Activity,
   ArrowRight,
@@ -226,9 +227,7 @@ function SectionHeader({ label, title, description }: { label: string; title: st
 }
 
 export default function Landing() {
-  const scrollTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
-  };
+  useEffect(() => injectStructuredData(landingStructuredData()), []);
 
   const featuredUseCases = USE_CASES.filter((u) => u.featured);
   const otherUseCases = USE_CASES.filter((u) => !u.featured);
@@ -245,22 +244,22 @@ export default function Landing() {
             <span className="font-heading font-bold text-[1.05rem] tracking-tight">AURA WATCH AI</span>
           </div>
 
-          <nav className="hidden md:flex items-center gap-7 text-[0.875rem] text-text-secondary">
-            <button type="button" onClick={() => scrollTo('monitoring')} className="hover:text-text-primary transition-colors">
+          <nav className="hidden md:flex items-center gap-7 text-[0.875rem] text-text-secondary" aria-label="Primary">
+            <a href="#monitoring" className="hover:text-text-primary transition-colors">
               Monitoring
-            </button>
-            <button type="button" onClick={() => scrollTo('ask-ai')} className="hover:text-text-primary transition-colors">
+            </a>
+            <a href="#ask-ai" className="hover:text-text-primary transition-colors">
               Ask Camera AI
-            </button>
-            <button type="button" onClick={() => scrollTo('product')} className="hover:text-text-primary transition-colors">
+            </a>
+            <a href="#product" className="hover:text-text-primary transition-colors">
               Product
-            </button>
-            <button type="button" onClick={() => scrollTo('use-cases')} className="hover:text-text-primary transition-colors">
+            </a>
+            <a href="#use-cases" className="hover:text-text-primary transition-colors">
               Use Cases
-            </button>
-            <button type="button" onClick={() => scrollTo('contact')} className="hover:text-text-primary transition-colors">
+            </a>
+            <a href="#contact" className="hover:text-text-primary transition-colors">
               Contact
-            </button>
+            </a>
           </nav>
 
           <Link to="/login" className="btn btn-primary text-[0.875rem] py-2 px-4">
@@ -270,8 +269,9 @@ export default function Landing() {
         </div>
       </header>
 
+      <main>
       {/* Hero */}
-      <section className="pt-32 pb-16 px-6">
+      <section className="pt-32 pb-16 px-6" aria-labelledby="hero-heading">
         <div className="max-w-4xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/10 bg-white/4 text-[0.8rem] text-text-secondary mb-8 landing-fade-in">
             <Sparkles size={14} className="text-secondary" />
@@ -282,10 +282,13 @@ export default function Landing() {
             Watch every feed—or ask your cameras what you missed.
           </p>
 
-          <h1 className="text-[2.75rem] md:text-[4rem] font-extrabold leading-[1.08] tracking-tight mb-6 landing-fade-in landing-delay-2">
-            <span className="text-gradient">See it live.</span>
+          <h1
+            id="hero-heading"
+            className="text-[2.75rem] md:text-[4rem] font-extrabold leading-[1.08] tracking-tight mb-6 landing-fade-in landing-delay-2"
+          >
+            <span className="text-gradient">Multi-camera live monitoring.</span>
             <br />
-            <span className="text-gradient-purple">Ask what happened.</span>
+            <span className="text-gradient-purple">Ask your cameras what happened.</span>
           </h1>
 
           <p className="text-text-secondary text-[1.05rem] md:text-[1.15rem] max-w-2xl mx-auto leading-relaxed mb-10 landing-fade-in landing-delay-3">
@@ -294,14 +297,14 @@ export default function Landing() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 landing-fade-in landing-delay-4">
-            <button type="button" onClick={() => scrollTo('monitoring')} className="btn btn-primary text-[1rem] px-7 py-3">
+            <a href="#monitoring" className="btn btn-primary text-[1rem] px-7 py-3">
               Active monitoring using AI
               <Activity size={18} />
-            </button>
-            <button type="button" onClick={() => scrollTo('ask-ai')} className="btn btn-secondary text-[1rem] px-7 py-3">
+            </a>
+            <a href="#ask-ai" className="btn btn-secondary text-[1rem] px-7 py-3">
               Ask Camera AI
               <MessageSquare size={18} />
-            </button>
+            </a>
           </div>
         </div>
       </section>
@@ -597,6 +600,7 @@ export default function Landing() {
           </Link>
         </div>
       </section>
+      </main>
 
       {/* Footer */}
       <footer id="contact" className="px-6 pt-16 pb-8 border-t border-white/6 scroll-mt-20">
@@ -620,29 +624,29 @@ export default function Landing() {
               </h4>
               <ul className="flex flex-col gap-2.5 text-[0.875rem] text-text-muted">
                 <li>
-                  <button type="button" onClick={() => scrollTo('monitoring')} className="hover:text-text-primary transition-colors">
+                  <a href="#monitoring" className="hover:text-text-primary transition-colors">
                     Active monitoring using AI
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button type="button" onClick={() => scrollTo('ask-ai')} className="hover:text-text-primary transition-colors">
+                  <a href="#ask-ai" className="hover:text-text-primary transition-colors">
                     Ask Camera AI
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button type="button" onClick={() => scrollTo('product')} className="hover:text-text-primary transition-colors">
+                  <a href="#product" className="hover:text-text-primary transition-colors">
                     Product
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button type="button" onClick={() => scrollTo('use-cases')} className="hover:text-text-primary transition-colors">
+                  <a href="#use-cases" className="hover:text-text-primary transition-colors">
                     Use Cases
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button type="button" onClick={() => scrollTo('how-it-works')} className="hover:text-text-primary transition-colors">
+                  <a href="#how-it-works" className="hover:text-text-primary transition-colors">
                     How It Works
-                  </button>
+                  </a>
                 </li>
               </ul>
             </div>
