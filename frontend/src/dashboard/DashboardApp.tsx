@@ -49,6 +49,7 @@ import type {
 } from './types';
 import { isEdgeUpdateAvailable } from './utils/clips';
 import {
+  findLatestStreamError,
   getStreamErrorHint,
   getStreamErrorTitle,
   parseStreamErrorFromLog,
@@ -218,14 +219,21 @@ export default function DashboardApp() {
 
   const activeStreamError = useMemo<StreamErrorState | null>(() => {
     if (streamError) return streamError;
+
+    const fromLogs = findLatestStreamError(logs, selectedStream?.name);
+    if (fromLogs) return fromLogs;
+
     if (status === 'Error') {
+      const rtsp = selectedStream?.streamUrl;
       return {
         errorType: 'camera_error',
-        message: 'Camera connection failed. Check System Status Logs below for the latest RTSP error.',
+        message: rtsp
+          ? `Cannot connect to camera at ${rtsp}`
+          : 'Camera connection failed. See System Status Logs below.',
       };
     }
     return null;
-  }, [streamError, status]);
+  }, [streamError, status, logs, selectedStream?.name, selectedStream?.streamUrl]);
 
   const appendLog = useCallback((message: string) => {
     const logEntry = { message, timestamp: new Date().toISOString() };
@@ -624,7 +632,6 @@ export default function DashboardApp() {
     if (liveFeedOpen) {
       setStreamLoading(true);
       setStreamInitTimedOut(false);
-      setStreamError(null);
       setLiveFrame(null);
       lastFrameAtRef.current = 0;
       ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
@@ -660,21 +667,10 @@ export default function DashboardApp() {
   // Surface the latest camera error from buffered logs when opening a stream
   useEffect(() => {
     if (!selectedStreamId || !liveFeedOpen) return;
-    const streamName = selectedStream?.name;
-    for (let i = logs.length - 1; i >= 0; i -= 1) {
-      const entry = logs[i];
-      if (streamName && !entry.message.includes(`[${streamName}]`)) {
-        continue;
-      }
-      const parsed = parseStreamErrorFromLog(entry.message);
-      if (parsed) {
-        setStreamError(parsed);
-        setStreamLoading(false);
-        return;
-      }
-      if (entry.message.includes('Started YOLO+ByteTrack pipeline')) {
-        break;
-      }
+    const parsed = findLatestStreamError(logs, selectedStream?.name);
+    if (parsed) {
+      setStreamError(parsed);
+      setStreamLoading(false);
     }
   }, [selectedStreamId, selectedStream?.name, liveFeedOpen, logs]);
 
@@ -715,7 +711,6 @@ export default function DashboardApp() {
     Promise.resolve().then(() => {
       setStreamLoading(true);
       setStreamInitTimedOut(false);
-      setStreamError(null);
       setLiveFrame(null);
       setPreviewFrozen(false);
       lastFrameAtRef.current = 0;
@@ -1354,10 +1349,67 @@ export default function DashboardApp() {
             </div>
 
             {liveFeedOpen && (
-            <div className="bg-[#090d16] rounded-xl w-full relative overflow-hidden border border-[rgba(255,255,255,0.05)] min-h-[200px]">
+            <div className={`bg-[#090d16] rounded-xl w-full relative border border-[rgba(255,255,255,0.05)] ${activeStreamError && !liveFrame ? 'min-h-0' : 'min-h-[200px] overflow-hidden'}`}>
 
               {selectedStreamId && status !== 'Offline' ? (
-                <div className="w-full relative">
+                activeStreamError && !liveFrame ? (
+                  <div className="w-full p-4 sm:p-5">
+                    <div className="bg-[rgba(244,63,94,0.08)] border border-[rgba(244,63,94,0.35)] rounded-xl p-4 sm:p-5">
+                      <div className="flex items-start gap-3 mb-3">
+                        <div className="bg-[rgba(244,63,94,0.15)] p-2 rounded-lg shrink-0">
+                          <AlertTriangle size={18} className="text-danger" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[0.95rem] font-semibold text-danger leading-snug">
+                            {getStreamErrorTitle(activeStreamError.errorType)}
+                          </p>
+                          {selectedStream?.streamUrl && selectedStream.cameraType === 'rtsp' && (
+                            <p className="text-[0.7rem] text-text-muted mt-1 break-all">
+                              RTSP: {selectedStream.streamUrl}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="bg-[rgba(0,0,0,0.35)] rounded-lg px-3 py-2.5 mb-3 border border-[rgba(255,255,255,0.06)]">
+                        <p className="text-[0.72rem] uppercase tracking-wide text-text-muted mb-1">Error detail</p>
+                        <p className="text-[0.8rem] text-text-primary leading-relaxed break-words">
+                          {activeStreamError.message}
+                        </p>
+                      </div>
+
+                      <p className="text-[0.78rem] text-amber-300/90 leading-relaxed mb-3">
+                        {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
+                      </p>
+
+                      {activeStreamError.retryInSec != null && activeStreamError.retryInSec > 0 && (
+                        <p className="text-[0.72rem] text-text-muted mb-4">
+                          Edge agent will retry automatically in ~{Math.ceil(activeStreamError.retryInSec)}s.
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowConfigDialog(true)}
+                          className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                        >
+                          <Settings size={12} />
+                          Check Stream Settings
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => refreshStreamPreview('manual retry after error')}
+                          className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                        >
+                          <RefreshCw size={12} />
+                          Retry Now
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                <div className="w-full relative min-h-[200px]">
                   {liveFrame && (
                     <img
                       src={liveFrame}
@@ -1382,50 +1434,6 @@ export default function DashboardApp() {
 
                   {previewFrozen && (
                     <div className="absolute inset-0 border-2 border-amber-500/60 pointer-events-none rounded-xl z-10" />
-                  )}
-
-                  {activeStreamError && !liveFrame && (
-                    <div className="text-center absolute inset-0 flex flex-col justify-center items-center bg-[#090d16]/95 px-5 py-6 z-20">
-                      <div className="bg-[rgba(244,63,94,0.12)] border border-[rgba(244,63,94,0.35)] rounded-xl p-5 max-w-md w-full">
-                        <div className="flex items-center justify-center gap-2 mb-3">
-                          <AlertTriangle size={20} className="text-danger" />
-                          <p className="text-[0.95rem] font-semibold text-danger">
-                            {getStreamErrorTitle(activeStreamError.errorType)}
-                          </p>
-                        </div>
-                        <p className="text-[0.78rem] text-text-secondary leading-relaxed mb-3">
-                          {activeStreamError.message}
-                        </p>
-                        <p className="text-[0.75rem] text-amber-300/90 leading-relaxed mb-4">
-                          {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
-                        </p>
-                        {activeStreamError.retryInSec != null && activeStreamError.retryInSec > 0 && (
-                          <p className="text-[0.72rem] text-text-muted mb-4">
-                            Edge agent will retry automatically in ~{Math.ceil(activeStreamError.retryInSec)}s.
-                          </p>
-                        )}
-                        <div className="flex flex-wrap items-center justify-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowConfigDialog(true);
-                            }}
-                            className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                          >
-                            <Settings size={12} />
-                            Check Stream Settings
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => refreshStreamPreview('manual retry after error')}
-                            className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                          >
-                            <RefreshCw size={12} />
-                            Retry Now
-                          </button>
-                        </div>
-                      </div>
-                    </div>
                   )}
 
                   {streamLoading && !activeStreamError && (
@@ -1458,6 +1466,7 @@ export default function DashboardApp() {
                     </div>
                   )}
                 </div>
+                )
               ) : selectedStreamId ? (
                 <div className="text-center text-text-muted min-h-[200px] flex flex-col justify-center items-center py-8">
                   <Camera size={36} className="text-text-muted mb-3 mx-auto" />

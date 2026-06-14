@@ -25,20 +25,55 @@ function classifyError(detail: string): string {
 }
 
 function simplifyError(detail: string): string {
+  const known = [
+    'No route to host',
+    'Network is unreachable',
+    'Connection refused',
+    'Connection timed out',
+    '401 Unauthorized',
+    '403 Forbidden',
+  ];
+  for (const phrase of known) {
+    if (detail.toLowerCase().includes(phrase.toLowerCase())) {
+      const rtsp = detail.match(/rtsp:\/\/[^\s|)]+/i);
+      return rtsp ? `${phrase} — ${rtsp[0]}` : phrase;
+    }
+  }
+
   const cleaned = detail
     .replace(/\[[^\]]+\]/g, '')
     .replace(/Error opening input files?:/gi, '')
     .replace(/Error opening input file/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (cleaned.length > 220) {
-    return `${cleaned.slice(0, 217)}...`;
+  if (cleaned.length > 180) {
+    return `${cleaned.slice(0, 177)}...`;
   }
   return cleaned || 'Camera connection failed';
 }
 
+export function findLatestStreamError(
+  logs: Array<{ message: string }>,
+  streamName?: string,
+): StreamErrorState | null {
+  for (let i = logs.length - 1; i >= 0; i -= 1) {
+    const entry = logs[i];
+    if (streamName && !entry.message.includes(`[${streamName}]`)) {
+      continue;
+    }
+    const parsed = parseStreamErrorFromLog(entry.message);
+    if (parsed) {
+      return parsed;
+    }
+    if (entry.message.includes('Started YOLO+ByteTrack pipeline')) {
+      break;
+    }
+  }
+  return null;
+}
+
 export function parseStreamErrorFromLog(message: string): StreamErrorState | null {
-  const failedOpen = message.match(/Failed to open camera \((.+?)\)\. Retrying in (\d+)s/i);
+  const failedOpen = message.match(/Failed to open camera \(([\s\S]+?)\)\. Retrying in (\d+)s/i);
   if (failedOpen) {
     const detail = failedOpen[1];
     return {
@@ -48,7 +83,7 @@ export function parseStreamErrorFromLog(message: string): StreamErrorState | nul
     };
   }
 
-  const noFrames = message.match(/Camera opened but no frames \((.+?)\)\. Retrying in (\d+)s/i);
+  const noFrames = message.match(/Camera opened but no frames \(([\s\S]+?)\)\. Retrying in (\d+)s/i);
   if (noFrames) {
     const detail = noFrames[1];
     return {
