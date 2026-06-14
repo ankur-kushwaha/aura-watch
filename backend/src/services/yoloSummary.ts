@@ -23,6 +23,10 @@ export function isVehicleClass(className: string): boolean {
   return VEHICLE_CLASSES.has(className);
 }
 
+export function isReidEligibleClass(className: string): boolean {
+  return className === 'person' || isVehicleClass(className);
+}
+
 export function selectVehicleTrackEvents(trackEvents: ReidTrackEvent[]): ReidTrackEvent[] {
   const snapshotEvents = trackEvents.filter(
     (event) => event.kind === 'snapshot' && isVehicleClass(event.className),
@@ -386,7 +390,7 @@ export function formatClipContextSummary(payload: {
 
 export function selectReidTrackEvents(trackEvents: ReidTrackEvent[]): ReidTrackEvent[] {
   const reidEvents = trackEvents.filter(
-    (event) => event.kind !== 'snapshot' && (event.className === 'person' || !event.className),
+    (event) => event.kind !== 'snapshot' && isReidEligibleClass(event.className || 'person'),
   );
 
   const byTrack = new Map<number, ReidTrackEvent>();

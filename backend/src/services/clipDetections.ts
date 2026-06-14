@@ -9,6 +9,7 @@ import * as path from 'path';
 import type { ReidTrackEvent } from '../routes/reid';
 import type { TrackAppearance } from './cropAppearance';
 import { buildAppearanceMap } from './yoloSummary';
+import { isVehicleClass } from './yoloSummary';
 
 export interface ClipDetectedObjectInput {
   trackId: number;
@@ -335,13 +336,30 @@ export async function buildClipReidLog(
   }
 
   for (const obj of objects) {
-    if (obj.className !== 'person') continue;
+    const isPerson = obj.className === 'person';
+    const isVehicle = isVehicleClass(obj.className);
+
+    if (!isPerson && !isVehicle) continue;
 
     if (!obj.detectionId) {
       entries.push({
         level: 'warn',
-        message: `Track ${obj.trackId}: detected during clip but no ReID profile was stored.`,
+        message: `Track ${obj.trackId} (${obj.className}): detected during clip but no ReID profile was stored.`,
       });
+      continue;
+    }
+
+    if (isVehicle) {
+      entries.push({
+        level: 'info',
+        message: `Track ${obj.trackId} (${obj.className}): vehicle ReID detection stored.`,
+      });
+      if (obj.cropFilename && !cropExistsLocally(obj.cropFilename)) {
+        entries.push({
+          level: 'info',
+          message: `Track ${obj.trackId}: crop image not cached — will be fetched from edge or regenerated from clip.`,
+        });
+      }
       continue;
     }
 

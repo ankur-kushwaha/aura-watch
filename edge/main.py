@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 from agent_log import AgentLogger
 from camera import CameraCapture
-from crop_appearance import analyze_crop_jpeg, analyze_vehicle_from_frame, is_vehicle_class
+from crop_appearance import analyze_crop_jpeg, analyze_vehicle_crop_jpeg, analyze_vehicle_from_frame, is_vehicle_class
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
     ClipEncoder,
@@ -683,7 +683,10 @@ class EdgeAgent:
                     started_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)
                     detection_ms = started_ms + offset_ms
                     bbox_str = ",".join(map(str, bbox))
-                    appearance = analyze_crop_jpeg(crop_jpeg, bbox)
+                    if is_vehicle_class(class_name):
+                        appearance = analyze_vehicle_crop_jpeg(crop_jpeg)
+                    else:
+                        appearance = analyze_crop_jpeg(crop_jpeg, bbox)
                     event = {
                         "trackId": track_id,
                         "bbox": bbox_str,
@@ -698,7 +701,7 @@ class EdgeAgent:
                         p_data["clip_track_events"].append(event)
                     threading.Thread(
                         target=self._upload_reid_crop,
-                        args=(stream_id, crop_jpeg, track_id, confidence, bbox),
+                        args=(stream_id, crop_jpeg, track_id, confidence, bbox, class_name),
                         kwargs={"timestamp_ms": detection_ms},
                         daemon=True,
                     ).start()
@@ -706,7 +709,7 @@ class EdgeAgent:
 
                 threading.Thread(
                     target=self._upload_reid_crop,
-                    args=(stream_id, crop_jpeg, track_id, confidence, bbox),
+                    args=(stream_id, crop_jpeg, track_id, confidence, bbox, class_name),
                     daemon=True,
                 ).start()
 
@@ -857,6 +860,7 @@ class EdgeAgent:
         track_id: int,
         confidence: float,
         bbox: tuple[int, int, int, int],
+        class_name: str = "person",
         *,
         timestamp_ms: int | None = None,
     ):
@@ -877,7 +881,7 @@ class EdgeAgent:
             "x-confidence": f"{confidence:.4f}",
             "x-bbox": bbox_str,
             "x-timestamp": str(timestamp_ms),
-            "x-class-name": "person",
+            "x-class-name": class_name,
             "x-stream-id": stream_id,
         }
         try:

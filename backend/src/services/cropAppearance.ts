@@ -174,6 +174,17 @@ export async function analyzePersonAppearance(
   return appearance;
 }
 
+export async function analyzeTrackAppearance(
+  className: string,
+  bbox: string,
+  cropPath?: string,
+): Promise<TrackAppearance> {
+  if (isVehicleClass(className)) {
+    return cropPath ? await analyzeVehicleAppearance(cropPath) : {};
+  }
+  return analyzePersonAppearance(bbox, cropPath);
+}
+
 export async function analyzeVehicleAppearance(
   cropPath: string,
 ): Promise<TrackAppearance> {

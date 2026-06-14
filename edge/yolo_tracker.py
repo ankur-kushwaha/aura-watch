@@ -31,6 +31,12 @@ COCO_CLASS_IDS: dict[str, int] = {
 # person + common ground vehicles
 DEFAULT_DETECT_CLASSES = ("person", "bicycle", "car", "motorcycle", "bus", "truck")
 
+REID_ELIGIBLE_CLASSES = frozenset(DEFAULT_DETECT_CLASSES)
+
+
+def is_reid_eligible_class(class_name: str) -> bool:
+    return class_name in REID_ELIGIBLE_CLASSES
+
 
 def parse_class_names(value: str) -> list[str]:
     aliases = {
@@ -232,7 +238,7 @@ class YoloByteTracker:
         for d in detections:
             if d.track_id is None:
                 continue
-            if d.class_name != "person":
+            if not is_reid_eligible_class(d.class_name):
                 continue
 
             tid = d.track_id

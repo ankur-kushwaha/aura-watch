@@ -28,7 +28,7 @@ import { extractCropFromClip } from '../services/reidClipExtract';
 import { enrichDetectionWithClipSource, resolveClipForDetection } from '../services/reidClipResolve';
 import { resolveClipIdFromFilename } from '../services/clipLink';
 import { selectReidTrackEvents } from '../services/yoloSummary';
-import { analyzePersonAppearance, analyzeVehicleAppearancesFromClip, mergeAppearanceMaps, type TrackAppearance } from '../services/cropAppearance';
+import { analyzeTrackAppearance, analyzeVehicleAppearancesFromClip, mergeAppearanceMaps, type TrackAppearance } from '../services/cropAppearance';
 import { getOrgOnlineDeviceIds, assertIdentityInOrg, getDeviceOrgId } from '../services/orgScope';
 
 const router = Router();
@@ -158,7 +158,9 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
     className,
   });
 
-  await linkDetectionToExistingIdentity(detection.id, streamId, trackId);
+  if (className === 'person') {
+    await linkDetectionToExistingIdentity(detection.id, streamId, trackId);
+  }
 
   const fullDetection = await prisma.reidDetection.findUnique({
     where: { id: detection.id },
@@ -215,7 +217,7 @@ export async function processReidTrackEventsFromClip(
         if (fs.existsSync(cropPath)) {
           appearances.set(
             event.trackId,
-            await analyzePersonAppearance(event.bbox, cropPath),
+            await analyzeTrackAppearance(event.className || 'person', event.bbox, cropPath),
           );
         }
         succeeded++;
@@ -254,7 +256,7 @@ export async function processReidTrackEventsFromClip(
       });
       appearances.set(
         event.trackId,
-        await analyzePersonAppearance(event.bbox, cropPath),
+        await analyzeTrackAppearance(event.className || 'person', event.bbox, cropPath),
       );
       succeeded++;
     } catch (err: any) {
