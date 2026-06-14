@@ -1,5 +1,6 @@
 import { GeminiService } from './gemini';
 import { OpenAIService } from './openai';
+import { OpenRouterService } from './openrouter';
 import { AIService } from './types';
 
 const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
@@ -9,6 +10,8 @@ console.log(`[AI Factory] Initializing AI Service Provider: ${provider.toUpperCa
 
 if (provider === 'openai') {
   activeService = new OpenAIService();
+} else if (provider === 'openrouter') {
+  activeService = new OpenRouterService();
 } else {
   activeService = new GeminiService();
 }
