@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../api';
+import { REID_DETECTIONS_PAGE_SIZE } from '../constants';
 import type {
   CameraStream,
+  DetectionFilterParams,
   ReidDetection,
   ReidPerson,
   ReidPersonMatch,
   ReidRoute,
-  TimelineVideoPlayback,
 } from '../types';
+import { buildDetectionsQueryString } from '../utils/clips';
 
 export interface UseReidTabOptions {
   streams: CameraStream[];
@@ -17,23 +19,28 @@ export interface UseReidTabOptions {
 
 export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOptions) {
   const [reidPeople, setReidPeople] = useState<ReidPerson[]>([]);
+  const [reidDetections, setReidDetections] = useState<ReidDetection[]>([]);
+  const [reidDetectionsTotal, setReidDetectionsTotal] = useState(0);
   const [loadingReidPeople, setLoadingReidPeople] = useState(false);
+  const [loadingReidDetections, setLoadingReidDetections] = useState(false);
+  const [loadingMoreReidDetections, setLoadingMoreReidDetections] = useState(false);
   const [brokenIdentityCovers, setBrokenIdentityCovers] = useState<Set<string>>(new Set());
+  const [brokenDetectionCrops, setBrokenDetectionCrops] = useState<Set<string>>(new Set());
   const [deletingIdentityId, setDeletingIdentityId] = useState<string | null>(null);
-  const [reidView, setReidView] = useState<'people' | 'person'>('people');
+  const [reidView, setReidView] = useState<'people' | 'person' | 'detection'>('people');
   const [selectedPerson, setSelectedPerson] = useState<ReidPerson | null>(null);
-  const [personTimeline, setPersonTimeline] = useState<ReidDetection[]>([]);
+  const [selectedDetection, setSelectedDetection] = useState<ReidDetection | null>(null);
   const [personSuggestions, setPersonSuggestions] = useState<ReidPersonMatch[]>([]);
   const [loadingPersonDetail, setLoadingPersonDetail] = useState(false);
   const [linkPeopleMode, setLinkPeopleMode] = useState(false);
   const [linkPeopleSelection, setLinkPeopleSelection] = useState<string[]>([]);
+  const [linkDetectionsMode, setLinkDetectionsMode] = useState(false);
+  const [linkDetectionsSelection, setLinkDetectionsSelection] = useState<string[]>([]);
+  const [mergingDetections, setMergingDetections] = useState(false);
   const [identityLabelDraft, setIdentityLabelDraft] = useState('');
   const [savingIdentityLabel, setSavingIdentityLabel] = useState(false);
   const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
   const [showTopology, setShowTopology] = useState(false);
-  const [reidRefreshNonce, setReidRefreshNonce] = useState(0);
-  const [timelineVideo, setTimelineVideo] = useState<TimelineVideoPlayback | null>(null);
-  const [timelineClipLoading, setTimelineClipLoading] = useState<string | null>(null);
   const [showIdentitySuggestions, setShowIdentitySuggestions] = useState(false);
   const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
   const [newRoute, setNewRoute] = useState<ReidRoute>({
@@ -43,20 +50,175 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     maxTimeSeconds: 60,
     topologyScore: 1.0,
   });
+  const [detectionFilterStreamId, setDetectionFilterStreamId] = useState('');
+  const [detectionFilterCameraName, setDetectionFilterCameraName] = useState('');
+  const [detectionFilterStartTime, setDetectionFilterStartTime] = useState('');
+  const [detectionFilterEndTime, setDetectionFilterEndTime] = useState('');
+  const [showDetectionFilters, setShowDetectionFilters] = useState(false);
 
-  const fetchReidPeople = useCallback(async () => {
-    setLoadingReidPeople(true);
+  const reidViewRef = useRef(reidView);
+  const selectedPersonIdRef = useRef<string | null>(null);
+  const reidDetectionsCountRef = useRef(0);
+  const reidRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const detectionFilterParams = useMemo<DetectionFilterParams>(
+    () => ({
+      streamId: detectionFilterStreamId,
+      cameraName: detectionFilterCameraName,
+      startTime: detectionFilterStartTime,
+      endTime: detectionFilterEndTime,
+    }),
+    [
+      detectionFilterStreamId,
+      detectionFilterCameraName,
+      detectionFilterStartTime,
+      detectionFilterEndTime,
+    ],
+  );
+
+  const detectionFilterParamsRef = useRef(detectionFilterParams);
+
+  const detectionFilterCameras = useMemo(
+    () => [...new Set(streams.map((s) => s.name))].sort(),
+    [streams],
+  );
+
+  const detectionFilterStreams = useMemo(
+    () => (detectionFilterCameraName
+      ? streams.filter((s) => s.name === detectionFilterCameraName)
+      : streams),
+    [streams, detectionFilterCameraName],
+  );
+
+  const hasActiveDetectionFilters = Boolean(
+    detectionFilterStreamId
+    || detectionFilterCameraName
+    || detectionFilterStartTime
+    || detectionFilterEndTime,
+  );
+
+  useEffect(() => {
+    reidViewRef.current = reidView;
+  }, [reidView]);
+
+  useEffect(() => {
+    selectedPersonIdRef.current = selectedPerson?.id ?? null;
+  }, [selectedPerson?.id]);
+
+  useEffect(() => {
+    reidDetectionsCountRef.current = reidDetections.length;
+  }, [reidDetections.length]);
+
+  useEffect(() => {
+    detectionFilterParamsRef.current = detectionFilterParams;
+  }, [detectionFilterParams]);
+
+  const fetchReidDetectionsPage = useCallback(async (
+    offset: number,
+    limit: number,
+    filters?: DetectionFilterParams,
+  ): Promise<{ detections: ReidDetection[]; total: number; hasMore: boolean } | null> => {
+    try {
+      const qs = buildDetectionsQueryString(
+        limit,
+        offset,
+        filters ?? detectionFilterParamsRef.current,
+      );
+      const res = await apiFetch(`/reid/detections?${qs}`);
+      const data = await res.json();
+      return {
+        detections: data.detections ?? [],
+        total: data.total ?? 0,
+        hasMore: !!data.hasMore,
+      };
+    } catch (err) {
+      console.error('Failed to fetch ReID detections', err);
+      return null;
+    }
+  }, []);
+
+  const fetchReidPeople = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoadingReidPeople(true);
     try {
       const res = await apiFetch('/reid/people');
       const data = await res.json();
       setReidPeople(data);
-      setBrokenIdentityCovers(new Set());
+      if (!options?.silent) {
+        setBrokenIdentityCovers(new Set());
+      }
     } catch (err) {
       console.error('Failed to fetch ReID people', err);
     } finally {
-      setLoadingReidPeople(false);
+      if (!options?.silent) setLoadingReidPeople(false);
     }
   }, []);
+
+  const fetchReidDetections = useCallback(async (
+    options?: { silent?: boolean; filtersOverride?: DetectionFilterParams },
+  ) => {
+    const filters = options?.filtersOverride ?? detectionFilterParamsRef.current;
+    if (options?.silent) {
+      const limit = Math.max(reidDetectionsCountRef.current, REID_DETECTIONS_PAGE_SIZE);
+      const page = await fetchReidDetectionsPage(0, limit, filters);
+      if (!page) return;
+      setReidDetections(page.detections);
+      setReidDetectionsTotal(page.total);
+      return;
+    }
+    setLoadingReidDetections(true);
+    try {
+      const page = await fetchReidDetectionsPage(0, REID_DETECTIONS_PAGE_SIZE, filters);
+      if (!page) return;
+      setReidDetections(page.detections);
+      setReidDetectionsTotal(page.total);
+      setBrokenDetectionCrops(new Set());
+    } finally {
+      setLoadingReidDetections(false);
+    }
+  }, [fetchReidDetectionsPage]);
+
+  const loadMoreReidDetections = useCallback(async () => {
+    if (loadingMoreReidDetections || reidDetections.length >= reidDetectionsTotal) return;
+    setLoadingMoreReidDetections(true);
+    try {
+      const page = await fetchReidDetectionsPage(
+        reidDetections.length,
+        REID_DETECTIONS_PAGE_SIZE,
+      );
+      if (!page) return;
+      setReidDetections((prev) => [...prev, ...page.detections]);
+      setReidDetectionsTotal(page.total);
+    } finally {
+      setLoadingMoreReidDetections(false);
+    }
+  }, [
+    fetchReidDetectionsPage,
+    loadingMoreReidDetections,
+    reidDetections.length,
+    reidDetectionsTotal,
+  ]);
+
+  const refreshLoadedReidDetections = useCallback(async () => {
+    const limit = Math.max(reidDetectionsCountRef.current, REID_DETECTIONS_PAGE_SIZE);
+    const page = await fetchReidDetectionsPage(0, limit);
+    if (!page) return;
+    setReidDetections(page.detections);
+    setReidDetectionsTotal(page.total);
+  }, [fetchReidDetectionsPage]);
+
+  const clearDetectionFilters = useCallback(() => {
+    const cleared: DetectionFilterParams = {
+      streamId: '',
+      cameraName: '',
+      startTime: '',
+      endTime: '',
+    };
+    setDetectionFilterStreamId('');
+    setDetectionFilterCameraName('');
+    setDetectionFilterStartTime('');
+    setDetectionFilterEndTime('');
+    void fetchReidDetections({ filtersOverride: cleared });
+  }, [fetchReidDetections]);
 
   const fetchTopology = useCallback(async () => {
     try {
@@ -68,82 +230,90 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     }
   }, []);
 
+  const loadPersonDetailData = useCallback(async (personId: string) => {
+    const [journeyRes, matchesRes] = await Promise.all([
+      apiFetch(`/reid/identities/${personId}/journey`),
+      apiFetch(`/reid/identities/${personId}/matches`),
+    ]);
+    return {
+      journey: await journeyRes.json(),
+      matches: await matchesRes.json(),
+    };
+  }, []);
+
+  const applyPersonDetailData = useCallback((
+    journey: { identity?: ReidPerson; detections?: { linkStatus?: string }[]; confirmedCount?: number },
+    matches: ReidPersonMatch[],
+    person?: ReidPerson | null,
+  ) => {
+    setPersonSuggestions(matches || []);
+    if (journey.identity) {
+      const confirmedCount = journey.confirmedCount ?? journey.detections?.filter(
+        (d) => d.linkStatus !== 'approximate',
+      ).length ?? 0;
+      setSelectedPerson((prev) => {
+        const base = person ?? prev;
+        if (!base) return prev;
+        return {
+          ...base,
+          label: journey.identity?.label ?? base.label,
+          displayName: journey.identity?.label || base.displayName,
+          photoCount: confirmedCount || base.photoCount,
+        };
+      });
+      setIdentityLabelDraft(journey.identity.label || '');
+    }
+  }, []);
+
+  const refreshPersonDetail = useCallback(async (options?: { silent?: boolean }) => {
+    const personId = selectedPersonIdRef.current;
+    if (!personId) return;
+
+    if (!options?.silent) setLoadingPersonDetail(true);
+    try {
+      const { journey, matches } = await loadPersonDetailData(personId);
+      applyPersonDetailData(journey, matches);
+    } catch (err) {
+      console.error('Failed to load person detail', err);
+    } finally {
+      if (!options?.silent) setLoadingPersonDetail(false);
+    }
+  }, [applyPersonDetailData, loadPersonDetailData]);
+
   const openPersonDetail = useCallback(async (person: ReidPerson) => {
+    setSelectedDetection(null);
     setSelectedPerson(person);
     setReidView('person');
     setIdentityLabelDraft(person.label || '');
     setShowIdentitySuggestions(!person.label?.trim());
     setLoadingPersonDetail(true);
     try {
-      const [journeyRes, matchesRes] = await Promise.all([
-        apiFetch(`/reid/identities/${person.id}/journey`),
-        apiFetch(`/reid/identities/${person.id}/matches`),
-      ]);
-      const journey = await journeyRes.json();
-      const matches = await matchesRes.json();
-      setPersonTimeline(journey.detections || []);
-      setPersonSuggestions(matches || []);
-      if (journey.identity) {
-        setSelectedPerson((prev) => prev ? {
-          ...prev,
-          label: journey.identity.label,
-          displayName: journey.identity.label || prev.displayName,
-          photoCount: journey.detections?.length ?? prev.photoCount,
-        } : null);
-        setIdentityLabelDraft(journey.identity.label || '');
-      }
+      const { journey, matches } = await loadPersonDetailData(person.id);
+      applyPersonDetailData(journey, matches, person);
     } catch (err) {
       console.error('Failed to load person detail', err);
     } finally {
       setLoadingPersonDetail(false);
     }
+  }, [applyPersonDetailData, loadPersonDetailData]);
+
+  const openDetectionDetail = useCallback((detection: ReidDetection) => {
+    setSelectedPerson(null);
+    setPersonSuggestions([]);
+    setShowIdentitySuggestions(false);
+    setSelectedDetection(detection);
+    setReidView('detection');
   }, []);
 
   const closePersonDetail = useCallback(() => {
     setReidView('people');
     setSelectedPerson(null);
-    setPersonTimeline([]);
+    setSelectedDetection(null);
     setPersonSuggestions([]);
-    setTimelineVideo(null);
     setShowIdentitySuggestions(false);
     void fetchReidPeople();
-  }, [fetchReidPeople]);
-
-  const playTimelineCrop = useCallback(async (crop: ReidDetection) => {
-    setTimelineClipLoading(crop.id);
-    try {
-      let clipFilename = crop.clipFilename;
-      let clipOffsetMs = crop.clipOffsetMs ?? 0;
-
-      if (!clipFilename) {
-        const res = await apiFetch(`/reid/detections/${crop.id}/source-clip`);
-        if (!res.ok) {
-          alert('No video clip found for this detection.');
-          return;
-        }
-        const data = await res.json();
-        clipFilename = data.clipFilename;
-        clipOffsetMs = data.clipOffsetMs ?? 0;
-        setPersonTimeline((prev) =>
-          prev.map((d) =>
-            d.id === crop.id ? { ...d, clipFilename, clipOffsetMs } : d,
-          ),
-        );
-      }
-
-      setTimelineVideo({
-        filename: clipFilename!,
-        offsetMs: clipOffsetMs,
-        cameraName: crop.cameraName,
-        cropFilename: crop.filename,
-      });
-    } catch (err) {
-      console.error('Failed to resolve clip for detection', err);
-      alert('Could not load video for this detection.');
-    } finally {
-      setTimelineClipLoading(null);
-    }
-  }, []);
+    void fetchReidDetections();
+  }, [fetchReidPeople, fetchReidDetections]);
 
   const handleSavePersonLabel = useCallback(async () => {
     if (!selectedPerson) return;
@@ -177,7 +347,7 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
   }, [selectedPerson, identityLabelDraft, fetchReidPeople]);
 
   const handleStreamTrackFeedback = useCallback(async (
-    type: 'same_person' | 'different_person',
+    type: 'same' | 'different',
     sourceStreamId: string,
     sourceTrackId: number,
     targetStreamId: string,
@@ -247,6 +417,42 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
       setDeletingIdentityId(null);
     }
   }, [linkPeopleMode, selectedPerson?.id, closePersonDetail]);
+
+  const handleLinkDetectionsSelection = useCallback((detectionId: string) => {
+    setLinkDetectionsSelection((prev) => {
+      if (prev.includes(detectionId)) return prev.filter((id) => id !== detectionId);
+      return [...prev, detectionId];
+    });
+  }, []);
+
+  const handleLinkDetections = useCallback(async () => {
+    if (linkDetectionsSelection.length < 2) {
+      alert('Select at least 2 detections to link as the same object.');
+      return;
+    }
+    setMergingDetections(true);
+    try {
+      const res = await apiFetch('/reid/identities/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detectionIds: linkDetectionsSelection }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to link detections');
+        return;
+      }
+      setLinkDetectionsSelection([]);
+      setLinkDetectionsMode(false);
+      await fetchReidPeople();
+      await fetchReidDetections();
+    } catch (err) {
+      console.error('Failed to link detections', err);
+      alert('Failed to link detections');
+    } finally {
+      setMergingDetections(false);
+    }
+  }, [linkDetectionsSelection, fetchReidPeople, fetchReidDetections]);
 
   const handleLinkPeople = useCallback(async () => {
     if (linkPeopleSelection.length !== 2) {
@@ -321,85 +527,110 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
   }, [newRoute, streams, fetchTopology]);
 
   const triggerReidRefresh = useCallback(() => {
-    setReidRefreshNonce((n) => n + 1);
+    if (reidRefreshTimerRef.current) {
+      clearTimeout(reidRefreshTimerRef.current);
+    }
+    reidRefreshTimerRef.current = setTimeout(() => {
+      reidRefreshTimerRef.current = null;
+      void fetchReidPeople({ silent: true });
+      void refreshLoadedReidDetections();
+      if (reidViewRef.current === 'person' && selectedPersonIdRef.current) {
+        void refreshPersonDetail({ silent: true });
+      }
+    }, 2000);
+  }, [fetchReidPeople, refreshLoadedReidDetections, refreshPersonDetail]);
+
+  useEffect(() => () => {
+    if (reidRefreshTimerRef.current) {
+      clearTimeout(reidRefreshTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
     if (active) {
       void fetchReidPeople();
+      void fetchReidDetections();
       void fetchTopology();
     }
-  }, [active, fetchReidPeople, fetchTopology]);
+  }, [active, fetchReidPeople, fetchReidDetections, fetchTopology]);
 
   useEffect(() => {
-    if (!hasOnlineDevices && reidView === 'person') {
+    if (!hasOnlineDevices && reidView !== 'people') {
       setReidView('people');
       setSelectedPerson(null);
-      setPersonTimeline([]);
+      setSelectedDetection(null);
       setPersonSuggestions([]);
-      setTimelineVideo(null);
       setShowIdentitySuggestions(false);
     }
   }, [hasOnlineDevices, reidView]);
-
-  useEffect(() => {
-    if (active) {
-      void fetchReidPeople();
-      if (reidView === 'person' && selectedPerson) {
-        void openPersonDetail(selectedPerson);
-      }
-    }
-  }, [hasOnlineDevices, active, fetchReidPeople]);
-
-  useEffect(() => {
-    if (active && reidRefreshNonce > 0) {
-      void fetchReidPeople();
-      if (reidView === 'person' && selectedPerson) {
-        void openPersonDetail(selectedPerson);
-      }
-    }
-  }, [reidRefreshNonce]);
 
   return {
     streams,
     hasOnlineDevices,
     reidPeople,
+    reidDetections,
+    reidDetectionsTotal,
     loadingReidPeople,
+    loadingReidDetections,
+    loadingMoreReidDetections,
     brokenIdentityCovers,
     setBrokenIdentityCovers,
+    brokenDetectionCrops,
+    setBrokenDetectionCrops,
     deletingIdentityId,
     reidView,
     selectedPerson,
-    personTimeline,
+    selectedDetection,
     personSuggestions,
     loadingPersonDetail,
     linkPeopleMode,
     setLinkPeopleMode,
     linkPeopleSelection,
     setLinkPeopleSelection,
+    linkDetectionsMode,
+    setLinkDetectionsMode,
+    linkDetectionsSelection,
+    setLinkDetectionsSelection,
+    mergingDetections,
     identityLabelDraft,
     setIdentityLabelDraft,
     savingIdentityLabel,
     feedbackPending,
     showTopology,
     setShowTopology,
-    timelineVideo,
-    setTimelineVideo,
-    timelineClipLoading,
     showIdentitySuggestions,
     setShowIdentitySuggestions,
     topologyRoutes,
     newRoute,
     setNewRoute,
+    detectionFilterStreamId,
+    setDetectionFilterStreamId,
+    detectionFilterCameraName,
+    setDetectionFilterCameraName,
+    detectionFilterStartTime,
+    setDetectionFilterStartTime,
+    detectionFilterEndTime,
+    setDetectionFilterEndTime,
+    showDetectionFilters,
+    setShowDetectionFilters,
+    detectionFilterCameras,
+    detectionFilterStreams,
+    hasActiveDetectionFilters,
+    clearDetectionFilters,
     fetchReidPeople,
+    fetchReidDetections,
+    loadMoreReidDetections,
     openPersonDetail,
+    openDetectionDetail,
     closePersonDetail,
-    playTimelineCrop,
+    refreshPersonDetail,
     handleSavePersonLabel,
     handleStreamTrackFeedback,
     handleLinkPeopleSelection,
+    handleLinkDetectionsSelection,
     handleDeleteIdentity,
     handleLinkPeople,
+    handleLinkDetections,
     handleAddTopology,
     triggerReidRefresh,
   };

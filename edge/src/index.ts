@@ -125,7 +125,7 @@ async function registerDevice(): Promise<any> {
     const payload = JSON.stringify({
       deviceId,
       name: DEVICE_NAME,
-      enrollmentToken: process.env.ENROLLMENT_TOKEN || undefined,
+      enrollmentToken: process.env.ENROLLMENT_TOKEN?.trim() || undefined,
       cameraType: currentConfig.cameraType,
       streamUrl: currentConfig.streamUrl,
       trackingEnabled: currentConfig.trackingEnabled,

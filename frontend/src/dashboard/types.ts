@@ -194,6 +194,9 @@ export interface ReidDetection {
   bbox: string;
   className: string;
   identityId?: string | null;
+  linkStatus?: 'confirmed' | 'approximate';
+  matchScore?: number;
+  scores?: MatchScores;
   identity?: { id: string; label?: string | null; galleryCount?: number; centroidUpdatedAt?: string | null } | null;
 }
 
@@ -253,6 +256,13 @@ export interface ChatMessage {
 export interface ClipFilterParams {
   deviceId: string;
   streamId: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface DetectionFilterParams {
+  streamId: string;
+  cameraName: string;
   startTime: string;
   endTime: string;
 }

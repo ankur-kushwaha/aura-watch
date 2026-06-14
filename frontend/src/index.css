@@ -278,3 +278,14 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px var(--color-primary-glow);
   background: rgba(15, 23, 42, 0.8);
 }
+
+/* Compact filter bar controls — overrides global input padding/size */
+select.filter-field,
+input.filter-field {
+  font-size: 0.8rem !important;
+  padding: 6px 8px !important;
+  min-height: 32px;
+  line-height: 1.25;
+  box-sizing: border-box;
+  width: 100%;
+}

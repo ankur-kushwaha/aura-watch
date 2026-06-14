@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../services/db';
-import { generateEnrollmentToken, hashPassword } from '../services/auth';
+import { hashPassword } from '../services/auth';
 import { ensureUniqueOrgSlug } from '../services/bootstrap';
 import { requireRole } from '../middleware/auth';
 import { getOrgSettings, parseOrgSettingsPatch, updateOrgSettings } from '../services/orgSettings';
@@ -262,32 +262,57 @@ router.post('/:orgId/enrollment-tokens', requireRole('owner', 'admin'), async (r
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const { label, expiresInDays } = req.body;
+  const { deviceId, label, name } = req.body;
+  const trimmedDeviceId = typeof deviceId === 'string' ? deviceId.trim() : '';
+
+  if (!trimmedDeviceId) {
+    return res.status(400).json({ error: 'deviceId is required' });
+  }
 
   try {
-    const expiresAt = expiresInDays
-      ? new Date(Date.now() + Number(expiresInDays) * 24 * 60 * 60 * 1000)
-      : null;
+    const existing = await prisma.edgeDevice.findUnique({
+      where: { deviceId: trimmedDeviceId },
+      select: { orgId: true },
+    });
 
-    const token = await prisma.deviceEnrollmentToken.create({
+    if (existing?.orgId && existing.orgId !== req.auth.orgId) {
+      return res.status(409).json({ error: 'Device is already registered to another organization' });
+    }
+
+    if (existing?.orgId === req.auth.orgId) {
+      const device = await prisma.edgeDevice.findUnique({ where: { deviceId: trimmedDeviceId } });
+      return res.status(200).json({
+        id: device!.id,
+        token: device!.deviceId,
+        deviceId: device!.deviceId,
+        label: device!.name,
+        createdAt: device!.lastHeartbeat,
+      });
+    }
+
+    const deviceName = (typeof name === 'string' && name.trim())
+      || (typeof label === 'string' && label.trim())
+      || 'New Edge Device';
+
+    const device = await prisma.edgeDevice.create({
       data: {
+        deviceId: trimmedDeviceId,
+        name: deviceName,
         orgId: req.auth.orgId,
-        token: generateEnrollmentToken(),
-        label: label?.trim() || null,
-        expiresAt,
+        status: 'Offline',
       },
     });
 
     res.status(201).json({
-      id: token.id,
-      token: token.token,
-      label: token.label,
-      expiresAt: token.expiresAt,
-      createdAt: token.createdAt,
+      id: device.id,
+      token: device.deviceId,
+      deviceId: device.deviceId,
+      label: device.name,
+      createdAt: device.lastHeartbeat,
     });
   } catch (error) {
     console.error('Create enrollment token error:', error);
-    res.status(500).json({ error: 'Failed to create enrollment token' });
+    res.status(500).json({ error: 'Failed to register device' });
   }
 });
 

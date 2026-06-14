@@ -1,4 +1,4 @@
-import type { ClipFilterParams, EdgeDevice, VideoClip } from '../types';
+import type { ClipFilterParams, DetectionFilterParams, EdgeDevice, VideoClip } from '../types';
 
 export function buildClipsQueryString(limit: number, offset: number, filters: ClipFilterParams) {
   const params = new URLSearchParams({
@@ -7,6 +7,22 @@ export function buildClipsQueryString(limit: number, offset: number, filters: Cl
   });
   if (filters.deviceId) params.set('deviceId', filters.deviceId);
   if (filters.streamId) params.set('streamId', filters.streamId);
+  if (filters.startTime) params.set('startTime', new Date(filters.startTime).toISOString());
+  if (filters.endTime) params.set('endTime', new Date(filters.endTime).toISOString());
+  return params.toString();
+}
+
+export function buildDetectionsQueryString(
+  limit: number,
+  offset: number,
+  filters: DetectionFilterParams,
+) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (filters.streamId) params.set('streamId', filters.streamId);
+  if (filters.cameraName) params.set('cameraName', filters.cameraName);
   if (filters.startTime) params.set('startTime', new Date(filters.startTime).toISOString());
   if (filters.endTime) params.set('endTime', new Date(filters.endTime).toISOString());
   return params.toString();

@@ -180,12 +180,17 @@ model ReidDetection {
   identity     ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
 }
 
+enum ReidFeedbackType {
+  same
+  different
+}
+
 model ReidFeedback {
-  id                String   @id @default(auto()) @map("_id") @db.ObjectId
-  type              String   // "confirm" | "reject" | "same_person" | "different_person"
-  sourceDetectionId String   @db.ObjectId
-  targetDetectionId String   @db.ObjectId
-  createdAt         DateTime @default(now())
+  id                String           @id @default(auto()) @map("_id") @db.ObjectId
+  type              ReidFeedbackType
+  sourceDetectionId String           @db.ObjectId
+  targetDetectionId String           @db.ObjectId
+  createdAt         DateTime         @default(now())
 }
 
 model TopologyRoute {

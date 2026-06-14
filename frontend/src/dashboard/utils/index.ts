@@ -1,4 +1,4 @@
-export { buildClipsQueryString, getClipDetectionCount, isEdgeUpdateAvailable } from './clips';
+export { buildClipsQueryString, buildDetectionsQueryString, getClipDetectionCount, isEdgeUpdateAvailable } from './clips';
 export {
   formatBytes,
   formatClipDuration,

@@ -6,7 +6,10 @@ import reidWorker from '../services/reidWorker';
 import { upsertReidVector, searchReidVectors, deleteReidVector, deleteReidVectors, updateReidPayloadBatch, updateReidPayload, retrieveReidVectors, retrieveIdentityPrototype, searchIdentityPrototypes } from '../services/qdrant';
 import { recomputeIdentityCentroid, removeIdentityCentroid } from '../services/reidIdentity';
 import {
+  findApproximateDetectionsForIdentity,
   findSimilarPeople,
+  findSimilarIdentitiesForDetection,
+  enrichIdentityTimelineWithScores,
   listPeople,
   mergeStreamTracks,
   splitStreamTrackToNewIdentity,
@@ -30,6 +33,8 @@ import { resolveClipIdFromFilename } from '../services/clipLink';
 import { selectReidTrackEvents } from '../services/yoloSummary';
 import { analyzeTrackAppearance, analyzeVehicleAppearancesFromClip, mergeAppearanceMaps, type TrackAppearance } from '../services/cropAppearance';
 import { getOrgOnlineDeviceIds, assertIdentityInOrg, getDeviceOrgId } from '../services/orgScope';
+import { ReidFeedbackType, isDifferentFeedback, isSameFeedback } from '../constants/reidFeedback';
+import { isVehicleClass } from '../services/yoloSummary';
 
 const router = Router();
 export const CROPS_DIR = path.join(__dirname, '../../storage/crops');
@@ -329,19 +334,78 @@ router.post('/devices/:deviceId/crop', handleCropUpload);
 
 /**
  * GET /api/reid/detections
- * List recent ReID detections
+ * List recent ReID detections (paginated).
+ * Query params: limit, offset, streamId, cameraName, startTime, endTime
+ * — returns { detections, total, hasMore }.
  */
+function parseDetectionListFilters(req: Request) {
+  const streamId =
+    typeof req.query.streamId === 'string' && req.query.streamId.trim()
+      ? req.query.streamId.trim()
+      : undefined;
+  const cameraName =
+    typeof req.query.cameraName === 'string' && req.query.cameraName.trim()
+      ? req.query.cameraName.trim()
+      : undefined;
+
+  const startRaw = typeof req.query.startTime === 'string' ? req.query.startTime : undefined;
+  const endRaw = typeof req.query.endTime === 'string' ? req.query.endTime : undefined;
+  const startTime = startRaw ? new Date(startRaw) : undefined;
+  const endTime = endRaw ? new Date(endRaw) : undefined;
+
+  return {
+    streamId,
+    cameraName,
+    startTime: startTime && !Number.isNaN(startTime.getTime()) ? startTime : undefined,
+    endTime: endTime && !Number.isNaN(endTime.getTime()) ? endTime : undefined,
+  };
+}
+
+function buildDetectionListWhere(
+  onlineDeviceIds: string[],
+  filters: ReturnType<typeof parseDetectionListFilters>,
+) {
+  const where: {
+    deviceId: { in: string[] };
+    streamId?: string;
+    cameraName?: string;
+    timestamp?: { gte?: Date; lte?: Date };
+  } = { deviceId: { in: onlineDeviceIds } };
+
+  if (filters.streamId) where.streamId = filters.streamId;
+  if (filters.cameraName) where.cameraName = filters.cameraName;
+  if (filters.startTime || filters.endTime) {
+    where.timestamp = {
+      ...(filters.startTime ? { gte: filters.startTime } : {}),
+      ...(filters.endTime ? { lte: filters.endTime } : {}),
+    };
+  }
+
+  return where;
+}
+
 router.get('/detections', async (req: Request, res: Response) => {
-  const limit = parseInt(req.query.limit as string || '50', 10);
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string || '24', 10) || 24, 1), 100);
+  const offset = Math.max(parseInt(req.query.offset as string || '0', 10) || 0, 0);
+  const filters = parseDetectionListFilters(req);
   try {
     const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
-    const detections = await prisma.reidDetection.findMany({
-      where: { deviceId: { in: onlineDeviceIds } },
-      orderBy: { timestamp: 'desc' },
-      take: limit,
-      include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
+    const where = buildDetectionListWhere(onlineDeviceIds, filters);
+    const [detections, total] = await Promise.all([
+      prisma.reidDetection.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        take: limit,
+        skip: offset,
+        include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
+      }),
+      prisma.reidDetection.count({ where }),
+    ]);
+    res.json({
+      detections,
+      total,
+      hasMore: offset + detections.length < total,
     });
-    res.json(detections);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -406,7 +470,7 @@ router.get('/identities/:id/matches', async (req: Request, res: Response) => {
   const limit = parseInt(req.query.limit as string || '8', 10);
   try {
     const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
-    const matches = await findSimilarPeople(id, limit, onlineDeviceIds);
+    const matches = await findSimilarPeople(id, limit, onlineDeviceIds, req.auth!.orgId);
     res.json(matches);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -431,8 +495,8 @@ router.post('/feedback/stream-track', async (req: Request, res: Response) => {
       error: 'type, sourceStreamId, sourceTrackId, targetStreamId, and targetTrackId are required',
     });
   }
-  if (!['same_person', 'different_person'].includes(type)) {
-    return res.status(400).json({ error: 'type must be same_person or different_person' });
+  if (!Object.values(ReidFeedbackType).includes(type)) {
+    return res.status(400).json({ error: 'type must be same or different' });
   }
 
   const srcTrack = parseInt(String(sourceTrackId), 10);
@@ -467,7 +531,7 @@ router.post('/feedback/stream-track', async (req: Request, res: Response) => {
     });
 
     let resultIdentityId: string | null = null;
-    if (type === 'same_person') {
+    if (type === ReidFeedbackType.same) {
       resultIdentityId = await mergeStreamTracks(
         sourceStreamId, srcTrack, targetStreamId, tgtTrack,
       );
@@ -708,8 +772,28 @@ router.post('/topology', async (req: Request, res: Response) => {
   }
 });
 
-const FEEDBACK_TYPES = ['confirm', 'reject', 'same_person', 'different_person'] as const;
-type FeedbackType = typeof FEEDBACK_TYPES[number];
+const FEEDBACK_TYPES = Object.values(ReidFeedbackType);
+
+function getReidObjectCategory(className: string): 'person' | 'vehicle' | 'other' {
+  if (className === 'person') return 'person';
+  if (isVehicleClass(className)) return 'vehicle';
+  return 'other';
+}
+
+async function createSameFeedbackForDetections(detectionIds: string[]) {
+  const uniqueIds = [...new Set(detectionIds)];
+  if (uniqueIds.length < 2) return;
+
+  const sourceDetectionId = uniqueIds[0];
+  const targetIds = uniqueIds.slice(1);
+  await prisma.reidFeedback.createMany({
+    data: targetIds.map((targetDetectionId) => ({
+      type: ReidFeedbackType.same,
+      sourceDetectionId,
+      targetDetectionId,
+    })),
+  });
+}
 
 async function assignDetectionsToIdentity(detectionIds: string[], identityId?: string) {
   const uniqueIds = [...new Set(detectionIds)];
@@ -845,7 +929,25 @@ router.post('/identities/merge', async (req: Request, res: Response) => {
   }
 
   try {
-    const identityId = await assignDetectionsToIdentity(detectionIds);
+    const uniqueIds = [...new Set(detectionIds as string[])];
+    const detections = await prisma.reidDetection.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, className: true },
+    });
+
+    if (detections.length !== uniqueIds.length) {
+      return res.status(404).json({ error: 'One or more detections not found' });
+    }
+
+    const categories = new Set(detections.map((d) => getReidObjectCategory(d.className)));
+    if (categories.size !== 1 || categories.has('other')) {
+      return res.status(400).json({
+        error: 'All detections must be the same object type (person or vehicle) to link together',
+      });
+    }
+
+    await createSameFeedbackForDetections(uniqueIds);
+    const identityId = await assignDetectionsToIdentity(uniqueIds);
 
     if (label !== undefined && identityId) {
       const trimmed = typeof label === 'string' ? label.trim() : '';
@@ -855,13 +957,13 @@ router.post('/identities/merge', async (req: Request, res: Response) => {
       });
     }
 
-    const detections = await prisma.reidDetection.findMany({
+    const mergedDetections = await prisma.reidDetection.findMany({
       where: { identityId: identityId! },
       orderBy: { timestamp: 'asc' },
       include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
 
-    res.json({ success: true, identityId, detections });
+    res.json({ success: true, identityId, detections: mergedDetections });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -938,6 +1040,28 @@ router.patch('/identities/:id', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/reid/detections/:id/identity-suggestions
+ * Scored identity matches for assigning an unlabeled detection
+ */
+router.get('/detections/:id/identity-suggestions', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const limit = parseInt(req.query.limit as string || '8', 10);
+  try {
+    const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
+    const orgDeviceSet = new Set(onlineDeviceIds);
+    const detection = await prisma.reidDetection.findUnique({ where: { id } });
+    if (!detection || !orgDeviceSet.has(detection.deviceId)) {
+      return res.status(404).json({ error: 'Detection not found' });
+    }
+
+    const matches = await findSimilarIdentitiesForDetection(id, limit, onlineDeviceIds, req.auth!.orgId);
+    res.json(matches);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/reid/detections/:id/source-clip
  * Resolve and return the video clip for a detection (lazy lookup + backfill)
  */
@@ -965,7 +1089,7 @@ router.get('/detections/:id/source-clip', async (req: Request, res: Response) =>
 
 /**
  * GET /api/reid/identities/:id/journey
- * List all detections linked to an identity
+ * Confirmed + approximate detections for an identity timeline (clips resolved lazily on play).
  */
 router.get('/identities/:id/journey', async (req: Request, res: Response) => {
   const { id } = req.params;
@@ -976,17 +1100,31 @@ router.get('/identities/:id/journey', async (req: Request, res: Response) => {
     }
 
     const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
-    const detections = await prisma.reidDetection.findMany({
+    const confirmedRows = await prisma.reidDetection.findMany({
       where: { identityId: id, deviceId: { in: onlineDeviceIds } },
       orderBy: { timestamp: 'asc' },
       include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
 
-    const enrichedDetections = await Promise.all(
-      detections.map((detection) => enrichDetectionWithClipSource(detection, { persist: true })),
+    const confirmedIds = new Set(confirmedRows.map((d) => d.id));
+    const confirmed = confirmedRows.map((detection) => ({
+      ...detection,
+      linkStatus: 'confirmed' as const,
+    }));
+
+    const approximate = await findApproximateDetectionsForIdentity(
+      id,
+      confirmedIds,
+      onlineDeviceIds,
     );
 
-    res.json({ identity, detections: enrichedDetections });
+    const timeline = [...confirmed, ...approximate].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    );
+
+    const scoredTimeline = await enrichIdentityTimelineWithScores(id, timeline);
+
+    res.json({ identity, detections: scoredTimeline, confirmedCount: confirmed.length });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1004,11 +1142,14 @@ router.post('/track', async (req: Request, res: Response) => {
   }
 
   try {
+    const onlineDeviceIds = await getOrgOnlineDeviceIds(req.auth!.orgId);
+    const orgDeviceSet = new Set(onlineDeviceIds);
+
     const queryDetection = await prisma.reidDetection.findUnique({
       where: { id: detectionId },
       include: { identity: { select: { id: true, label: true, galleryCount: true, centroidUpdatedAt: true } } },
     });
-    if (!queryDetection) {
+    if (!queryDetection || !orgDeviceSet.has(queryDetection.deviceId)) {
       return res.status(404).json({ error: `Detection ${detectionId} not found in database.` });
     }
 
@@ -1036,13 +1177,19 @@ router.post('/track', async (req: Request, res: Response) => {
 
     const candidates = mergeReidCandidates(cropCandidates, centroidCandidates);
 
-    const similarIdentities = await searchIdentityPrototypes(cropVector, 5);
+    const similarIdentities = await searchIdentityPrototypes(cropVector, 10);
     const similarIdentityScores = new Map<string, number>();
     for (const hit of similarIdentities) {
       const identityId = (hit.payload as { identityId?: string })?.identityId;
-      if (identityId && identityId !== queryDetection.identityId) {
-        similarIdentityScores.set(identityId, hit.score);
-      }
+      if (!identityId || identityId === queryDetection.identityId) continue;
+
+      const identity = await prisma.reidIdentity.findFirst({
+        where: { id: identityId, orgId: req.auth!.orgId },
+        select: { id: true },
+      });
+      if (!identity) continue;
+
+      similarIdentityScores.set(identityId, hit.score);
     }
 
     let mappedTrackKeys = new Set<string>();
@@ -1070,9 +1217,9 @@ router.post('/track', async (req: Request, res: Response) => {
     const confirmedIds = new Set<string>();
     for (const fb of feedbackEntries) {
       const otherId = fb.sourceDetectionId === detectionId ? fb.targetDetectionId : fb.sourceDetectionId;
-      if (fb.type === 'reject' || fb.type === 'different_person') {
+      if (isDifferentFeedback(fb.type)) {
         rejectedIds.add(otherId);
-      } else if (fb.type === 'confirm' || fb.type === 'same_person') {
+      } else if (isSameFeedback(fb.type)) {
         confirmedIds.add(otherId);
       }
     }
@@ -1090,6 +1237,10 @@ router.post('/track', async (req: Request, res: Response) => {
       }
 
       if (rejectedIds.has(payload.mongoId)) {
+        continue;
+      }
+
+      if (!payload.deviceId || !orgDeviceSet.has(payload.deviceId)) {
         continue;
       }
 

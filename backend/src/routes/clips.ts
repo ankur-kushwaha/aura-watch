@@ -135,7 +135,7 @@ router.get('/:id/detections', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Clip not found' });
     }
 
-    const result = await getClipDetectionsResponse(id);
+    const result = await getClipDetectionsResponse(id, req.auth.orgId);
     res.json(result);
   } catch (error) {
     console.error('Error fetching clip detections:', error);

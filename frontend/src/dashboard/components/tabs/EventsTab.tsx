@@ -81,7 +81,7 @@ export function EventsTab({ events }: EventsTabProps) {
   return (
     <>
               {/* EVENT ARCHIVE & PLAYBACK PANEL */}
-              <div className="glass-panel p-4 sm:p-5 flex flex-col min-h-[60vh] lg:h-[984px]">
+              <div className="glass-panel p-4 sm:p-5 flex flex-col">
                 <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
                   <div className="flex items-center gap-3 flex-wrap min-w-0">
                     <h2 className="text-[1rem] sm:text-[1.1rem] flex items-center gap-2">
@@ -141,7 +141,7 @@ export function EventsTab({ events }: EventsTabProps) {
                             setClipFilterDeviceId(e.target.value);
                             setClipFilterStreamId('');
                           }}
-                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                          className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
                         >
                           <option value="">All Devices</option>
                           {devices.filter((d) => d.status !== 'Offline').map((d) => (
@@ -156,7 +156,7 @@ export function EventsTab({ events }: EventsTabProps) {
                         <select
                           value={clipFilterStreamId}
                           onChange={(e) => setClipFilterStreamId(e.target.value)}
-                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                          className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
                         >
                           <option value="">All Streams</option>
                           {clipFilterStreams.map((s) => (
@@ -172,7 +172,7 @@ export function EventsTab({ events }: EventsTabProps) {
                           type="datetime-local"
                           value={clipFilterStartTime}
                           onChange={(e) => setClipFilterStartTime(e.target.value)}
-                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                          className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
                         />
                       </div>
                       <div className="flex flex-col gap-1">
@@ -181,7 +181,7 @@ export function EventsTab({ events }: EventsTabProps) {
                           type="datetime-local"
                           value={clipFilterEndTime}
                           onChange={(e) => setClipFilterEndTime(e.target.value)}
-                          className="text-[0.8rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary h-[32px]"
+                          className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
                         />
                       </div>
                     </div>

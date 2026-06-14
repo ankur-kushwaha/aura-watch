@@ -2,7 +2,7 @@ import { Camera, Cpu, RefreshCw } from 'lucide-react';
 
 export function DashboardPlaceholder({ reason }: { reason: 'loading' | 'offline' | 'no-devices' }) {
   return (
-    <div className="glass-panel p-4 sm:p-5 flex flex-col min-h-[60vh] lg:h-[984px]">
+    <div className="glass-panel p-4 sm:p-5 flex flex-col">
       <div className="flex-1 flex flex-col justify-center items-center text-center text-text-muted p-8">
         {reason === 'loading' ? (
           <>

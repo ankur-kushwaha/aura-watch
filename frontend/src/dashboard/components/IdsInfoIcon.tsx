@@ -1,16 +1,86 @@
 import { useState } from 'react';
 import { Check, Copy, Info } from 'lucide-react';
+import { copyToClipboard, filterIdEntries, type IdEntry } from './idEntries';
+
+export type { IdEntry } from './idEntries';
+
+export function InlineCopyIds({
+  ids,
+  className = '',
+  defaultOpen = false,
+}: {
+  ids: IdEntry[];
+  className?: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
+  const entries = filterIdEntries(ids);
+
+  if (entries.length === 0) return null;
+
+  const handleCopy = async (label: string, value: string) => {
+    await copyToClipboard(value);
+    setCopiedLabel(label);
+    setTimeout(() => setCopiedLabel(null), 2000);
+  };
+
+  return (
+    <div className={`mt-1.5 ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="inline-flex items-center gap-1 text-[0.6rem] text-text-muted hover:text-sky-400 opacity-70 hover:opacity-100"
+      >
+        <Info size={11} />
+        {open ? 'Hide IDs' : 'Show IDs'}
+      </button>
+      {open && (
+        <div className="mt-1 rounded-md border border-border-glass bg-[rgba(0,0,0,0.25)] overflow-hidden">
+          {entries.map((entry, index) => (
+            <div
+              key={entry.label}
+              className={`flex items-center gap-2 px-2 py-1 min-w-0 ${index > 0 ? 'border-t border-border-glass' : ''}`}
+            >
+              <span className="text-[0.58rem] font-semibold uppercase tracking-wide text-text-muted w-18 shrink-0">
+                {entry.label}
+              </span>
+              <code
+                className="flex-1 min-w-0 text-[0.6rem] font-mono text-sky-400 truncate select-all"
+                title={entry.value}
+              >
+                {entry.value}
+              </code>
+              <button
+                type="button"
+                onClick={() => { void handleCopy(entry.label, entry.value); }}
+                title={`Copy ${entry.label}`}
+                className="btn btn-secondary p-1 shrink-0 opacity-70 hover:opacity-100"
+              >
+                {copiedLabel === entry.label ? (
+                  <Check size={11} className="text-emerald-400" />
+                ) : (
+                  <Copy size={11} />
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function IdsInfoIcon({
   ids,
   className = '',
 }: {
-  ids: { label: string; value: string }[];
+  ids: IdEntry[];
   className?: string;
 }) {
   const [showTip, setShowTip] = useState(false);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
-  const entries = ids.filter((id) => id.value && id.value !== '—');
+  const entries = filterIdEntries(ids);
 
   const stopBubble = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -19,7 +89,7 @@ export function IdsInfoIcon({
 
   const handleCopy = (e: React.MouseEvent, label: string, value: string) => {
     stopBubble(e);
-    navigator.clipboard.writeText(value).then(() => {
+    void copyToClipboard(value).then(() => {
       setCopiedLabel(label);
       setTimeout(() => setCopiedLabel(null), 2000);
     });
@@ -46,7 +116,7 @@ export function IdsInfoIcon({
       </span>
       {showTip && (
         <div
-          className="absolute bottom-full left-0 mb-1.5 z-[200] w-64 rounded-lg border border-border-glass bg-[rgba(15,17,26,0.98)] p-2.5 shadow-xl backdrop-blur-md"
+          className="absolute bottom-full left-0 mb-1.5 z-200 w-64 rounded-lg border border-border-glass bg-[rgba(15,17,26,0.98)] p-2.5 shadow-xl backdrop-blur-md"
           onMouseDown={stopBubble}
           onClick={stopBubble}
         >

@@ -102,10 +102,11 @@ async function resolveIdentityLabel(
   identityId: string | null | undefined,
   cameraName: string,
   trackId: number,
+  orgId?: string,
 ): Promise<Pick<ClipObjectDisplay, 'labelStatus' | 'label' | 'matchScore'>> {
   if (identityId) {
-    const identity = await prisma.reidIdentity.findUnique({
-      where: { id: identityId },
+    const identity = await prisma.reidIdentity.findFirst({
+      where: { id: identityId, ...(orgId ? { orgId } : {}) },
       select: { label: true },
     });
     const trimmed = identity?.label?.trim();
@@ -124,13 +125,13 @@ async function resolveIdentityLabel(
     return { labelStatus: 'none' };
   }
 
-  const hits = await searchIdentityPrototypes(vectors[0].vector, 5);
+  const hits = await searchIdentityPrototypes(vectors[0].vector, 15);
   for (const hit of hits) {
     const hitIdentityId = (hit.payload as { identityId?: string })?.identityId;
     if (!hitIdentityId || hitIdentityId === identityId) continue;
 
-    const hitIdentity = await prisma.reidIdentity.findUnique({
-      where: { id: hitIdentityId },
+    const hitIdentity = await prisma.reidIdentity.findFirst({
+      where: { id: hitIdentityId, ...(orgId ? { orgId } : {}) },
       include: {
         detections: { orderBy: { timestamp: 'desc' }, take: 1, select: { cameraName: true, trackId: true } },
       },
@@ -201,7 +202,7 @@ async function ensureYoloCropAvailable(
   }
 }
 
-export async function getClipObjectDetections(clipId: string): Promise<ClipObjectDisplay[]> {
+export async function getClipObjectDetections(clipId: string, orgId?: string): Promise<ClipObjectDisplay[]> {
   const clip = await prisma.videoClip.findUnique({ where: { id: clipId } });
   if (!clip) return [];
 
@@ -243,7 +244,7 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
   for (const object of objectSeeds) {
     const detection = pickBestDetectionForTrack(reidByTrack.get(object.trackId) ?? [], clip.id);
     const identityInfo = object.className === 'person' && detection
-      ? await resolveIdentityLabel(detection.id, detection.identityId, clip.camera, object.trackId)
+      ? await resolveIdentityLabel(detection.id, detection.identityId, clip.camera, object.trackId, orgId)
       : { labelStatus: 'none' as const };
 
     const yoloCropFilename = detection?.filename
@@ -404,8 +405,8 @@ export async function buildClipReidLog(
   };
 }
 
-export async function getClipDetectionsResponse(clipId: string): Promise<ClipDetectionsResponse> {
-  const objects = await getClipObjectDetections(clipId);
+export async function getClipDetectionsResponse(clipId: string, orgId?: string): Promise<ClipDetectionsResponse> {
+  const objects = await getClipObjectDetections(clipId, orgId);
   const reidLog = await buildClipReidLog(clipId, objects);
   return { objects, reidLog };
 }

@@ -1,9 +1,10 @@
 import {
   ArrowLeft,
-  Clock,
+  Fingerprint,
+  Link2,
   Network,
-  Play,
   RefreshCw,
+  SlidersHorizontal,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -12,13 +13,15 @@ import {
 } from 'lucide-react';
 import { REID_CROP_IMG } from '../../constants';
 import type { ReidTabState } from '../../hooks/useReidTab';
-import { identityCoverUrl, mediaUrl } from '../../utils';
-import { EntityIds } from '../IdsInfoIcon';
-import { TimelineClipPlaybackDialog } from '../modals';
+import { formatClipListDateTime, identityCoverUrl, mediaUrl } from '../../utils';
+import { ReidGridAvatar } from '../CropThumbnail';
+import { EntityIds, IdsInfoIcon } from '../IdsInfoIcon';
+import { buildTimelineIdEntries } from '../idEntries';
+import { ReidTimeline } from '../ReidTimeline';
 
 export interface ReidTabProps {
   reid: ReidTabState;
-  view: 'people' | 'person';
+  view: 'people' | 'person' | 'detection';
 }
 
 export function ReidTab({ reid, view }: ReidTabProps) {
@@ -26,41 +29,67 @@ export function ReidTab({ reid, view }: ReidTabProps) {
     streams,
     hasOnlineDevices,
     reidPeople,
+    reidDetections,
+    reidDetectionsTotal,
     loadingReidPeople,
+    loadingReidDetections,
+    loadingMoreReidDetections,
     brokenIdentityCovers,
     setBrokenIdentityCovers,
+    brokenDetectionCrops,
+    setBrokenDetectionCrops,
     deletingIdentityId,
     selectedPerson,
-    personTimeline,
+    selectedDetection,
     personSuggestions,
-    loadingPersonDetail,
     linkPeopleMode,
     setLinkPeopleMode,
     linkPeopleSelection,
     setLinkPeopleSelection,
+    linkDetectionsMode,
+    setLinkDetectionsMode,
+    linkDetectionsSelection,
+    setLinkDetectionsSelection,
+    mergingDetections,
     identityLabelDraft,
     setIdentityLabelDraft,
     savingIdentityLabel,
     feedbackPending,
     showTopology,
     setShowTopology,
-    timelineVideo,
-    setTimelineVideo,
-    timelineClipLoading,
     showIdentitySuggestions,
     setShowIdentitySuggestions,
     topologyRoutes,
     newRoute,
     setNewRoute,
+    detectionFilterStreamId,
+    setDetectionFilterStreamId,
+    detectionFilterCameraName,
+    setDetectionFilterCameraName,
+    detectionFilterStartTime,
+    setDetectionFilterStartTime,
+    detectionFilterEndTime,
+    setDetectionFilterEndTime,
+    showDetectionFilters,
+    setShowDetectionFilters,
+    detectionFilterCameras,
+    detectionFilterStreams,
+    hasActiveDetectionFilters,
+    clearDetectionFilters,
     fetchReidPeople,
+    fetchReidDetections,
+    loadMoreReidDetections,
     openPersonDetail,
+    openDetectionDetail,
     closePersonDetail,
-    playTimelineCrop,
+    refreshPersonDetail,
     handleSavePersonLabel,
     handleStreamTrackFeedback,
     handleLinkPeopleSelection,
+    handleLinkDetectionsSelection,
     handleDeleteIdentity,
     handleLinkPeople,
+    handleLinkDetections,
     handleAddTopology,
   } = reid;
 
@@ -95,11 +124,14 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                       <Network size={12} /> Topology
                     </button>
                     <button
-                      onClick={fetchReidPeople}
+                      onClick={() => {
+                        void fetchReidPeople();
+                        void fetchReidDetections();
+                      }}
                       className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
-                      disabled={loadingReidPeople}
+                      disabled={loadingReidPeople || loadingReidDetections}
                     >
-                      <RefreshCw size={12} className={loadingReidPeople ? 'animate-spin' : ''} /> Refresh
+                      <RefreshCw size={12} className={(loadingReidPeople || loadingReidDetections) ? 'animate-spin' : ''} /> Refresh
                     </button>
                   </div>
                 </div>
@@ -113,102 +145,319 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                   </p>
                 )}
 
-                <div className="flex-1 overflow-y-auto pr-1">
-                  {loadingReidPeople && reidPeople.length === 0 ? (
-                    <div className="h-full flex flex-col justify-center items-center text-text-muted">
-                      <RefreshCw size={24} className="animate-spin mb-2" />
-                      <span>Loading people...</span>
-                    </div>
-                  ) : reidPeople.length === 0 ? (
-                    <div className="h-full flex flex-col justify-center items-center text-text-muted text-[0.85rem] py-12">
-                      <UserCircle size={40} className="mb-3 opacity-50" />
-                      <span>{hasOnlineDevices ? 'No people detected yet.' : 'No online devices.'}</span>
-                      <span className="text-[0.75rem] mt-1 text-center max-w-[280px]">
-                        {hasOnlineDevices
-                          ? 'Each camera track is auto-grouped. Crops appear here once a person is visible for >1s.'
-                          : 'ReID detections are hidden while all edge devices are offline because video playback is unavailable.'}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-6">
-                      {reidPeople.map((person) => {
-                        const isLinkSelected = linkPeopleSelection.includes(person.id);
-                        const coverBroken = brokenIdentityCovers.has(person.id);
+                <div className="flex flex-col flex-1 min-h-0 gap-5">
+                  {/* Identities */}
+                  <div className="shrink-0">
+                    <h3 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      <UserCircle size={14} color="var(--color-primary)" /> Identities
+                    </h3>
+                    {loadingReidPeople && reidPeople.length === 0 ? (
+                      <div className="flex flex-col justify-center items-center text-text-muted py-8">
+                        <RefreshCw size={20} className="animate-spin mb-2" />
+                        <span className="text-[0.8rem]">Loading identities...</span>
+                      </div>
+                    ) : reidPeople.length === 0 ? (
+                      <div className="flex flex-col justify-center items-center text-text-muted text-[0.85rem] py-8">
+                        <UserCircle size={32} className="mb-2 opacity-50" />
+                        <span>{hasOnlineDevices ? 'No identities yet.' : 'No online devices.'}</span>
+                        <span className="text-[0.75rem] mt-1 text-center max-w-[280px]">
+                          {hasOnlineDevices
+                            ? 'Each camera track is auto-grouped. Crops appear here once a person is visible for >1s.'
+                            : 'ReID detections are hidden while all edge devices are offline because video playback is unavailable.'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-6">
+                        {reidPeople.map((person) => {
+                          const isLinkSelected = linkPeopleSelection.includes(person.id);
+                          const coverBroken = brokenIdentityCovers.has(person.id);
 
-                        return (
-                          <div
-                            key={person.id}
-                            className={`relative flex flex-col items-center gap-2 group ${isLinkSelected ? 'opacity-100' : ''}`}
-                          >
-                            {!linkPeopleMode && (
+                          return (
+                            <div
+                              key={person.id}
+                              className={`relative flex flex-col items-center gap-2 group ${isLinkSelected ? 'opacity-100' : ''}`}
+                            >
+                              {!linkPeopleMode && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteIdentity(person, e)}
+                                  disabled={deletingIdentityId === person.id}
+                                  title="Delete person"
+                                  className="absolute top-0 right-0 z-10 btn p-1 bg-[rgba(9,13,22,0.85)] text-text-muted hover:text-danger border border-[rgba(255,255,255,0.1)] rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                >
+                                  {deletingIdentityId === person.id
+                                    ? <RefreshCw size={11} className="animate-spin" />
+                                    : <Trash2 size={11} />}
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                onClick={(e) => handleDeleteIdentity(person, e)}
-                                disabled={deletingIdentityId === person.id}
-                                title="Delete person"
-                                className="absolute top-0 right-0 z-10 btn p-1 bg-[rgba(9,13,22,0.85)] text-text-muted hover:text-danger border border-[rgba(255,255,255,0.1)] rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                onClick={() => linkPeopleMode
+                                  ? handleLinkPeopleSelection(person.id)
+                                  : openPersonDetail(person)}
+                                className="flex flex-col items-center gap-2 border-none bg-transparent p-0 cursor-pointer w-full"
                               >
-                                {deletingIdentityId === person.id
-                                  ? <RefreshCw size={11} className="animate-spin" />
-                                  : <Trash2 size={11} />}
+                              <ReidGridAvatar
+                                src={identityCoverUrl(person.id)}
+                                broken={coverBroken}
+                                brokenFallback={
+                                  <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
+                                    <UserCircle size={32} className="text-text-muted" />
+                                  </div>
+                                }
+                                borderClassName={
+                                  isLinkSelected
+                                    ? 'border-secondary shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                                    : 'border-[rgba(255,255,255,0.1)] group-hover:border-primary/50 group-hover:shadow-[0_0_12px_rgba(124,58,237,0.3)]'
+                                }
+                                onImageError={() => {
+                                  setBrokenIdentityCovers((prev) => new Set(prev).add(person.id));
+                                }}
+                                overlay={person.photoCount > 1 ? (
+                                  <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[0.6rem] text-white text-center py-0.5">
+                                    {person.photoCount}
+                                  </div>
+                                ) : undefined}
+                              />
+                              <span className="text-[0.72rem] font-semibold text-text-primary text-center max-w-[100px] truncate leading-tight">
+                                {person.displayName}
+                              </span>
+                              {person.streamTracks.length > 1 ? (
+                                <span className="text-[0.6rem] text-text-muted -mt-1">
+                                  {person.streamTracks.length} tracks
+                                </span>
+                              ) : person.streamTracks.length === 1 && person.label ? (
+                                <span className="text-[0.6rem] text-text-muted -mt-1">
+                                  track {person.streamTracks[0].trackId}
+                                </span>
+                              ) : null}
+                              <EntityIds
+                                identityId={person.id}
+                                detectionId={person.coverDetectionId}
+                                clipId={person.coverClipId}
+                                className="justify-center"
+                              />
                               </button>
-                            )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Detections */}
+                  <div className="flex flex-col flex-1 min-h-0 border-t border-border-glass pt-5">
+                    <div className="flex items-center justify-between gap-2 mb-3 shrink-0">
+                      <h3 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider flex items-center gap-1.5">
+                        <Fingerprint size={14} color="var(--color-secondary)" /> Detections
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLinkDetectionsMode(!linkDetectionsMode);
+                            setLinkDetectionsSelection([]);
+                          }}
+                          className={`btn py-1 px-2 text-[0.75rem] rounded-md ${linkDetectionsMode ? 'btn-primary' : 'btn-secondary'}`}
+                        >
+                          <Link2 size={12} /> {linkDetectionsMode ? 'Cancel' : 'Link Same'}
+                        </button>
+                        {linkDetectionsMode && linkDetectionsSelection.length >= 2 && (
+                          <button
+                            type="button"
+                            onClick={() => { void handleLinkDetections(); }}
+                            disabled={mergingDetections}
+                            className="btn btn-primary py-1 px-2 text-[0.75rem] rounded-md"
+                          >
+                            {mergingDetections ? 'Linking…' : `Merge ${linkDetectionsSelection.length}`}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowDetectionFilters(!showDetectionFilters)}
+                          className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
+                            showDetectionFilters || hasActiveDetectionFilters
+                              ? 'border-secondary text-secondary bg-[rgba(6,182,212,0.08)]'
+                              : ''
+                          }`}
+                        >
+                          <SlidersHorizontal size={12} />
+                          Filters
+                          {hasActiveDetectionFilters && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {linkDetectionsMode && (
+                      <p className="text-[0.75rem] text-text-muted mb-3 shrink-0">
+                        Select 2 or more detections that are the same person or vehicle.
+                        {linkDetectionsSelection.length > 0 && (
+                          <span className="text-secondary font-semibold ml-1">
+                            {linkDetectionsSelection.length} selected
+                          </span>
+                        )}
+                      </p>
+                    )}
+
+                    {showDetectionFilters && (
+                      <div className="glass-panel p-3.5 mb-3 bg-[rgba(255,255,255,0.01)] border-border-glass rounded-[10px] flex flex-col gap-3 shrink-0">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[0.7rem] text-text-secondary">Camera</label>
+                            <select
+                              value={detectionFilterCameraName}
+                              onChange={(e) => {
+                                setDetectionFilterCameraName(e.target.value);
+                                setDetectionFilterStreamId('');
+                              }}
+                              className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-border-glass text-text-primary"
+                            >
+                              <option value="">All Cameras</option>
+                              {detectionFilterCameras.map((name) => (
+                                <option key={name} value={name}>{name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[0.7rem] text-text-secondary">Stream</label>
+                            <select
+                              value={detectionFilterStreamId}
+                              onChange={(e) => setDetectionFilterStreamId(e.target.value)}
+                              className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-border-glass text-text-primary"
+                            >
+                              <option value="">All Streams</option>
+                              {detectionFilterStreams.map((s) => (
+                                <option key={s.streamId} value={s.streamId}>{s.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[0.7rem] text-text-secondary">From</label>
+                            <input
+                              type="datetime-local"
+                              value={detectionFilterStartTime}
+                              onChange={(e) => setDetectionFilterStartTime(e.target.value)}
+                              className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-border-glass text-text-primary"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[0.7rem] text-text-secondary">To</label>
+                            <input
+                              type="datetime-local"
+                              value={detectionFilterEndTime}
+                              onChange={(e) => setDetectionFilterEndTime(e.target.value)}
+                              className="filter-field rounded-md bg-[rgba(0,0,0,0.3)] border border-border-glass text-text-primary"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-2">
+                          {hasActiveDetectionFilters && (
                             <button
                               type="button"
-                              onClick={() => linkPeopleMode
-                                ? handleLinkPeopleSelection(person.id)
-                                : openPersonDetail(person)}
-                              className="flex flex-col items-center gap-2 border-none bg-transparent p-0 cursor-pointer w-full"
+                              onClick={() => { void clearDetectionFilters(); }}
+                              className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded flex items-center gap-1 hover:text-danger hover:border-danger bg-transparent font-semibold border-none"
                             >
-                            <div className={`relative w-[88px] h-[88px] rounded-full overflow-hidden border-2 transition-all duration-200 ${
-                              isLinkSelected
-                                ? 'border-secondary shadow-[0_0_12px_rgba(6,182,212,0.5)]'
-                                : 'border-[rgba(255,255,255,0.1)] group-hover:border-primary/50 group-hover:shadow-[0_0_12px_rgba(124,58,237,0.3)]'
-                            }`}>
-                              {coverBroken ? (
-                                <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
-                                  <UserCircle size={32} className="text-text-muted" />
-                                </div>
-                              ) : (
-                                <img
-                                  src={identityCoverUrl(person.id)}
-                                  alt=""
-                                  onError={() => {
-                                    setBrokenIdentityCovers((prev) => new Set(prev).add(person.id));
-                                  }}
-                                  className={`w-full h-full ${REID_CROP_IMG}`}
-                                />
-                              )}
-                              {person.photoCount > 1 && (
-                                <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[0.6rem] text-white text-center py-0.5">
-                                  {person.photoCount}
-                                </div>
-                              )}
-                            </div>
-                            <span className="text-[0.72rem] font-semibold text-text-primary text-center max-w-[100px] truncate leading-tight">
-                              {person.displayName}
-                            </span>
-                            {person.streamTracks.length > 1 ? (
-                              <span className="text-[0.6rem] text-text-muted -mt-1">
-                                {person.streamTracks.length} tracks
-                              </span>
-                            ) : person.streamTracks.length === 1 && person.label ? (
-                              <span className="text-[0.6rem] text-text-muted -mt-1">
-                                track {person.streamTracks[0].trackId}
-                              </span>
-                            ) : null}
-                            <EntityIds
-                              identityId={person.id}
-                              detectionId={person.coverDetectionId}
-                              clipId={person.coverClipId}
-                              className="justify-center"
-                            />
+                              Clear Filters
                             </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => { void fetchReidDetections(); }}
+                            disabled={loadingReidDetections}
+                            className="btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md"
+                          >
+                            Apply Filters
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex-1 overflow-y-auto pr-1 min-h-0">
+                      {loadingReidDetections && reidDetections.length === 0 ? (
+                        <div className="flex flex-col justify-center items-center text-text-muted py-8">
+                          <RefreshCw size={20} className="animate-spin mb-2" />
+                          <span className="text-[0.8rem]">Loading detections...</span>
+                        </div>
+                      ) : reidDetections.length === 0 ? (
+                        <div className="flex flex-col justify-center items-center text-text-muted text-[0.85rem] py-8">
+                          <Fingerprint size={32} className="mb-2 opacity-50" />
+                          <span>
+                            {hasActiveDetectionFilters
+                              ? 'No detections match the current filters.'
+                              : hasOnlineDevices
+                                ? 'No detections yet.'
+                                : 'No online devices.'}
+                          </span>
+                          {!hasActiveDetectionFilters && (
+                            <span className="text-[0.75rem] mt-1 text-center max-w-[280px]">
+                              {hasOnlineDevices
+                                ? 'Individual ReID crops appear here as people are detected on camera.'
+                                : 'ReID detections are hidden while all edge devices are offline.'}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-6">
+                            {reidDetections.map((detection) => {
+                              const cropBroken = brokenDetectionCrops.has(detection.id);
+                              const isLinkSelected = linkDetectionsSelection.includes(detection.id);
+
+                              return (
+                                <button
+                                  key={detection.id}
+                                  type="button"
+                                  onClick={() => linkDetectionsMode
+                                    ? handleLinkDetectionsSelection(detection.id)
+                                    : openDetectionDetail(detection)}
+                                  className="flex flex-col items-center gap-2 border-none bg-transparent p-0 cursor-pointer w-full group"
+                                >
+                                  <ReidGridAvatar
+                                    src={mediaUrl(`/crops/${detection.filename}`)}
+                                    broken={cropBroken}
+                                    brokenFallback={
+                                      <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
+                                        <UserCircle size={32} className="text-text-muted" />
+                                      </div>
+                                    }
+                                    borderClassName={
+                                      isLinkSelected
+                                        ? 'border-secondary shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                                        : 'border-[rgba(255,255,255,0.1)] group-hover:border-secondary/50 group-hover:shadow-[0_0_12px_rgba(6,182,212,0.3)] transition-all duration-200'
+                                    }
+                                    onImageError={() => {
+                                      setBrokenDetectionCrops((prev) => new Set(prev).add(detection.id));
+                                    }}
+                                  />
+                                  <span className="text-[0.72rem] font-semibold text-text-primary text-center max-w-[100px] truncate leading-tight">
+                                    {detection.cameraName}
+                                  </span>
+                                  <span className="text-[0.6rem] text-text-muted -mt-1 truncate max-w-[100px] text-center">
+                                    {formatClipListDateTime(detection.timestamp)}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
+                          {reidDetections.length < reidDetectionsTotal && (
+                            <button
+                              type="button"
+                              onClick={() => { void loadMoreReidDetections(); }}
+                              disabled={loadingMoreReidDetections}
+                              className="btn btn-secondary w-full py-2 mt-4 text-[0.8rem] rounded-lg flex items-center justify-center gap-1.5"
+                            >
+                              <RefreshCw size={12} className={loadingMoreReidDetections ? 'animate-spin' : ''} />
+                              {loadingMoreReidDetections
+                                ? 'Loading…'
+                                : `Load more (${reidDetections.length} of ${reidDetectionsTotal})`}
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
 
@@ -251,10 +500,6 @@ export function ReidTab({ reid, view }: ReidTabProps) {
               )}
             </div>
 
-        <TimelineClipPlaybackDialog
-          playback={timelineVideo}
-          onClose={() => setTimelineVideo(null)}
-        />
       </>
     );
   }
@@ -262,7 +507,7 @@ export function ReidTab({ reid, view }: ReidTabProps) {
   if (view === 'person' && selectedPerson) {
     return (
       <>
-            <div className="flex flex-col gap-5 h-[984px]">
+            <div className="flex flex-col gap-5">
               <div className="glass-panel p-5 flex flex-col flex-1 min-h-0">
                 <div className="flex items-start gap-4 mb-5">
                   <button
@@ -372,34 +617,32 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                         const srcTrack = selectedPerson?.streamTracks[0];
                         const tgtTrack = suggestion.streamTracks[0];
                         if (!srcTrack || !tgtTrack) return null;
-                        const sameKey = `same_person:${srcTrack.streamId}:${srcTrack.trackId}:${tgtTrack.streamId}:${tgtTrack.trackId}`;
-                        const diffKey = `different_person:${srcTrack.streamId}:${srcTrack.trackId}:${tgtTrack.streamId}:${tgtTrack.trackId}`;
+                        const sameKey = `same:${srcTrack.streamId}:${srcTrack.trackId}:${tgtTrack.streamId}:${tgtTrack.trackId}`;
+                        const diffKey = `different:${srcTrack.streamId}:${srcTrack.trackId}:${tgtTrack.streamId}:${tgtTrack.trackId}`;
 
                         return (
                           <div key={suggestion.id} className="glass-panel p-3 rounded-xl shrink-0 w-[160px] flex flex-col items-center gap-2">
-                            <div className="w-14 h-14 rounded-full overflow-hidden border border-border-glass">
-                              {brokenIdentityCovers.has(suggestion.id) ? (
+                            <ReidGridAvatar
+                              src={identityCoverUrl(suggestion.id)}
+                              broken={brokenIdentityCovers.has(suggestion.id)}
+                              sizeClassName="w-14 h-14"
+                              borderClassName="border-border-glass"
+                              brokenFallback={
                                 <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
                                   <UserCircle size={24} className="text-text-muted" />
                                 </div>
-                              ) : (
-                                <img
-                                  src={identityCoverUrl(suggestion.id)}
-                                  alt=""
-                                  onError={() => {
-                                    setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
-                                  }}
-                                  className={`w-full h-full ${REID_CROP_IMG}`}
-                                />
-                              )}
-                            </div>
+                              }
+                              onImageError={() => {
+                                setBrokenIdentityCovers((prev) => new Set(prev).add(suggestion.id));
+                              }}
+                            />
                             <span className="text-[0.7rem] font-semibold text-center truncate w-full">{suggestion.displayName}</span>
                             <span className="text-[0.6rem] text-secondary">{Math.round(suggestion.matchScore * 100)}% match</span>
                             <div className="flex gap-1 w-full">
                               <button
                                 type="button"
                                 disabled={!!feedbackPending}
-                                onClick={() => handleStreamTrackFeedback('same_person', srcTrack.streamId, srcTrack.trackId, tgtTrack.streamId, tgtTrack.trackId)}
+                                onClick={() => handleStreamTrackFeedback('same', srcTrack.streamId, srcTrack.trackId, tgtTrack.streamId, tgtTrack.trackId)}
                                 className="btn btn-secondary flex-1 py-0.5 text-[0.6rem] border-none hover:text-green-400"
                               >
                                 <ThumbsUp size={10} className={feedbackPending === sameKey ? 'animate-pulse' : ''} />
@@ -407,7 +650,7 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                               <button
                                 type="button"
                                 disabled={!!feedbackPending}
-                                onClick={() => handleStreamTrackFeedback('different_person', srcTrack.streamId, srcTrack.trackId, tgtTrack.streamId, tgtTrack.trackId)}
+                                onClick={() => handleStreamTrackFeedback('different', srcTrack.streamId, srcTrack.trackId, tgtTrack.streamId, tgtTrack.trackId)}
                                 className="btn btn-secondary flex-1 py-0.5 text-[0.6rem] border-none hover:text-danger"
                               >
                                 <ThumbsDown size={10} className={feedbackPending === diffKey ? 'animate-pulse' : ''} />
@@ -421,72 +664,87 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                   </div>
                 )}
 
-                <h3 className="text-[0.75rem] font-bold text-text-secondary uppercase tracking-wider mb-3">
-                  Timeline
-                </h3>
                 <div className="flex-1 overflow-y-auto pr-1">
-                  {loadingPersonDetail ? (
-                    <div className="flex justify-center py-12 text-text-muted">
-                      <RefreshCw size={20} className="animate-spin" />
-                    </div>
-                  ) : personTimeline.length === 0 ? (
-                    <p className="text-text-muted text-[0.8rem] text-center py-8">No photos in this group yet.</p>
-                  ) : (
-                    <div className="relative border-l-2 border-primary/25 ml-4 pl-6 flex flex-col gap-5">
-                      {personTimeline.map((crop) => {
-                        const isLoadingClip = timelineClipLoading === crop.id;
-                        return (
-                          <div key={crop.id} className="relative">
-                            <div className="absolute -left-[27px] top-3 w-3 h-3 rounded-full bg-primary border-2 border-[#090d16]" />
-                            <button
-                              type="button"
-                              onClick={() => playTimelineCrop(crop)}
-                              disabled={isLoadingClip}
-                              className="glass-panel p-3 flex gap-3 items-center rounded-xl w-full text-left transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-[rgba(124,58,237,0.06)]"
-                            >
-                              <div className="relative w-12 h-12 shrink-0">
-                                <img
-                                  src={mediaUrl(`/crops/${crop.filename}`)}
-                                  alt=""
-                                  className={`w-12 h-12 rounded-lg ${REID_CROP_IMG}`}
-                                />
-                                <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
-                                  {isLoadingClip ? (
-                                    <RefreshCw size={14} className="text-white animate-spin" />
-                                  ) : (
-                                    <Play size={16} className="text-white" fill="white" />
-                                  )}
-                                </div>
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <div className="text-[0.85rem] font-bold text-text-primary">{crop.cameraName}</div>
-                                <div className="text-[0.7rem] text-text-muted flex items-center gap-2 flex-wrap">
-                                  <Clock size={11} />
-                                  {new Date(crop.timestamp).toLocaleString()}
-                                  <span className="text-secondary">track {crop.trackId}</span>
-                                  <span className="text-[#a78bfa]">tap to play clip</span>
-                                </div>
-                                <EntityIds
-                                  identityId={crop.identityId || selectedPerson?.id || '—'}
-                                  detectionId={crop.id}
-                                  clipId={crop.clipId}
-                                  className="mt-1"
-                                />
-                              </div>
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                  <ReidTimeline
+                    source={{
+                      mode: 'identity',
+                      identityId: selectedPerson.id,
+                      coverDetectionId: selectedPerson.coverDetectionId,
+                    }}
+                    emptyMessage="No photos in this group yet."
+                    onUpdated={async () => {
+                      await refreshPersonDetail({ silent: true });
+                      await fetchReidPeople({ silent: true });
+                    }}
+                  />
                 </div>
               </div>
             </div>
+      </>
+    );
+  }
 
-        <TimelineClipPlaybackDialog
-          playback={timelineVideo}
-          onClose={() => setTimelineVideo(null)}
-        />
+  if (view === 'detection' && selectedDetection) {
+    const identityLabel = selectedDetection.identity?.label?.trim();
+    const displayName = identityLabel || `track ${selectedDetection.trackId}`;
+
+    return (
+      <>
+            <div className="flex flex-col gap-5">
+              <div className="glass-panel p-5 flex flex-col flex-1 min-h-0">
+                <div className="flex items-start gap-4 mb-5">
+                  <button
+                    type="button"
+                    onClick={closePersonDetail}
+                    className="btn btn-secondary p-2 rounded-lg shrink-0 border-none"
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                  <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-secondary/30 shrink-0">
+                    {!brokenDetectionCrops.has(selectedDetection.id) ? (
+                      <img
+                        src={mediaUrl(`/crops/${selectedDetection.filename}`)}
+                        alt=""
+                        onError={() => {
+                          setBrokenDetectionCrops((prev) => new Set(prev).add(selectedDetection.id));
+                        }}
+                        className={`w-full h-full ${REID_CROP_IMG}`}
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center">
+                        <UserCircle size={36} className="text-text-muted" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-[1.2rem] font-bold text-text-primary truncate">
+                      {displayName}
+                    </h2>
+                    <p className="text-[0.75rem] text-text-muted mt-0.5">
+                      {selectedDetection.cameraName} · track {selectedDetection.trackId}
+                    </p>
+                    <IdsInfoIcon
+                      ids={buildTimelineIdEntries({
+                        detectionId: selectedDetection.id,
+                        clipId: selectedDetection.clipId,
+                      })}
+                      className="mt-1.5"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-1">
+                  <ReidTimeline
+                    source={{ mode: 'detection', detectionId: selectedDetection.id }}
+                    emptyMessage="No similar detections found yet."
+                    onUpdated={async () => {
+                      await fetchReidDetections({ silent: true });
+                      await fetchReidPeople({ silent: true });
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
       </>
     );
   }

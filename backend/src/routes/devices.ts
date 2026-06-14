@@ -12,7 +12,6 @@ import {
   mergeDeviceConfig,
   mergeDeviceConfigUpdate,
   withEffectiveDeviceConfig,
-  STREAM_CONFIG_DEFAULTS,
 } from '../services/edgeConfig';
 
 const router = Router();
@@ -188,11 +187,6 @@ router.post('/register', async (req: Request, res: Response) => {
     deviceId,
     name,
     enrollmentToken,
-    cameraType,
-    streamUrl,
-    trackingEnabled,
-    motionThreshold,
-    pixelChangeThreshold,
     status,
     gitCommit,
     remoteGitCommit,
@@ -211,19 +205,28 @@ router.post('/register', async (req: Request, res: Response) => {
     let tokenOrgId: string | null = null;
 
     if (enrollmentToken) {
-      const tokenRecord = await prisma.deviceEnrollmentToken.findUnique({
-        where: { token: enrollmentToken },
+      const org = await prisma.organization.findUnique({
+        where: { id: enrollmentToken },
+        select: { id: true },
       });
 
-      if (!tokenRecord) {
-        return res.status(403).json({ error: 'Invalid enrollment token' });
-      }
+      if (org) {
+        tokenOrgId = org.id;
+      } else {
+        const tokenRecord = await prisma.deviceEnrollmentToken.findUnique({
+          where: { token: enrollmentToken },
+        });
 
-      if (tokenRecord.expiresAt && tokenRecord.expiresAt < new Date()) {
-        return res.status(403).json({ error: 'Enrollment token has expired' });
-      }
+        if (!tokenRecord) {
+          return res.status(403).json({ error: 'Invalid enrollment token' });
+        }
 
-      tokenOrgId = tokenRecord.orgId;
+        if (tokenRecord.expiresAt && tokenRecord.expiresAt < new Date()) {
+          return res.status(403).json({ error: 'Enrollment token has expired' });
+        }
+
+        tokenOrgId = tokenRecord.orgId;
+      }
     }
 
     let orgId: string;
@@ -267,30 +270,9 @@ router.post('/register', async (req: Request, res: Response) => {
       },
     });
 
-    // Auto-create default camera stream if none exist
-    let streams = await prisma.cameraStream.findMany({
+    const streams = await prisma.cameraStream.findMany({
       where: { deviceId },
     });
-
-    if (streams.length === 0) {
-      const defaultStreamId = `${deviceId}_default`;
-      const defaultStream = await prisma.cameraStream.create({
-        data: {
-          streamId: defaultStreamId,
-          deviceId,
-          name: 'Default Camera',
-          cameraType: cameraType || 'webcam',
-          streamUrl: streamUrl || '0',
-          trackingEnabled: trackingEnabled !== undefined ? Boolean(trackingEnabled) : STREAM_CONFIG_DEFAULTS.trackingEnabled,
-          status: 'Offline',
-          motionThreshold: motionThreshold !== undefined ? Number(motionThreshold) : STREAM_CONFIG_DEFAULTS.motionThreshold,
-          pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : STREAM_CONFIG_DEFAULTS.pixelChangeThreshold,
-          detectPerson: STREAM_CONFIG_DEFAULTS.detectPerson,
-          detectVehicle: STREAM_CONFIG_DEFAULTS.detectVehicle,
-        },
-      });
-      streams = [defaultStream];
-    }
 
     console.log(`[Cloud Hub] Device registered/updated: ${name} (${deviceId}) with ${streams.length} stream(s)`);
     notifyDevicesChanged();

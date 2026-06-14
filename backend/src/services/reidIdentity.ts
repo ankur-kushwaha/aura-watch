@@ -1,3 +1,4 @@
+import { ReidFeedbackType, isSameFeedback } from '../constants/reidFeedback';
 import prisma from './db';
 import {
   retrieveReidVectors,
@@ -32,7 +33,7 @@ async function getGalleryDetectionIds(identityId: string): Promise<string[]> {
 
   const feedback = await prisma.reidFeedback.findMany({
     where: {
-      type: { in: ['confirm', 'same_person'] },
+      type: ReidFeedbackType.same,
       OR: [
         { sourceDetectionId: { in: allIds } },
         { targetDetectionId: { in: allIds } },

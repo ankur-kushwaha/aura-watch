@@ -227,29 +227,6 @@ export async function removeOrgMember(orgId: string, userId: string): Promise<vo
   }
 }
 
-export async function createEnrollmentToken(label?: string): Promise<{ token: string; label: string | null }> {
-  const org = getStoredOrg();
-  if (!org) throw new Error('No organization selected');
-
-  const res = await apiFetch(`/orgs/${org.id}/enrollment-tokens`, {
-    method: 'POST',
-    body: JSON.stringify({ label }),
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to create enrollment token');
-  }
-
-  return res.json();
-}
-
-export interface ClipAiSummaryResult {
-  id: string;
-  summary: string;
-  aiSummary: string;
-}
-
 export async function generateClipAiSummary(clipId: string): Promise<ClipAiSummaryResult> {
   const res = await apiFetch(`/clips/${clipId}/ai-summary`, { method: 'POST' });
   if (!res.ok) {

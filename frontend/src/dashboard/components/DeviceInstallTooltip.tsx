@@ -8,26 +8,12 @@ import {
 } from '../../components/ui/dialog';
 import { buildInstallCmd } from '../utils/media';
 
-export function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () => Promise<string> }) {
+export function DeviceInstallTooltip({ orgId }: { orgId: string }) {
   const [open, setOpen] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
-  const [copiedToken, setCopiedToken] = useState(false);
-  const [enrollmentToken, setEnrollmentToken] = useState<string>('');
-  const [generatingToken, setGeneratingToken] = useState(false);
+  const [copiedOrgId, setCopiedOrgId] = useState(false);
 
-  const installCmd = buildInstallCmd(enrollmentToken);
-
-  const handleGenerateToken = async () => {
-    setGeneratingToken(true);
-    try {
-      const result = await onGenerateToken();
-      setEnrollmentToken(result);
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to generate enrollment token');
-    } finally {
-      setGeneratingToken(false);
-    }
-  };
+  const installCmd = buildInstallCmd(orgId);
 
   const handleCopyCmd = () => {
     navigator.clipboard.writeText(installCmd).then(() => {
@@ -36,11 +22,10 @@ export function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () 
     });
   };
 
-  const handleCopyToken = () => {
-    if (!enrollmentToken) return;
-    navigator.clipboard.writeText(enrollmentToken).then(() => {
-      setCopiedToken(true);
-      setTimeout(() => setCopiedToken(false), 2000);
+  const handleCopyOrgId = () => {
+    navigator.clipboard.writeText(orgId).then(() => {
+      setCopiedOrgId(true);
+      setTimeout(() => setCopiedOrgId(false), 2000);
     });
   };
 
@@ -63,7 +48,8 @@ export function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () 
                 <Plus size={16} /> Add a New Edge Device
               </DialogTitle>
               <DialogDescription className="mt-1 leading-relaxed">
-                Generate an enrollment token, then run the install command on your target device (Linux / macOS).
+                Run the install command on your target device (Linux / macOS). The edge agent gets a fixed device ID
+                automatically and joins your organization using the ID below as <code className="text-sky-400">ENROLLMENT_TOKEN</code>.
               </DialogDescription>
             </div>
             <button
@@ -76,55 +62,42 @@ export function DeviceInstallTooltip({ onGenerateToken }: { onGenerateToken: () 
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleGenerateToken}
-            disabled={generatingToken}
-            className="btn btn-primary w-full mb-4"
-          >
-            {generatingToken ? 'Generating…' : enrollmentToken ? 'Regenerate token' : 'Generate enrollment token'}
-          </button>
-
-          {enrollmentToken && (
-            <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
-              <p className="text-[0.7rem] font-semibold text-emerald-400 mb-1.5 uppercase tracking-wide">
-                Enrollment token
-              </p>
-              <div className="flex items-start gap-2">
-                <code className="flex-1 text-[0.72rem] text-emerald-300 font-mono break-all leading-relaxed">
-                  {enrollmentToken}
-                </code>
-                <button
-                  type="button"
-                  onClick={handleCopyToken}
-                  title="Copy token"
-                  className="btn btn-secondary p-1.5 shrink-0"
-                >
-                  {copiedToken ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                </button>
-              </div>
+          <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+            <p className="text-[0.7rem] font-semibold text-emerald-400 mb-1.5 uppercase tracking-wide">
+              Organization ID (ENROLLMENT_TOKEN)
+            </p>
+            <div className="flex items-start gap-2">
+              <code className="flex-1 text-[0.72rem] text-emerald-300 font-mono break-all leading-relaxed">
+                {orgId}
+              </code>
+              <button
+                type="button"
+                onClick={handleCopyOrgId}
+                title="Copy organization ID"
+                className="btn btn-secondary p-1.5 shrink-0"
+              >
+                {copiedOrgId ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+              </button>
             </div>
-          )}
+          </div>
 
           <p className="text-[0.75rem] font-semibold text-text-secondary mb-2">Install command</p>
           <div className="rounded-lg border border-border-glass bg-black/40 p-3 flex items-start gap-2">
             <code className="flex-1 text-[0.7rem] text-sky-400 font-mono break-all leading-relaxed">
-              {enrollmentToken ? installCmd : 'Generate a token first to get the install command.'}
+              {installCmd}
             </code>
-            {enrollmentToken && (
-              <button
-                type="button"
-                onClick={handleCopyCmd}
-                title="Copy command"
-                className="btn btn-secondary p-1.5 shrink-0"
-              >
-                {copiedCmd ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleCopyCmd}
+              title="Copy command"
+              className="btn btn-secondary p-1.5 shrink-0"
+            >
+              {copiedCmd ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+            </button>
           </div>
 
           <p className="text-[0.72rem] text-text-muted mt-4 leading-relaxed">
-            The command installs the edge agent, connects via WebSocket, and registers the device with your organization.
+            After the agent connects, the device appears here. Add camera streams from the device card.
           </p>
         </DialogContent>
       </Dialog>

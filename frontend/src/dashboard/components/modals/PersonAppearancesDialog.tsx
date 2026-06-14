@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Play,
-  RefreshCw,
-  ThumbsDown,
-  ThumbsUp,
   UserCircle,
   X,
 } from 'lucide-react';
@@ -12,21 +9,16 @@ import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialo
 import { REID_CROP_IMG } from '../../constants';
 import type {
   ClipObjectDetection,
-  PersonClipReference,
-  ReidDetection,
   ReidPerson,
   ReidPersonMatch,
   TimelineVideoPlayback,
-  TrackMatchRow,
   VideoClip,
 } from '../../types';
-import { formatDate } from '../../utils/format';
 import { mediaUrl } from '../../utils/media';
-import { buildScoreBasedTimeline } from '../../utils/reid';
 import { useDeferredLoad } from '../../hooks/useDeferredLoad';
-import { CropThumbnail, DeferredCropImage } from '../CropThumbnail';
+import { CropThumbnail } from '../CropThumbnail';
 import { IdsInfoIcon } from '../IdsInfoIcon';
-import { MatchScoreBreakdown } from '../MatchScoreBreakdown';
+import { ReidTimeline } from '../ReidTimeline';
 import { TimelineClipPlaybackDialog } from './TimelineClipPlaybackDialog';
 
 export interface PersonAppearancesDialogProps {
@@ -35,20 +27,6 @@ export interface PersonAppearancesDialogProps {
   selectedClip: VideoClip | null;
   onClipDetectionsRefresh: () => void | Promise<void>;
   onCropPreview: (filename: string) => void;
-}
-
-async function fetchTrackTimeline(detectionId: string) {
-  const trackRes = await apiFetch('/reid/track', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ detectionId, limit: 30 }),
-  });
-  if (!trackRes.ok) throw new Error('Failed to search similar detections');
-  const trackData = await trackRes.json();
-  return {
-    query: trackData.query as ReidDetection | undefined,
-    matches: (trackData.matches || []) as TrackMatchRow[],
-  };
 }
 
 function getInitialIdentityState(detection: ClipObjectDetection) {
@@ -100,22 +78,37 @@ function PersonAppearancesDialogBody({
   onCropPreview,
 }: PersonAppearancesDialogBodyProps) {
   const initialIdentity = getInitialIdentityState(detection);
-  const [personRefs, setPersonRefs] = useState<PersonClipReference[]>([]);
   const [clipPlayback, setClipPlayback] = useState<TimelineVideoPlayback | null>(null);
   const [identityId, setIdentityId] = useState<string | null>(initialIdentity.identityId);
   const [identitySuggestions, setIdentitySuggestions] = useState<ReidPersonMatch[]>([]);
   const [labelDraft, setLabelDraft] = useState(initialIdentity.labelDraft);
   const [labelConfirmed, setLabelConfirmed] = useState(initialIdentity.labelConfirmed);
   const [showSuggestions, setShowSuggestions] = useState(initialIdentity.showSuggestions);
-  const [loading, setLoading] = useState(true);
+  const [suggestionsLoaded, setSuggestionsLoaded] = useState(false);
   const [savingLabel, setSavingLabel] = useState(false);
-  const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
   const [brokenCovers, setBrokenCovers] = useState<Set<string>>(new Set());
+  const [timelineKey, setTimelineKey] = useState(0);
 
-  const loadIdentitySuggestions = useCallback(async (forIdentityId: string | null) => {
+  const loadIdentitySuggestions = useCallback(async (forIdentityId: string | null, forDetectionId: string) => {
     const suggestions: ReidPersonMatch[] = [];
+    const scoreById = new Map<string, number>();
     const seen = new Set<string>();
     if (forIdentityId) seen.add(forIdentityId);
+
+    try {
+      const detectionMatchesRes = await apiFetch(`/reid/detections/${forDetectionId}/identity-suggestions`);
+      if (detectionMatchesRes.ok) {
+        const detectionMatches: ReidPersonMatch[] = await detectionMatchesRes.json();
+        for (const match of detectionMatches) {
+          if (seen.has(match.id)) continue;
+          suggestions.push(match);
+          scoreById.set(match.id, match.matchScore);
+          seen.add(match.id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load detection identity suggestions', err);
+    }
 
     if (forIdentityId) {
       try {
@@ -125,6 +118,7 @@ function PersonAppearancesDialogBody({
           for (const match of matches) {
             if (seen.has(match.id)) continue;
             suggestions.push(match);
+            scoreById.set(match.id, match.matchScore);
             seen.add(match.id);
           }
         }
@@ -145,7 +139,7 @@ function PersonAppearancesDialogBody({
             displayName: person.displayName,
             coverFilename: person.coverFilename,
             photoCount: person.photoCount,
-            matchScore: 0,
+            matchScore: scoreById.get(person.id) ?? 0,
             streamTracks: person.streamTracks.map((st) => ({
               streamId: st.streamId,
               trackId: st.trackId,
@@ -163,43 +157,25 @@ function PersonAppearancesDialogBody({
       return a.displayName.localeCompare(b.displayName);
     });
     setIdentitySuggestions(suggestions);
-  }, []);
-
-  const reloadTimeline = useCallback(async (detectionId: string) => {
-    const { query, matches } = await fetchTrackTimeline(detectionId);
-    if (query?.identityId) {
-      setIdentityId(query.identityId);
-    }
-    if (query?.identity?.label?.trim()) {
-      setLabelDraft(query.identity.label.trim());
-      setLabelConfirmed(true);
-      setShowSuggestions(false);
-    }
-    setPersonRefs(buildScoreBasedTimeline(query, matches));
-    return query?.identityId ?? null;
+    setSuggestionsLoaded(true);
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    if (!detection.detectionId) return;
+    void loadIdentitySuggestions(identityId ?? detection.identityId ?? null, detection.detectionId);
+  }, [detection.detectionId, detection.identityId, identityId, loadIdentitySuggestions]);
 
-    void (async () => {
-      try {
-        const resolvedIdentityId = await reloadTimeline(detection.detectionId!);
-        if (cancelled) return;
-        await loadIdentitySuggestions(resolvedIdentityId ?? detection.identityId ?? null);
-      } catch (err) {
-        console.error('Failed to load person references', err);
-        if (!cancelled) {
-          alert('Could not load appearances for this person.');
-          onClose();
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+  const bumpTimeline = () => setTimelineKey((k) => k + 1);
 
-    return () => { cancelled = true; };
-  }, [detection.detectionId, detection.identityId, loadIdentitySuggestions, onClose, reloadTimeline]);
+  const handleIdentityResolved = useCallback((resolvedId: string | null, label?: string | null) => {
+    if (resolvedId) setIdentityId(resolvedId);
+    if (label?.trim()) {
+      setLabelDraft(label.trim());
+      setLabelConfirmed(true);
+      setShowSuggestions(false);
+    }
+    void loadIdentitySuggestions(resolvedId ?? detection.identityId ?? null, detection.detectionId!);
+  }, [detection.detectionId, detection.identityId, loadIdentitySuggestions]);
 
   const handleAssignIdentity = async (suggestion: ReidPersonMatch) => {
     if (!detection.detectionId) return;
@@ -221,8 +197,8 @@ function PersonAppearancesDialogBody({
       setLabelDraft(assignedLabel);
       setLabelConfirmed(!!suggestion.label?.trim());
       setShowSuggestions(false);
-      await reloadTimeline(detection.detectionId);
-      await loadIdentitySuggestions(suggestion.id);
+      bumpTimeline();
+      await loadIdentitySuggestions(suggestion.id, detection.detectionId);
       await onClipDetectionsRefresh();
     } catch (err) {
       console.error('Failed to assign existing identity', err);
@@ -270,77 +246,15 @@ function PersonAppearancesDialogBody({
         setLabelConfirmed(true);
         setShowSuggestions(false);
       }
+      bumpTimeline();
       await onClipDetectionsRefresh();
       if (resolvedIdentityId) {
-        await reloadTimeline(detection.detectionId);
-        await loadIdentitySuggestions(resolvedIdentityId);
+        await loadIdentitySuggestions(resolvedIdentityId, detection.detectionId);
       }
     } catch (err) {
       console.error('Failed to save person label from clip modal', err);
     } finally {
       setSavingLabel(false);
-    }
-  };
-
-  const handleFeedback = async (targetDetectionId: string, type: 'confirm' | 'reject') => {
-    const sourceDetectionId = personRefs.find((r) => r.source === 'query')?.id ?? detection.detectionId;
-    if (!sourceDetectionId || sourceDetectionId === targetDetectionId) return;
-
-    const key = `${type}:${sourceDetectionId}:${targetDetectionId}`;
-    setFeedbackPending(key);
-    try {
-      const res = await apiFetch('/reid/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, sourceDetectionId, targetDetectionId }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to save feedback');
-        return;
-      }
-      if (detection.detectionId) {
-        await reloadTimeline(detection.detectionId);
-      }
-    } catch (err) {
-      console.error('Failed to submit timeline feedback', err);
-    } finally {
-      setFeedbackPending(null);
-    }
-  };
-
-  const playReferenceClip = async (ref: PersonClipReference) => {
-    if (!ref.clipFilename && !ref.id) return;
-
-    let clipFilename = ref.clipFilename;
-    let clipOffsetMs = ref.clipOffsetMs ?? 0;
-
-    if (!clipFilename && ref.id) {
-      try {
-        const res = await apiFetch(`/reid/detections/${ref.id}/source-clip`);
-        if (!res.ok) {
-          onCropPreview(ref.filename);
-          return;
-        }
-        const data = await res.json();
-        clipFilename = data.clipFilename;
-        clipOffsetMs = data.clipOffsetMs ?? 0;
-      } catch (err) {
-        console.error('Failed to resolve clip for detection', err);
-        onCropPreview(ref.filename);
-        return;
-      }
-    }
-
-    if (clipFilename) {
-      setClipPlayback({
-        filename: clipFilename,
-        offsetMs: clipOffsetMs,
-        cameraName: ref.cameraName,
-        cropFilename: ref.filename,
-      });
-    } else {
-      onCropPreview(ref.filename);
     }
   };
 
@@ -388,7 +302,8 @@ function PersonAppearancesDialogBody({
       )
     : identitySuggestions;
   const shownSuggestions = filteredSuggestions.slice(0, 8);
-  const queryId = personRefs.find((r) => r.source === 'query')?.id;
+
+  if (!detection.detectionId) return null;
 
   return (
     <>
@@ -416,7 +331,7 @@ function PersonAppearancesDialogBody({
               <IdsInfoIcon
                 className="mt-1"
                 ids={[
-                  ...(detection.detectionId ? [{ label: 'detection', value: detection.detectionId }] : []),
+                  { label: 'detection', value: detection.detectionId },
                   ...(identityId ? [{ label: 'identity', value: identityId }] : []),
                 ]}
               />
@@ -490,7 +405,7 @@ function PersonAppearancesDialogBody({
                 {savingLabel ? '…' : identityId ? 'Save label' : 'Create'}
               </button>
             </div>
-            {!loading && identitySuggestions.length > 0 && shownSuggestions.length > 0 && (
+            {suggestionsLoaded && identitySuggestions.length > 0 && shownSuggestions.length > 0 && (
               <div>
                 <p className="text-[0.7rem] font-bold text-text-secondary uppercase tracking-wider mb-2">
                   Use existing person
@@ -516,7 +431,7 @@ function PersonAppearancesDialogBody({
                           {suggestion.displayName}
                         </span>
                         {suggestion.matchScore > 0 && (
-                          <span className="text-[0.65rem] text-secondary">
+                          <span className="text-[0.65rem] text-secondary font-semibold">
                             {Math.round(suggestion.matchScore * 100)}% match
                           </span>
                         )}
@@ -532,103 +447,15 @@ function PersonAppearancesDialogBody({
         <div className="h-px bg-[rgba(255,255,255,0.07)]" />
 
         <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-          <p className="text-[0.68rem] font-bold text-text-secondary uppercase tracking-wider mb-1">
-            Scored timeline
-          </p>
-          <p className="text-[0.65rem] text-text-muted mb-2">
-            Ranked by embedding, topology, and your past feedback. Confirm or reject matches to improve future results.
-          </p>
-          {loading ? (
-            <div className="flex justify-center py-10 text-text-muted">
-              <RefreshCw size={20} className="animate-spin" />
-            </div>
-          ) : personRefs.length === 0 ? (
-            <p className="text-[0.8rem] text-text-muted text-center py-8">
-              No appearances or matches found yet.
-            </p>
-          ) : (
-            <div className="relative border-l-2 border-[rgba(56,189,248,0.25)] ml-3 pl-5 flex flex-col gap-3">
-              {personRefs.map((ref) => {
-                const isCurrentClip = ref.clipFilename === selectedClip?.filename;
-                const isQuery = ref.source === 'query';
-                const sourceLabel = isQuery ? 'This detection' : 'Scored match';
-                const sourceClass = isQuery
-                  ? 'text-primary bg-primary/10 border-primary/20'
-                  : 'text-secondary bg-secondary/10 border-secondary/20';
-                const confirmKey = `confirm:${queryId}:${ref.id}`;
-                const rejectKey = `reject:${queryId}:${ref.id}`;
-
-                return (
-                  <div key={ref.id} className="relative">
-                    <div className="absolute left-[-23px] top-4 w-2.5 h-2.5 rounded-full bg-[#38bdf8] border-2 border-[#090d16]" />
-                    <div className={`glass-panel p-2.5 flex items-start gap-3 w-full ${isCurrentClip ? 'border-primary/40' : ''}`}>
-                      <DeferredCropImage
-                        filename={ref.filename}
-                        size="md"
-                        eager={isQuery}
-                        onClick={() => onCropPreview(ref.filename)}
-                        title="Click to enlarge crop"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[0.8rem] font-semibold text-text-primary">{ref.cameraName}</span>
-                          <span className={`text-[0.58rem] px-1.5 py-0.5 rounded-full border ${sourceClass}`}>
-                            {sourceLabel}
-                          </span>
-                          {isCurrentClip && (
-                            <span className="text-[0.6rem] text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">This clip</span>
-                          )}
-                         
-                          {ref.matchScore != null && !isQuery && (
-                            <span className="text-[0.6rem] text-secondary font-semibold">
-                              {Math.round(ref.matchScore * 100)}% match
-                            </span>
-                          )}
-                          <IdsInfoIcon ids={[{ label: 'detection', value: ref.id }]} />
-                        </div>
-                        <p className="text-[0.7rem] text-text-muted mt-0.5">{formatDate(ref.timestamp)}</p>
-                        {ref.scores && !isQuery && <MatchScoreBreakdown scores={ref.scores} />}
-                      </div>
-                      <div className="flex flex-col gap-1.5 shrink-0 self-center">
-                        {(ref.clipFilename || ref.id) && (
-                          <button
-                            type="button"
-                            onClick={() => { void playReferenceClip(ref); }}
-                            className="btn btn-secondary p-2 rounded-lg hover:border-primary/40 hover:text-primary"
-                            title="Play clip"
-                          >
-                            <Play size={16} fill="currentColor" />
-                          </button>
-                        )}
-                        {!isQuery && (
-                          <>
-                            <button
-                              type="button"
-                              title="Same person"
-                              disabled={!!feedbackPending}
-                              onClick={() => { void handleFeedback(ref.id, 'confirm'); }}
-                              className="btn btn-secondary p-1.5 border-none hover:text-green-400"
-                            >
-                              <ThumbsUp size={13} className={feedbackPending === confirmKey ? 'animate-pulse' : ''} />
-                            </button>
-                            <button
-                              type="button"
-                              title="Different person"
-                              disabled={!!feedbackPending}
-                              onClick={() => { void handleFeedback(ref.id, 'reject'); }}
-                              className="btn btn-secondary p-1.5 border-none hover:text-danger"
-                            >
-                              <ThumbsDown size={13} className={feedbackPending === rejectKey ? 'animate-pulse' : ''} />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <ReidTimeline
+            key={timelineKey}
+            source={{ mode: 'detection', detectionId: detection.detectionId }}
+            highlightClipFilename={selectedClip?.filename}
+            onCropPreview={onCropPreview}
+            onIdentityResolved={handleIdentityResolved}
+            onUpdated={onClipDetectionsRefresh}
+            nestedPlayback
+          />
         </div>
       </DialogContent>
 

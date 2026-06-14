@@ -25,7 +25,6 @@ import {
   getStoredOrg,
   switchOrg,
   fetchMe,
-  createEnrollmentToken,
   DEFAULT_ORG_SETTINGS,
   type AuthOrg,
   type AuthUser,
@@ -119,11 +118,6 @@ export default function DashboardApp() {
     } finally {
       setSwitchingOrg(false);
     }
-  };
-
-  const handleGenerateEnrollmentToken = async () => {
-    const result = await createEnrollmentToken('Device install');
-    return result.token;
   };
 
   const selectedStreamIdRef = useRef(selectedStreamId);
@@ -1052,7 +1046,7 @@ export default function DashboardApp() {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Cpu size={18} color="var(--color-primary)" /> Registered Edge Devices
-                <DeviceInstallTooltip onGenerateToken={handleGenerateEnrollmentToken} />
+                <DeviceInstallTooltip orgId={currentOrg?.id ?? ''} />
               </h2>
               <button
                 onClick={() => refreshDevices()}

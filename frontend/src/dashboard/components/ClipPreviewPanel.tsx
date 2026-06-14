@@ -6,7 +6,8 @@ import { getClipDetectionCount } from '../utils/clips';
 import { formatClipDuration, formatDate } from '../utils/format';
 import { mediaUrl } from '../utils/media';
 import { CropThumbnail } from './CropThumbnail';
-import { IdsInfoIcon } from './IdsInfoIcon';
+import { IdsInfoIcon, InlineCopyIds } from './IdsInfoIcon';
+import { buildTimelineIdEntries } from './idEntries';
 
 export interface ClipPreviewPanelProps {
   clip: VideoClip;
@@ -92,8 +93,9 @@ export function ClipPreviewPanel({
             )}
           </div>
         </div>
+        <InlineCopyIds ids={buildTimelineIdEntries({ clipId: clip.id })} />
         {orgSettings.videoSummary && (
-          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
+          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5 mt-2">
             <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-1 tracking-wider flex items-center gap-1">
               <ScanSearch size={12} />Detection Summary
             </p>
@@ -164,11 +166,17 @@ export function ClipPreviewPanel({
                     ...(obj.detectionId ? [{ label: 'detection', value: obj.detectionId }] : []),
                   ];
                   return (
-                    <button
+                    <div
                       key={obj.trackId}
-                      type="button"
-                      disabled={!isClickablePerson}
-                      onClick={() => onOpenPersonRefs(obj)}
+                      role={isClickablePerson ? 'button' : undefined}
+                      tabIndex={isClickablePerson ? 0 : undefined}
+                      onClick={isClickablePerson ? () => onOpenPersonRefs(obj) : undefined}
+                      onKeyDown={isClickablePerson ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onOpenPersonRefs(obj);
+                        }
+                      } : undefined}
                       className={`flex flex-col gap-1.5 text-left w-full rounded-lg px-2 py-2 -mx-1 border border-transparent ${
                         isClickablePerson
                           ? 'hover:bg-[rgba(56,189,248,0.08)] hover:border-[rgba(56,189,248,0.15)] cursor-pointer'
@@ -223,16 +231,7 @@ export function ClipPreviewPanel({
                               <IdsInfoIcon ids={personIds} />
                             </div>
                           )}
-                          {obj.labelStatus === 'suggested' && obj.label && obj.matchScore != null && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-[0.72rem] text-secondary">
-                                Suggested: {Math.round(obj.matchScore * 100)}% match · {obj.label}
-                                <span className="text-text-muted ml-1">— click to confirm or choose another</span>
-                              </span>
-                              <IdsInfoIcon ids={personIds} />
-                            </div>
-                          )}
-                          {obj.labelStatus === 'none' && isClickablePerson && (
+                          {(obj.labelStatus === 'none' || obj.labelStatus === 'suggested') && isClickablePerson && (
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="text-[0.72rem] text-amber-400">
                                 Unassigned — click to create a new identity or link to existing
@@ -242,7 +241,7 @@ export function ClipPreviewPanel({
                           )}
                         </div>
                       )}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
