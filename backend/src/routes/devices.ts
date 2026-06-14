@@ -6,6 +6,7 @@ import { handleCropUpload, ReidTrackEvent } from './reid';
 import { sendDeviceCommand } from '../services/deviceCommands';
 import { getEffectiveDeviceStatus } from '../services/deviceStatus';
 import { assertDeviceInOrg } from '../services/orgScope';
+import { getDeviceEvents } from '../services/deviceEvents';
 import {
   extractDeviceConfigPatch,
   mergeDeviceConfig,
@@ -531,6 +532,43 @@ router.get('/:deviceId/metrics', async (req: Request, res: Response) => {
   } catch (error: any) {
     const status = error.message === 'Device is offline' ? 503 : 500;
     res.status(status).json({ error: error.message || 'Failed to fetch device metrics' });
+  }
+});
+
+/**
+ * GET /api/devices/:deviceId/events
+ * Fetch persisted network/connectivity events for debugging
+ */
+router.get('/:deviceId/events', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || '100'), 10) || 100, 1), 500);
+  const streamId = typeof req.query.streamId === 'string' ? req.query.streamId : undefined;
+  const sinceRaw = typeof req.query.since === 'string' ? req.query.since : undefined;
+
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const since = sinceRaw ? new Date(sinceRaw) : undefined;
+    if (since && Number.isNaN(since.getTime())) {
+      return res.status(400).json({ error: 'Invalid since timestamp' });
+    }
+
+    const events = await getDeviceEvents(deviceId, {
+      orgId: req.auth.orgId,
+      limit,
+      streamId,
+      since,
+    });
+    res.json({ events });
+  } catch (error: any) {
+    console.error(`[Devices] Failed to fetch events for ${deviceId}:`, error);
+    res.status(500).json({ error: error.message || 'Failed to fetch device events' });
   }
 });
 

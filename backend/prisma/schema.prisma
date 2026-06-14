@@ -203,3 +203,22 @@ model TopologyRoute {
   org            Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
 }
 
+/// Durable edge/network events for post-incident debugging (camera, WebSocket, connectivity).
+model DeviceEvent {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  deviceId  String
+  streamId  String?
+  orgId     String?  @db.ObjectId
+  category  String   // camera | websocket | device | preview | recovery
+  severity  String   // info | warn | error
+  eventType String
+  message   String
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, createdAt])
+  @@index([streamId, createdAt])
+  @@index([orgId, createdAt])
+  @@index([eventType, createdAt])
+}
+

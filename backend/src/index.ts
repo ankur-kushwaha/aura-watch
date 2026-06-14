@@ -36,6 +36,7 @@ import { resolveCropImageBuffer } from './services/cropResolve';
 import { registerEdgeFileFetcher } from './services/edgeFileFetch';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import prisma from './services/db';
+import { recordDeviceEventFromLogSafe, recordDeviceEventSafe } from './services/deviceEvents';
 import { getEffectiveStreamStatus } from './services/deviceStatus';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
 
@@ -207,6 +208,7 @@ function broadcastNewClipToAllUIs(clip: object, deviceId: string, streamId: stri
 
 function broadcastLogToSubscribedUIs(deviceId: string, message: string, timestamp?: string) {
   console.log(`[Log - ${deviceId}] ${message}`);
+  recordDeviceEventFromLogSafe(deviceId, message);
   const payload = {
     type: 'log',
     message,
@@ -710,6 +712,17 @@ wss.on('connection', async (ws: WebSocket, req) => {
                 streamId: data.streamId,
                 stalledForSec: data.stalledForSec,
               });
+              if (data.type === 'preview_stall') {
+                recordDeviceEventSafe({
+                  deviceId,
+                  streamId: data.streamId,
+                  category: 'preview',
+                  severity: 'warn',
+                  eventType: 'preview_stall',
+                  message: `Live preview stalled${data.stalledForSec ? ` for ${data.stalledForSec}s` : ''}`,
+                  detail: { stalledForSec: data.stalledForSec },
+                });
+              }
             }
             break;
           case 'stream_error':
@@ -725,6 +738,17 @@ wss.on('connection', async (ws: WebSocket, req) => {
                 message: data.message,
                 retryInSec: data.retryInSec,
               });
+              recordDeviceEventSafe({
+                deviceId,
+                streamId: data.streamId,
+                category: 'camera',
+                severity: 'error',
+                eventType: data.errorType || 'camera_error',
+                message: data.message || 'Camera stream error',
+                detail: {
+                  retryInSec: data.retryInSec,
+                },
+              });
             }
             break;
           case 'stream_error_cleared':
@@ -739,6 +763,15 @@ wss.on('connection', async (ws: WebSocket, req) => {
                 type: 'stream_error_cleared',
                 streamId: data.streamId,
                 status: clearedStatus,
+              });
+              recordDeviceEventSafe({
+                deviceId,
+                streamId: data.streamId,
+                category: 'recovery',
+                severity: 'info',
+                eventType: 'camera_recovered',
+                message: `Camera stream recovered (${clearedStatus})`,
+                dedupeWindowMs: 30_000,
               });
             }
             break;

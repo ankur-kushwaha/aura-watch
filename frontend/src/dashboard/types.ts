@@ -258,3 +258,15 @@ export interface LogEntry {
   message: string;
   timestamp: string;
 }
+
+export interface DeviceEvent {
+  id: string;
+  deviceId: string;
+  streamId?: string | null;
+  category: string;
+  severity: string;
+  eventType: string;
+  message: string;
+  detail?: Record<string, unknown> | null;
+  createdAt: string;
+}

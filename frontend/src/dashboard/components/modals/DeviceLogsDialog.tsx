@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, ScrollText, X } from 'lucide-react';
 import { apiFetch } from '../../../api';
 import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
-import type { LogEntry } from '../../types';
+import type { DeviceEvent, LogEntry } from '../../types';
 
 export interface DeviceLogsDialogProps {
   device: { deviceId: string; name: string } | null;
@@ -10,11 +10,38 @@ export interface DeviceLogsDialogProps {
   registerLiveLogSink?: (sink: ((entry: LogEntry) => void) | null) => void;
 }
 
+function severityClass(severity: string): string {
+  if (severity === 'error') return 'text-rose-400';
+  if (severity === 'warn') return 'text-amber-300';
+  return 'text-emerald-300';
+}
+
 export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: DeviceLogsDialogProps) {
   const [journalLogs, setJournalLogs] = useState('');
   const [loadingJournal, setLoadingJournal] = useState(false);
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
+  const [savedEvents, setSavedEvents] = useState<DeviceEvent[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
+  const eventsContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const fetchSavedEvents = useCallback(async (deviceId: string) => {
+    setLoadingEvents(true);
+    try {
+      const res = await apiFetch(`/devices/${deviceId}/events?limit=100`);
+      const data = await res.json();
+      if (res.ok) {
+        setSavedEvents(data.events || []);
+      } else {
+        setSavedEvents([]);
+      }
+    } catch (err) {
+      console.error('Failed to fetch saved device events', err);
+      setSavedEvents([]);
+    } finally {
+      setLoadingEvents(false);
+    }
+  }, []);
 
   const fetchJournalLogs = useCallback(async (deviceId: string) => {
     setLoadingJournal(true);
@@ -34,16 +61,21 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
     }
   }, []);
 
+  const refreshAll = useCallback(async (deviceId: string) => {
+    await Promise.all([fetchJournalLogs(deviceId), fetchSavedEvents(deviceId)]);
+  }, [fetchJournalLogs, fetchSavedEvents]);
+
   useEffect(() => {
     if (!device) {
       setJournalLogs('');
       setLiveLogs([]);
+      setSavedEvents([]);
       registerLiveLogSink?.(null);
       return;
     }
 
     setLiveLogs([]);
-    void fetchJournalLogs(device.deviceId);
+    void refreshAll(device.deviceId);
 
     registerLiveLogSink?.((entry) => {
       setLiveLogs((prev) => {
@@ -56,13 +88,19 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
     });
 
     return () => registerLiveLogSink?.(null);
-  }, [device, fetchJournalLogs, registerLiveLogSink]);
+  }, [device, refreshAll, registerLiveLogSink]);
 
   useEffect(() => {
     if (logsContainerRef.current) {
       logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
   }, [liveLogs]);
+
+  useEffect(() => {
+    if (eventsContainerRef.current) {
+      eventsContainerRef.current.scrollTop = 0;
+    }
+  }, [savedEvents]);
 
   return (
     <Dialog open={!!device} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -80,12 +118,12 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => device && void fetchJournalLogs(device.deviceId)}
-              disabled={loadingJournal}
+              onClick={() => device && void refreshAll(device.deviceId)}
+              disabled={loadingJournal || loadingEvents}
               className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
             >
-              <RefreshCw size={12} className={loadingJournal ? 'animate-spin' : ''} />
-              Refresh Journal
+              <RefreshCw size={12} className={loadingJournal || loadingEvents ? 'animate-spin' : ''} />
+              Refresh
             </button>
             <button
               type="button"
@@ -101,8 +139,41 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
 
         <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
           <div>
+            <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">
+              Saved Network Events (90 days)
+            </h3>
+            <div
+              ref={eventsContainerRef}
+              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] flex-1 min-h-[140px] max-h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+            >
+              {loadingEvents ? (
+                <span className="text-text-muted">Loading saved events...</span>
+              ) : savedEvents.length === 0 ? (
+                <span className="text-text-muted">
+                  No saved connectivity events yet. Camera and WebSocket issues are recorded here automatically.
+                </span>
+              ) : (
+                savedEvents.map((event) => (
+                  <div key={event.id} className="mb-2 pb-2 border-b border-[rgba(255,255,255,0.04)] last:border-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                      <span className="text-text-muted">
+                        [{new Date(event.createdAt).toLocaleString()}]
+                      </span>
+                      <span className={`uppercase text-[0.65rem] tracking-wide ${severityClass(event.severity)}`}>
+                        {event.severity}
+                      </span>
+                      <span className="text-[0.65rem] text-text-muted">{event.eventType}</span>
+                    </div>
+                    <span className={severityClass(event.severity)}>{event.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div>
             <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Service Journal + agent.log</h3>
-            <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
+            <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] h-[140px] overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
               {loadingJournal ? (
                 <span className="text-text-muted">Loading journal logs...</span>
               ) : journalLogs ? (
@@ -113,11 +184,11 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 flex flex-col">
+          <div className="min-h-0 flex flex-col">
             <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Live Agent Logs</h3>
             <div
               ref={logsContainerRef}
-              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#38bdf8] flex-1 min-h-[140px] max-h-[220px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#38bdf8] flex-1 min-h-[120px] max-h-[160px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
             >
               {liveLogs.length === 0 ? (
                 <span className="text-text-muted">Waiting for live log events from device...</span>
