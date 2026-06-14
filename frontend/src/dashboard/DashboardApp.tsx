@@ -39,7 +39,7 @@ import {
   DEFAULT_STREAM_CONFIG,
   type EffectiveEdgeDeviceConfig,
 } from '../edgeConfig';
-import { PREVIEW_STALL_MS, WS_BASE } from './constants';
+import { PREVIEW_STALL_MS, STREAM_INIT_TIMEOUT_MS, STREAM_REFRESH_COOLDOWN_MS, WS_BASE } from './constants';
 import type {
   CameraConfig,
   CameraStream,
@@ -120,6 +120,7 @@ export default function DashboardApp() {
   };
 
   const selectedStreamIdRef = useRef(selectedStreamId);
+  const selectedStreamDeviceIdRef = useRef<string | null>(null);
   const fetchClipsRef = useRef<() => Promise<void>>(async () => {});
   const handleNewClipRef = useRef<(clip: VideoClip) => void>(() => {});
   const triggerReidRefreshRef = useRef<() => void>(() => {});
@@ -127,10 +128,6 @@ export default function DashboardApp() {
   const onlineDeviceIdsRef = useRef<Set<string>>(new Set());
   const deviceLogsDeviceRef = useRef(deviceLogsDevice);
   const deviceLogSinkRef = useRef<((entry: LogEntry) => void) | null>(null);
-
-  useEffect(() => {
-    selectedStreamIdRef.current = selectedStreamId;
-  }, [selectedStreamId]);
 
   useEffect(() => {
     deviceLogsDeviceRef.current = deviceLogsDevice;
@@ -183,9 +180,11 @@ export default function DashboardApp() {
     liveFeedOpenRef.current = liveFeedOpen;
   }, [liveFeedOpen]);
   const [streamLoading, setStreamLoading] = useState<boolean>(true);
+  const [streamInitTimedOut, setStreamInitTimedOut] = useState<boolean>(false);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [previewFrozen, setPreviewFrozen] = useState<boolean>(false);
   const lastFrameAtRef = useRef<number>(0);
+  const lastStreamRefreshAtRef = useRef<number>(0);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
 
   // WebSocket Ref
@@ -204,6 +203,52 @@ export default function DashboardApp() {
   );
 
   const hasOnlineDevices = onlineDeviceIds.size > 0;
+
+  const selectedStream = useMemo(
+    () => streams.find((s) => s.streamId === selectedStreamId) ?? null,
+    [streams, selectedStreamId],
+  );
+
+  const appendLog = useCallback((message: string) => {
+    const logEntry = { message, timestamp: new Date().toISOString() };
+    setLogs((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.message === logEntry.message && last.timestamp === logEntry.timestamp) {
+        return prev;
+      }
+      return [...prev, logEntry];
+    });
+  }, []);
+
+  const refreshStreamPreview = useCallback((reason: string) => {
+    const streamId = selectedStreamIdRef.current;
+    if (!streamId || !liveFeedOpenRef.current) return;
+
+    const now = Date.now();
+    if (now - lastStreamRefreshAtRef.current < STREAM_REFRESH_COOLDOWN_MS) {
+      return;
+    }
+    lastStreamRefreshAtRef.current = now;
+
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'refresh_stream', streamId }));
+      appendLog(`[Dashboard] Auto-recovery: ${reason}`);
+    }
+  }, [appendLog]);
+
+  const appendLogRef = useRef(appendLog);
+  const refreshStreamPreviewRef = useRef(refreshStreamPreview);
+
+  useEffect(() => {
+    appendLogRef.current = appendLog;
+    refreshStreamPreviewRef.current = refreshStreamPreview;
+  }, [appendLog, refreshStreamPreview]);
+
+  useEffect(() => {
+    selectedStreamIdRef.current = selectedStreamId;
+    selectedStreamDeviceIdRef.current = selectedStream?.deviceId ?? null;
+  }, [selectedStreamId, selectedStream?.deviceId]);
 
   const eventsTab = useEventsTab({
     devices,
@@ -322,6 +367,10 @@ export default function DashboardApp() {
       if (currentStreamId && liveFeedOpenRef.current) {
         ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: currentStreamId }));
       }
+      const deviceId = selectedStreamDeviceIdRef.current;
+      if (deviceId) {
+        ws.send(JSON.stringify({ type: 'subscribe_device', deviceId }));
+      }
       const deviceModal = deviceLogsDeviceRef.current;
       if (deviceModal) {
         ws.send(JSON.stringify({ type: 'subscribe_device', deviceId: deviceModal.deviceId }));
@@ -420,12 +469,19 @@ export default function DashboardApp() {
             lastFrameAtRef.current = Date.now();
             setLiveFrame(`data:image/jpeg;base64,${data.image}`);
             setStreamLoading(false);
+            setStreamInitTimedOut(false);
             setPreviewFrozen(false);
           }
           break;
         case 'preview_stall':
           if (data.streamId === selectedStreamIdRef.current) {
             setPreviewFrozen(true);
+            if (typeof data.stalledForSec === 'number') {
+              appendLogRef.current(
+                `[Dashboard] Live preview stalled (no frames for ${data.stalledForSec}s). Attempting recovery...`,
+              );
+            }
+            refreshStreamPreviewRef.current('preview stall detected');
           }
           break;
         case 'preview_resumed':
@@ -450,6 +506,7 @@ export default function DashboardApp() {
         return;
       }
       const wsStillNeeded =
+        !!selectedStreamIdRef.current ||
         (liveFeedOpenRef.current && !!selectedStreamIdRef.current) ||
         !!deviceLogsDeviceRef.current;
       if (!wsStillNeeded) {
@@ -493,21 +550,47 @@ export default function DashboardApp() {
     }
   }, [selectedStreamId, streams]);
 
-  // Sync WS subscription when stream changes
+  // Subscribe/unsubscribe live preview when the feed panel is toggled
   useEffect(() => {
-    if (!liveFeedOpen || !selectedStreamId) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !selectedStreamId) return;
+
+    if (liveFeedOpen) {
+      setStreamLoading(true);
+      setStreamInitTimedOut(false);
+      setLiveFrame(null);
+      lastFrameAtRef.current = 0;
+      ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
+    } else {
+      ws.send(JSON.stringify({ type: 'unsubscribe_stream' }));
+      setStreamLoading(false);
+      setStreamInitTimedOut(false);
+      setPreviewFrozen(false);
+      setLiveFrame(null);
+    }
+  }, [liveFeedOpen, selectedStreamId]);
+
+  // Sync WS device subscription when stream changes
+  useEffect(() => {
+    if (!selectedStreamId) return;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      // Clear logs for new stream
-      setLogs([]);
+      const deviceId = selectedStream?.deviceId;
+      if (deviceId) {
+        wsRef.current.send(JSON.stringify({ type: 'subscribe_device', deviceId }));
+      }
       setMotionActive(false);
       setMotionRatio(0);
-
-      wsRef.current.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
     }
-  }, [selectedStreamId, liveFeedOpen]);
+  }, [selectedStreamId, selectedStream?.deviceId]);
 
-  const wsNeeded = (liveFeedOpen && !!selectedStreamId) || !!deviceLogsDevice;
+  useEffect(() => {
+    if (terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  const wsNeeded = !!selectedStreamId || !!deviceLogsDevice;
 
   // Connect WebSocket only while live feed or device logs modal needs it
   useEffect(() => {
@@ -525,6 +608,7 @@ export default function DashboardApp() {
     setLiveFeedOpen(false);
     setLiveFrame(null);
     setStreamLoading(false);
+    setStreamInitTimedOut(false);
     setPreviewFrozen(false);
     setMotionActive(false);
     setMotionRatio(0);
@@ -543,9 +627,11 @@ export default function DashboardApp() {
     if (!liveFeedOpen) return;
     Promise.resolve().then(() => {
       setStreamLoading(true);
+      setStreamInitTimedOut(false);
       setLiveFrame(null);
       setPreviewFrozen(false);
       lastFrameAtRef.current = 0;
+      lastStreamRefreshAtRef.current = 0;
     });
   }, [selectedStreamId, liveFeedOpen]);
 
@@ -559,11 +645,41 @@ export default function DashboardApp() {
     const intervalId = setInterval(() => {
       const lastFrameAt = lastFrameAtRef.current;
       if (!lastFrameAt) return;
-      setPreviewFrozen(Date.now() - lastFrameAt > PREVIEW_STALL_MS);
+      const frozen = Date.now() - lastFrameAt > PREVIEW_STALL_MS;
+      setPreviewFrozen(frozen);
+      if (frozen) {
+        refreshStreamPreview('no frames received in dashboard');
+      }
     }, 1000);
 
     return () => clearInterval(intervalId);
-  }, [selectedStreamId, status, liveFeedOpen]);
+  }, [selectedStreamId, status, liveFeedOpen, refreshStreamPreview]);
+
+  // Auto-recover when the live feed never receives its first frame
+  useEffect(() => {
+    if (!liveFeedOpen || !selectedStreamId || status === 'Offline' || !streamLoading) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      if (!lastFrameAtRef.current) {
+        setStreamInitTimedOut(true);
+        appendLog(
+          '[Dashboard] Live stream initialization timed out. Check edge logs below and retrying preview...',
+        );
+        refreshStreamPreview('stream init timeout');
+      }
+    }, STREAM_INIT_TIMEOUT_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [
+    selectedStreamId,
+    status,
+    liveFeedOpen,
+    streamLoading,
+    appendLog,
+    refreshStreamPreview,
+  ]);
 
   const handleToggleStreamMonitoring = async (streamId: string, currentTrackingEnabled: boolean) => {
     const stream = streams.find((s) => s.streamId === streamId);
@@ -1171,12 +1287,32 @@ export default function DashboardApp() {
                   )}
 
                   {streamLoading && (
-                    <div className="text-center text-text-muted absolute inset-0 flex flex-col justify-center items-center bg-[#090d16]/80">
+                    <div className="text-center text-text-muted absolute inset-0 flex flex-col justify-center items-center bg-[#090d16]/80 px-4">
                       <div className="animate-[spin_4s_linear_infinite] mb-3 inline-block">
                         <RefreshCw size={36} color="var(--color-primary)" />
                       </div>
-                      <p className="text-[0.9rem]">Initializing Live Stream...</p>
-                      <p className="text-[0.75rem] mt-1">Connecting to edge camera (WebSocket)</p>
+                      {streamInitTimedOut ? (
+                        <>
+                          <p className="text-[0.9rem] text-amber-400">Live stream stalled</p>
+                          <p className="text-[0.75rem] mt-1 max-w-md">
+                            No frames received from the edge device. Check System Status Logs below for
+                            camera or WebSocket errors. Recovery is retrying automatically.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => refreshStreamPreview('manual retry')}
+                            className="btn btn-secondary mt-3 py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                          >
+                            <RefreshCw size={12} />
+                            Retry Preview Now
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-[0.9rem]">Initializing Live Stream...</p>
+                          <p className="text-[0.75rem] mt-1">Connecting to edge camera (WebSocket)</p>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1217,19 +1353,23 @@ export default function DashboardApp() {
             <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3.5 text-[0.85rem] leading-[1.4] text-[#38bdf8] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]" ref={terminalContainerRef}>
               {logs.length === 0 ? (
                 <div className="text-text-muted text-[0.8rem]">
-                  {selectedStreamId && liveFeedOpen
-                    ? 'Waiting for stream events...'
-                    : selectedStreamId
-                      ? 'Live feed closed. Open feed to view stream events.'
-                      : 'Select a camera stream to view logs.'}
+                  {selectedStreamId
+                    ? 'Waiting for edge device events... (camera errors, reconnects, and clip activity appear here)'
+                    : 'Select a camera stream to view logs.'}
                 </div>
               ) : (
-                logs.map((log, index) => (
-                  <div key={index} className="mb-1">
-                    <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                    <span>{log.message}</span>
-                  </div>
-                ))
+                logs.map((log, index) => {
+                  const isError = /\[Detector Error\]|WebSocket|stream lost|failed|error|timed out/i.test(log.message);
+                  const isWarn = /stalled|retry|reconnect|cooldown/i.test(log.message);
+                  return (
+                    <div key={index} className="mb-1">
+                      <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                      <span className={isError ? 'text-rose-400' : isWarn ? 'text-amber-300' : undefined}>
+                        {log.message}
+                      </span>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>

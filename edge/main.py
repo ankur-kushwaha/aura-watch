@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from config import DeviceRuntimeConfig, default_stream_tracking_enabled, rtsp_local_addr_value, rtsp_transport_value
@@ -22,6 +23,7 @@ import requests
 import websocket
 from dotenv import load_dotenv
 
+from agent_log import AgentLogger
 from camera import CameraCapture
 from crop_appearance import analyze_crop_jpeg, analyze_vehicle_from_frame, is_vehicle_class
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
@@ -57,6 +59,8 @@ DEVICE_NAME = os.getenv("DEVICE_NAME", "Office Edge Device")
 LOCAL_VIDEO_DIR = os.getenv("LOCAL_VIDEO_DIR", os.path.join(BASE_DIR, "storage", "temp_clips"))
 LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage", "crops"))
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
+AGENT_LOG_FILE = os.path.join(BASE_DIR, "storage", "agent.log")
+HEALTH_HEARTBEAT_SEC = max(60, int(os.getenv("HEALTH_HEARTBEAT_SEC", "300")))
 DEBUG_LOGS = _DEFAULT_RUNTIME.debug_logs
 PREVIEW_STALL_TIMEOUT_SEC = _DEFAULT_RUNTIME.preview_stall_timeout_sec
 
@@ -167,14 +171,17 @@ class EdgeAgent:
         self.ws_thread: Optional[threading.Thread] = None
         self.heartbeat_timer: Optional[threading.Timer] = None
         self.preview_stall_timer: Optional[threading.Timer] = None
+        self.health_heartbeat_timer: Optional[threading.Timer] = None
         self.reconnect_timer: Optional[threading.Timer] = None
         self.ws_lock = threading.Lock()
         self.shutdown_event = threading.Event()
+        self.agent_logger = AgentLogger(AGENT_LOG_FILE)
 
         # Multi-stream configurations and pipelines
         self.device_runtime_config = DeviceRuntimeConfig()
         self.streams_config: dict[str, EdgeConfig] = {}
         self.pipelines: dict[str, dict[str, Any]] = {}
+        self._recent_logs: list[tuple[str, str]] = []
 
         os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
         os.makedirs(LOCAL_CROPS_DIR, exist_ok=True)
@@ -184,7 +191,7 @@ class EdgeAgent:
         if os.path.exists(DEVICE_ID_FILE):
             with open(DEVICE_ID_FILE, "r", encoding="utf-8") as handle:
                 device_id = handle.read().strip()
-            print(f"[Edge] Loaded persistent device ID: {device_id}")
+            print(f"[Edge] Loaded persistent device ID: {device_id}", flush=True)
             return device_id
 
         import secrets
@@ -192,12 +199,19 @@ class EdgeAgent:
         device_id = "edge_" + secrets.token_hex(8)
         with open(DEVICE_ID_FILE, "w", encoding="utf-8") as handle:
             handle.write(device_id)
-        print(f"[Edge] Generated and saved new device ID: {device_id}")
+        print(f"[Edge] Generated and saved new device ID: {device_id}", flush=True)
         return device_id
 
     def send_log(self, message: str):
-        print(f"[Edge Log] {message}")
-        self._ws_send({"type": "log", "message": message})
+        timestamp = self.agent_logger.write(message, tag="Edge Log")
+        self._recent_logs.append((message, timestamp))
+        if len(self._recent_logs) > 100:
+            self._recent_logs = self._recent_logs[-100:]
+        self._ws_send({"type": "log", "message": message, "timestamp": timestamp})
+
+    def _replay_recent_logs(self, limit: int = 25) -> None:
+        for message, timestamp in self._recent_logs[-limit:]:
+            self._ws_send({"type": "log", "message": message, "timestamp": timestamp})
 
     def send_status(self, stream_id: str, status: str):
         self._ws_send({"type": "status_change", "streamId": stream_id, "status": status})
@@ -437,6 +451,61 @@ class EdgeAgent:
                 p_data["last_preview_sent_at"] = 0.0
                 p_data["preview_stalled"] = False
 
+    def _schedule_health_heartbeat(self):
+        if self.shutdown_event.is_set():
+            return
+        self._emit_health_heartbeat()
+        self.health_heartbeat_timer = threading.Timer(
+            float(HEALTH_HEARTBEAT_SEC),
+            self._schedule_health_heartbeat,
+        )
+        self.health_heartbeat_timer.daemon = True
+        self.health_heartbeat_timer.start()
+
+    def _emit_health_heartbeat(self):
+        stream_states: list[str] = []
+        for stream_id, p_data in self.pipelines.items():
+            config = self.streams_config.get(stream_id)
+            name = config.name if config else stream_id
+            camera = p_data.get("camera")
+            camera_ok = bool(camera and camera.is_opened())
+            preview_on = bool(p_data.get("stream_frames"))
+            recording = bool(p_data.get("is_recording"))
+            parts = [name, "camera=up" if camera_ok else "camera=down"]
+            if preview_on:
+                parts.append("preview=on")
+            if recording:
+                parts.append("recording")
+            stream_states.append("/".join(parts))
+
+        ws_ok = bool(self.ws)
+        self.send_log(
+            "[Health] "
+            f"pid={os.getpid()} "
+            f"ws={'up' if ws_ok else 'down'} "
+            f"streams={len(self.pipelines)} "
+            f"[{'; '.join(stream_states) or 'none'}]"
+        )
+
+    def _kill_stale_rtsp_ffmpeg(self, stream_url: str) -> None:
+        if not stream_url.lower().startswith("rtsp"):
+            return
+        try:
+            from urllib.parse import urlparse
+
+            host = urlparse(stream_url).hostname or ""
+            if not host:
+                return
+            subprocess.run(
+                ["pkill", "-f", f"ffmpeg.*{host}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except Exception:
+            pass
+
     def _stream_pipeline_loop(self, stream_id: str, stop_event: threading.Event):
         retry_delay = 10.0
         consecutive_failures = 0
@@ -447,6 +516,7 @@ class EdgeAgent:
                 break
 
             runtime = config.runtime(self.device_runtime_config)
+            self._kill_stale_rtsp_ffmpeg(config.stream_url)
             camera = CameraCapture(
                 camera_type=config.camera_type,
                 stream_url=config.stream_url,
@@ -520,6 +590,8 @@ class EdgeAgent:
             self.send_log(
                 f"[{config.name}] Started YOLO+ByteTrack pipeline ({camera.width}x{camera.height})"
             )
+            if pipeline_data.get("stream_frames"):
+                self.send_log(f"[{config.name}] Live preview streaming enabled.")
             self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
             settings = PipelineSettings(
@@ -1135,6 +1207,7 @@ class EdgeAgent:
         if command == "fetch_logs":
             lines = max(10, min(int(params.get("lines", 200)), 2000))
             try:
+                file_logs = self.agent_logger.tail(lines)
                 result = subprocess.run(
                     [
                         "journalctl",
@@ -1148,9 +1221,18 @@ class EdgeAgent:
                     text=True,
                     timeout=30,
                 )
-                logs = result.stdout.strip() or result.stderr.strip()
-                if not logs:
-                    logs = "No journal logs available for aura-watch-edge.service."
+                journal_logs = result.stdout.strip() or result.stderr.strip()
+                sections: list[str] = []
+                if file_logs:
+                    sections.append(
+                        f"=== Persistent agent log ({AGENT_LOG_FILE}, last {lines} lines) ===\n{file_logs}"
+                    )
+                if journal_logs:
+                    sections.append(f"=== systemd journal (aura-watch-edge) ===\n{journal_logs}")
+                if not sections:
+                    logs = "No logs available (agent.log missing and journal empty)."
+                else:
+                    logs = "\n\n".join(sections)
                 respond(True, logs=logs)
             except FileNotFoundError:
                 respond(False, error="journalctl not found on this device.")
@@ -1261,11 +1343,19 @@ class EdgeAgent:
                 stream_id = data.get("streamId")
                 stream_state = bool(data.get("stream", False))
                 p_data = self.pipelines.get(stream_id)
+                config = self.streams_config.get(stream_id)
+                name = config.name if config else stream_id
                 if p_data:
                     p_data["stream_frames"] = stream_state
                     p_data["last_preview_sent_at"] = 0.0
                     p_data["preview_stalled"] = False
                     state = "enabled" if stream_state else "disabled"
+                    self.send_log(f"[{name}] Low-latency preview streaming {state}.")
+                else:
+                    self.send_log(
+                        f"[{name}] Preview {('enable' if stream_state else 'disable')} requested "
+                        f"but pipeline is not ready yet."
+                    )
 
             elif msg_type == "request_stream_file":
                 threading.Thread(
@@ -1312,17 +1402,22 @@ class EdgeAgent:
         self.preview_stall_timer.start()
 
     def _on_ws_open(self, _ws):
-        print("[Edge WS] Connected successfully to Cloud Hub.")
+        print("[Edge WS] Connected successfully to Cloud Hub.", flush=True)
+        self.send_log("Reconnected to cloud hub.")
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
         if self.preview_stall_timer:
             self.preview_stall_timer.cancel()
         self._schedule_heartbeat()
         self._schedule_preview_stall_check()
+        self._replay_recent_logs()
 
         # Update and notify status for all active streams
         for stream_id, p_data in self.pipelines.items():
             config = self.streams_config.get(stream_id)
+            if p_data.get("stream_frames"):
+                config_name = config.name if config else stream_id
+                self.send_log(f"[{config_name}] Resuming live preview after cloud reconnect.")
             if p_data["is_recording"]:
                 status = "Recording"
             elif p_data.get("camera") and p_data["camera"].is_opened():
@@ -1332,7 +1427,12 @@ class EdgeAgent:
             self.send_status(stream_id, status)
 
     def _on_ws_close(self, _ws, _status_code, _msg):
-        print("[Edge WS] Connection closed. Retrying in 5 seconds...")
+        print("[Edge WS] Connection closed. Retrying in 5 seconds...", flush=True)
+        self._recent_logs.append(
+            ("Cloud WebSocket disconnected. Retrying in 5 seconds...", datetime.now(timezone.utc).isoformat())
+        )
+        if len(self._recent_logs) > 100:
+            self._recent_logs = self._recent_logs[-100:]
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
         if self.preview_stall_timer:
@@ -1343,14 +1443,18 @@ class EdgeAgent:
             self.reconnect_timer.start()
 
     def _on_ws_error(self, _ws, error):
-        print(f"[Edge WS] Connection error: {error}")
+        print(f"[Edge WS] Connection error: {error}", flush=True)
+        message = f"Cloud WebSocket error: {error}"
+        self._recent_logs.append((message, datetime.now(timezone.utc).isoformat()))
+        if len(self._recent_logs) > 100:
+            self._recent_logs = self._recent_logs[-100:]
 
     def connect_ws(self):
         if self.shutdown_event.is_set():
             return
 
         ws_url = f"{CLOUD_WS_URL}?role=device&deviceId={self.device_id}"
-        print(f"[Edge WS] Connecting to {ws_url}...")
+        print(f"[Edge WS] Connecting to {ws_url}...", flush=True)
 
         self.ws = websocket.WebSocketApp(
             ws_url,
@@ -1361,7 +1465,7 @@ class EdgeAgent:
         )
         self.ws_thread = threading.Thread(
             target=self.ws.run_forever,
-            kwargs={"ping_interval": 30, "ping_timeout": 10},
+            kwargs={"ping_interval": 45, "ping_timeout": 30},
             daemon=True,
         )
         self.ws_thread.start()
@@ -1369,13 +1473,15 @@ class EdgeAgent:
     def shutdown(self):
         if self.shutdown_event.is_set():
             return
-        print("[Edge] Shutdown initiated. Cleaning up...")
+        self.send_log(f"Agent shutdown initiated (pid={os.getpid()}).")
         self.shutdown_event.set()
 
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
         if self.preview_stall_timer:
             self.preview_stall_timer.cancel()
+        if self.health_heartbeat_timer:
+            self.health_heartbeat_timer.cancel()
         if self.reconnect_timer:
             self.reconnect_timer.cancel()
 
@@ -1388,24 +1494,33 @@ class EdgeAgent:
             except Exception:
                 pass
 
-        print("[Edge] Cleanup complete.")
+        print("[Edge] Cleanup complete.", flush=True)
 
     def bootstrap(self):
         try:
-            print("[Edge] Registering device with Cloud Hub...")
+            last_line = self.agent_logger.last_line()
+            if last_line:
+                self.send_log(f"Agent starting (pid={os.getpid()}). Last persisted log: {last_line}")
+            else:
+                self.send_log(f"Agent starting (pid={os.getpid()}, device={self.device_id}).")
+            print("[Edge] Registering device with Cloud Hub...", flush=True)
             registered = self.register_device()
             # Expecting response structure: {"device": ..., "streams": [...]}
             streams_list = registered.get("streams", [])
-            print(f"[Edge] Registration successful. Applied {len(streams_list)} stream(s) config.")
+            print(
+                f"[Edge] Registration successful. Applied {len(streams_list)} stream(s) config.",
+                flush=True,
+            )
 
             self.connect_ws()
+            self._schedule_health_heartbeat()
             self.update_streams_config(streams_list)
 
             while not self.shutdown_event.is_set():
                 time.sleep(1)
         except Exception as exc:
-            print(f"[Edge] Bootstrap failed: {exc}")
-            print("[Edge] Retrying registration in 10s...")
+            print(f"[Edge] Bootstrap failed: {exc}", flush=True)
+            print("[Edge] Retrying registration in 10s...", flush=True)
             time.sleep(10)
             if not self.shutdown_event.is_set():
                 self.bootstrap()

@@ -1,4 +1,8 @@
 export const PREVIEW_STALL_MS = 5000;
+/** Show a stalled-init message and auto-retry preview if no frame arrives. */
+export const STREAM_INIT_TIMEOUT_MS = 30_000;
+/** Minimum gap between automatic preview refresh attempts. */
+export const STREAM_REFRESH_COOLDOWN_MS = 10_000;
 export const CLIPS_PAGE_SIZE = 10;
 
 export const WS_BASE = import.meta.env.DEV

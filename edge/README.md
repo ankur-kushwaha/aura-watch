@@ -287,6 +287,34 @@ The UI uses WebSocket JPEG frames from the edge. If the feed is stuck on "Initia
 1. **Edge not connected** — confirm the device shows Online in the dashboard.
 2. **Preview not enabled** — the hub requests preview frames when you open a stream; check edge logs for `Low-latency preview streaming enabled`.
 3. **Camera pipeline failed** — see FFmpeg logs above; trigger a detection to verify `clip_*.mp4` files appear in `storage/temp_clips/`.
+4. **System Status Logs (dashboard)** — with a stream selected, the left panel shows live edge events (camera stalls, WebSocket reconnects, clip activity). Errors are highlighted in red.
+5. **Device Logs modal** — click **Logs** on the edge device for journalctl history plus live agent logs.
+6. **On the Pi** — follow the agent in real time:
+
+```bash
+sudo journalctl -u aura-watch-edge.service -f
+```
+
+Look for `[Detector Error] Camera stream lost`, `[Edge WS] Connection error`, or `Failed to open camera`. The agent auto-reconnects the camera and cloud WebSocket; after code updates, restart once: `sudo systemctl restart aura-watch-edge.service`.
+
+**Common causes on Pi + Tapo RTSP:** camera stopped sending frames (Wi‑Fi/power), stale FFmpeg after a stall (`pkill -f "ffmpeg.*<camera-ip>"` then restart service), or cloud WebSocket ping timeout while CPU is busy encoding a clip.
+
+### Missing logs / long gaps in journalctl
+
+Under systemd, Python stdout used to be **fully buffered**, so clip and error logs could sit in memory for hours and only appear in `journalctl` after a burst of activity or a restart. The agent now:
+
+- Runs with `PYTHONUNBUFFERED=1` and `-u`
+- Flushes every log line immediately
+- Writes a **persistent** `storage/agent.log` on disk (survives restarts)
+- Emits a `[Health]` heartbeat every 5 minutes (configurable via `HEALTH_HEARTBEAT_SEC`)
+
+To inspect the durable log on the device:
+
+```bash
+tail -f ~/aura-watch-edge/edge/storage/agent.log
+```
+
+The dashboard **Logs** button returns both `agent.log` and the systemd journal.
 
 ### `externally-managed-environment` (Raspberry Pi OS)
 

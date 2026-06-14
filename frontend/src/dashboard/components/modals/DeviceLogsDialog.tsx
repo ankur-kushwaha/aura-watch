@@ -101,7 +101,7 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
 
         <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
           <div>
-            <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Service Journal (aura-watch-edge)</h3>
+            <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Service Journal + agent.log</h3>
             <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
               {loadingJournal ? (
                 <span className="text-text-muted">Loading journal logs...</span>

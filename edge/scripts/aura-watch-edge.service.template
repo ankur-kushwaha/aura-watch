@@ -7,7 +7,8 @@ Wants=network-online.target
 Type=simple
 User=__USER__
 WorkingDirectory=__DIR__
-ExecStart=__PYTHON__ __DIR__/main.py
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__PYTHON__ -u __DIR__/main.py
 # Restart unless explicitly stopped via `systemctl stop`
 Restart=always
 RestartSec=10

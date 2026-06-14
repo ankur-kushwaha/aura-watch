@@ -205,12 +205,12 @@ function broadcastNewClipToAllUIs(clip: object, deviceId: string, streamId: stri
   }
 }
 
-function broadcastLogToSubscribedUIs(deviceId: string, message: string) {
+function broadcastLogToSubscribedUIs(deviceId: string, message: string, timestamp?: string) {
   console.log(`[Log - ${deviceId}] ${message}`);
   const payload = {
     type: 'log',
     message,
-    timestamp: new Date().toISOString()
+    timestamp: timestamp || new Date().toISOString()
   };
   const payloadMessage = JSON.stringify(payload);
   const sent = new Set<WebSocket>();
@@ -230,6 +230,35 @@ function broadcastLogToSubscribedUIs(deviceId: string, message: string) {
       !sent.has(ws)
     ) {
       ws.send(payloadMessage);
+    }
+  }
+}
+
+function requestPreviewForStream(streamId: string, reason: string) {
+  const deviceId = streamDeviceCache.get(streamId);
+  if (!deviceId) return;
+
+  const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(streamId);
+  if (!hasSubscribers) return;
+
+  const deviceSocket = activeDevices.get(deviceId);
+  if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) return;
+
+  console.log(`[WS Hub] Requesting live preview for ${streamId} (${reason})`);
+  deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId, stream: true }));
+}
+
+function requestPreviewForDeviceSubscribers(deviceId: string, reason: string) {
+  const deviceSocket = activeDevices.get(deviceId);
+  if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) return;
+
+  for (const stream of streamDeviceCache.entries()) {
+    const [streamId, ownerDeviceId] = stream;
+    if (ownerDeviceId !== deviceId) continue;
+    const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(streamId);
+    if (hasSubscribers) {
+      console.log(`[WS Hub] Requesting live preview for ${streamId} (${reason})`);
+      deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId, stream: true }));
     }
   }
 }
@@ -620,12 +649,9 @@ wss.on('connection', async (ws: WebSocket, req) => {
     }
 
     // If there is already a UI client subscribed to any of the device's streams, toggle streaming for them
-    for (const stream of streams) {
-      const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(stream.streamId);
-      if (hasSubscribers) {
-        ws.send(JSON.stringify({ type: 'toggle_stream', streamId: stream.streamId, stream: true }));
-      }
-    }
+    setTimeout(() => {
+      requestPreviewForDeviceSubscribers(deviceId, 'edge device connected');
+    }, 1000);
 
     ws.on('message', async (messageData: string) => {
       try {
@@ -665,13 +691,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
               // Pipeline restarts reset preview on the edge; re-enable if the UI is still watching.
               const previewStatuses = ['Idle', 'Monitoring', 'Recording'];
               if (previewStatuses.includes(reportedStatus)) {
-                const hasSubscribers = Array.from(uiStreamSubscriptions.values()).includes(data.streamId);
-                if (hasSubscribers) {
-                  const deviceSocket = activeDevices.get(deviceId);
-                  if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-                    deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId: data.streamId, stream: true }));
-                  }
-                }
+                requestPreviewForStream(data.streamId, `pipeline status ${reportedStatus}`);
               }
             }
             break;
@@ -711,7 +731,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
             break;
           }
           case 'log':
-            broadcastLogToSubscribedUIs(deviceId, data.message);
+            broadcastLogToSubscribedUIs(deviceId, data.message, data.timestamp);
             break;
           case 'response_device_command':
             resolveDeviceCommandResponse(data.requestId, data.success, data);
@@ -801,9 +821,19 @@ wss.on('connection', async (ws: WebSocket, req) => {
             }));
 
             // Notify edge device to start streaming this specific stream
-            const deviceSocket = activeDevices.get(stream.deviceId);
-            if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
-              deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId: targetStreamId, stream: true }));
+            requestPreviewForStream(targetStreamId, 'UI subscribed to stream');
+          }
+        } else if (data.type === 'refresh_stream') {
+          const targetStreamId = data.streamId;
+          if (targetStreamId) {
+            console.log(`[WS] UI client requested preview refresh for stream: ${targetStreamId}`);
+            const stream = await prisma.cameraStream.findUnique({ where: { streamId: targetStreamId } });
+            requestPreviewForStream(targetStreamId, 'UI preview refresh');
+            if (stream) {
+              broadcastLogToSubscribedUIs(
+                stream.deviceId,
+                `[${stream.name}] Live preview refresh requested from dashboard.`,
+              );
             }
           }
         } else if (data.type === 'unsubscribe_stream') {
