@@ -712,6 +712,36 @@ wss.on('connection', async (ws: WebSocket, req) => {
               });
             }
             break;
+          case 'stream_error':
+            if (data.streamId) {
+              await prisma.cameraStream.update({
+                where: { streamId: data.streamId },
+                data: { status: 'Error' },
+              });
+              broadcastToSubscribedUIs(deviceId, {
+                type: 'stream_error',
+                streamId: data.streamId,
+                errorType: data.errorType,
+                message: data.message,
+                retryInSec: data.retryInSec,
+              });
+            }
+            break;
+          case 'stream_error_cleared':
+            if (data.streamId) {
+              const streamRow = await prisma.cameraStream.findUnique({ where: { streamId: data.streamId } });
+              const clearedStatus = streamRow?.trackingEnabled ? 'Monitoring' : 'Idle';
+              await prisma.cameraStream.update({
+                where: { streamId: data.streamId },
+                data: { status: clearedStatus },
+              });
+              broadcastToSubscribedUIs(deviceId, {
+                type: 'stream_error_cleared',
+                streamId: data.streamId,
+                status: clearedStatus,
+              });
+            }
+            break;
           case 'response_stream_file': {
             const { requestId, success, contentType, data: fileData, error } = data;
             const pending = pendingStreamRequests.get(requestId);

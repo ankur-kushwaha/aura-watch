@@ -48,6 +48,12 @@ import type {
   VideoClip,
 } from './types';
 import { isEdgeUpdateAvailable } from './utils/clips';
+import {
+  getStreamErrorHint,
+  getStreamErrorTitle,
+  parseStreamErrorFromLog,
+  type StreamErrorState,
+} from './utils/streamErrors';
 import { dashboardTabFromPath } from './utils/routing';
 import { DashboardHeader, DashboardPlaceholder, DeviceInstallTooltip } from './components';
 import { DashboardTabs, EventsTab, ReidTab } from './components/tabs';
@@ -181,6 +187,7 @@ export default function DashboardApp() {
   }, [liveFeedOpen]);
   const [streamLoading, setStreamLoading] = useState<boolean>(true);
   const [streamInitTimedOut, setStreamInitTimedOut] = useState<boolean>(false);
+  const [streamError, setStreamError] = useState<StreamErrorState | null>(null);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [previewFrozen, setPreviewFrozen] = useState<boolean>(false);
   const lastFrameAtRef = useRef<number>(0);
@@ -208,6 +215,17 @@ export default function DashboardApp() {
     () => streams.find((s) => s.streamId === selectedStreamId) ?? null,
     [streams, selectedStreamId],
   );
+
+  const activeStreamError = useMemo<StreamErrorState | null>(() => {
+    if (streamError) return streamError;
+    if (status === 'Error') {
+      return {
+        errorType: 'camera_error',
+        message: 'Camera connection failed. Check System Status Logs below for the latest RTSP error.',
+      };
+    }
+    return null;
+  }, [streamError, status]);
 
   const appendLog = useCallback((message: string) => {
     const logEntry = { message, timestamp: new Date().toISOString() };
@@ -446,6 +464,17 @@ export default function DashboardApp() {
             }
             return [...prev, logEntry];
           });
+          const parsed = parseStreamErrorFromLog(data.message);
+          if (parsed) {
+            setStreamError(parsed);
+            setStreamLoading(false);
+            setStreamInitTimedOut(false);
+          } else if (
+            data.message.includes('Started YOLO+ByteTrack pipeline') ||
+            data.message.includes('Live preview streaming enabled')
+          ) {
+            setStreamError(null);
+          }
           if (deviceLogSinkRef.current) {
             deviceLogSinkRef.current(logEntry);
           }
@@ -470,7 +499,44 @@ export default function DashboardApp() {
             setLiveFrame(`data:image/jpeg;base64,${data.image}`);
             setStreamLoading(false);
             setStreamInitTimedOut(false);
+            setStreamError(null);
             setPreviewFrozen(false);
+          }
+          break;
+        case 'stream_error':
+          if (data.streamId === selectedStreamIdRef.current) {
+            setStreamError({
+              errorType: data.errorType || 'camera_error',
+              message: data.message || 'Camera connection failed',
+              retryInSec: data.retryInSec,
+            });
+            setStreamLoading(false);
+            setStreamInitTimedOut(false);
+            setStatus('Error');
+          }
+          if (data.streamId) {
+            setStreams((prev) =>
+              prev.map((s) =>
+                s.streamId === data.streamId ? { ...s, status: 'Error' } : s,
+              ),
+            );
+          }
+          break;
+        case 'stream_error_cleared':
+          if (data.streamId === selectedStreamIdRef.current) {
+            setStreamError(null);
+            if (data.status) {
+              setStatus(data.status);
+            }
+          }
+          if (data.streamId) {
+            setStreams((prev) =>
+              prev.map((s) =>
+                s.streamId === data.streamId
+                  ? { ...s, status: data.status || (s.trackingEnabled ? 'Monitoring' : 'Idle') }
+                  : s,
+              ),
+            );
           }
           break;
         case 'preview_stall':
@@ -558,6 +624,7 @@ export default function DashboardApp() {
     if (liveFeedOpen) {
       setStreamLoading(true);
       setStreamInitTimedOut(false);
+      setStreamError(null);
       setLiveFrame(null);
       lastFrameAtRef.current = 0;
       ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
@@ -590,9 +657,28 @@ export default function DashboardApp() {
     }
   }, [logs]);
 
-  const wsNeeded = !!selectedStreamId || !!deviceLogsDevice;
+  // Surface the latest camera error from buffered logs when opening a stream
+  useEffect(() => {
+    if (!selectedStreamId || !liveFeedOpen) return;
+    const streamName = selectedStream?.name;
+    for (let i = logs.length - 1; i >= 0; i -= 1) {
+      const entry = logs[i];
+      if (streamName && !entry.message.includes(`[${streamName}]`)) {
+        continue;
+      }
+      const parsed = parseStreamErrorFromLog(entry.message);
+      if (parsed) {
+        setStreamError(parsed);
+        setStreamLoading(false);
+        return;
+      }
+      if (entry.message.includes('Started YOLO+ByteTrack pipeline')) {
+        break;
+      }
+    }
+  }, [selectedStreamId, selectedStream?.name, liveFeedOpen, logs]);
 
-  // Connect WebSocket only while live feed or device logs modal needs it
+  const wsNeeded = !!selectedStreamId || !!deviceLogsDevice;
   useEffect(() => {
     if (!wsNeeded) {
       disconnectWS();
@@ -609,6 +695,7 @@ export default function DashboardApp() {
     setLiveFrame(null);
     setStreamLoading(false);
     setStreamInitTimedOut(false);
+    setStreamError(null);
     setPreviewFrozen(false);
     setMotionActive(false);
     setMotionRatio(0);
@@ -628,6 +715,7 @@ export default function DashboardApp() {
     Promise.resolve().then(() => {
       setStreamLoading(true);
       setStreamInitTimedOut(false);
+      setStreamError(null);
       setLiveFrame(null);
       setPreviewFrozen(false);
       lastFrameAtRef.current = 0;
@@ -1098,6 +1186,8 @@ export default function DashboardApp() {
                                 ? 'var(--color-success)'
                                 : stream.status === 'Recording'
                                   ? 'var(--color-danger)'
+                                  : stream.status === 'Error'
+                                    ? 'var(--color-danger)'
                                   : stream.status === 'Processing Video' ||
                                     stream.status === 'Processing'
                                     ? 'var(--color-primary)'
@@ -1134,9 +1224,11 @@ export default function DashboardApp() {
                                       {stream.name}
                                     </div>
                                     <div className="text-[0.65rem] text-text-secondary truncate mt-0.5">
-                                      {stream.cameraType === 'webcam'
-                                        ? 'Webcam'
-                                        : `RTSP: ${stream.streamUrl}`}
+                                      {stream.status === 'Error'
+                                        ? 'Camera connection error'
+                                        : stream.cameraType === 'webcam'
+                                          ? 'Webcam'
+                                          : `RTSP: ${stream.streamUrl}`}
                                     </div>
                                   </div>
                                 </div>
@@ -1214,6 +1306,12 @@ export default function DashboardApp() {
                 <Video size={18} color="var(--color-secondary)" /> Live Camera Feed
               </h2>
               <div className="flex items-center gap-2 flex-wrap">
+                {liveFeedOpen && status === 'Error' && (
+                  <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
+                    <AlertTriangle size={11} />
+                    Camera error
+                  </div>
+                )}
                 {liveFeedOpen && status === 'Recording' && (
                   <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
                     <span className="w-1.5 h-1.5 rounded-full bg-danger inline-block animate-[pulse-danger_0.8s_infinite]"></span>
@@ -1286,7 +1384,51 @@ export default function DashboardApp() {
                     <div className="absolute inset-0 border-2 border-amber-500/60 pointer-events-none rounded-xl z-10" />
                   )}
 
-                  {streamLoading && (
+                  {activeStreamError && !liveFrame && (
+                    <div className="text-center absolute inset-0 flex flex-col justify-center items-center bg-[#090d16]/95 px-5 py-6 z-20">
+                      <div className="bg-[rgba(244,63,94,0.12)] border border-[rgba(244,63,94,0.35)] rounded-xl p-5 max-w-md w-full">
+                        <div className="flex items-center justify-center gap-2 mb-3">
+                          <AlertTriangle size={20} className="text-danger" />
+                          <p className="text-[0.95rem] font-semibold text-danger">
+                            {getStreamErrorTitle(activeStreamError.errorType)}
+                          </p>
+                        </div>
+                        <p className="text-[0.78rem] text-text-secondary leading-relaxed mb-3">
+                          {activeStreamError.message}
+                        </p>
+                        <p className="text-[0.75rem] text-amber-300/90 leading-relaxed mb-4">
+                          {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
+                        </p>
+                        {activeStreamError.retryInSec != null && activeStreamError.retryInSec > 0 && (
+                          <p className="text-[0.72rem] text-text-muted mb-4">
+                            Edge agent will retry automatically in ~{Math.ceil(activeStreamError.retryInSec)}s.
+                          </p>
+                        )}
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowConfigDialog(true);
+                            }}
+                            className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                          >
+                            <Settings size={12} />
+                            Check Stream Settings
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => refreshStreamPreview('manual retry after error')}
+                            className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                          >
+                            <RefreshCw size={12} />
+                            Retry Now
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {streamLoading && !activeStreamError && (
                     <div className="text-center text-text-muted absolute inset-0 flex flex-col justify-center items-center bg-[#090d16]/80 px-4">
                       <div className="animate-[spin_4s_linear_infinite] mb-3 inline-block">
                         <RefreshCw size={36} color="var(--color-primary)" />

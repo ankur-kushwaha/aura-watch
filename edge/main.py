@@ -216,6 +216,47 @@ class EdgeAgent:
     def send_status(self, stream_id: str, status: str):
         self._ws_send({"type": "status_change", "streamId": stream_id, "status": status})
 
+    def _classify_camera_error(self, detail: str) -> str:
+        lower = detail.lower()
+        if "no route to host" in lower or "network is unreachable" in lower:
+            return "camera_unreachable"
+        if "timed out" in lower or "timeout" in lower:
+            return "camera_timeout"
+        if "connection refused" in lower:
+            return "camera_refused"
+        if "401" in lower or "403" in lower or "unauthorized" in lower:
+            return "camera_auth"
+        if "stream lost" in lower or "no frame" in lower:
+            return "camera_stall"
+        return "camera_error"
+
+    def _simplify_camera_error(self, detail: str) -> str:
+        cleaned = detail.replace("\n", " ").strip()
+        if len(cleaned) > 220:
+            return f"{cleaned[:217]}..."
+        return cleaned or "Camera connection failed"
+
+    def send_stream_error(
+        self,
+        stream_id: str,
+        *,
+        error_type: str,
+        message: str,
+        retry_in_sec: float | None = None,
+    ):
+        payload: dict[str, Any] = {
+            "type": "stream_error",
+            "streamId": stream_id,
+            "errorType": error_type,
+            "message": message,
+        }
+        if retry_in_sec is not None:
+            payload["retryInSec"] = round(retry_in_sec, 1)
+        self._ws_send(payload)
+
+    def send_stream_error_cleared(self, stream_id: str):
+        self._ws_send({"type": "stream_error_cleared", "streamId": stream_id})
+
     def _stop_active_clip_encoder(self, p_data: dict[str, Any]) -> Optional[ClipEncoder]:
         with p_data["clip_encoder_lock"]:
             encoder = p_data.get("clip_encoder")
@@ -533,7 +574,13 @@ class EdgeAgent:
                     f"[{config.name}] Failed to open camera ({detail}). "
                     f"Retrying in {int(retry_delay)}s..."
                 )
-                self.send_status(stream_id, "Idle")
+                self.send_stream_error(
+                    stream_id,
+                    error_type=self._classify_camera_error(detail),
+                    message=self._simplify_camera_error(detail),
+                    retry_in_sec=retry_delay,
+                )
+                self.send_status(stream_id, "Error")
                 if self._wait_stream(stop_event, retry_delay):
                     break
                 retry_delay = min(retry_delay * 1.5, 60.0)
@@ -552,8 +599,14 @@ class EdgeAgent:
                     f"[{config.name}] Camera opened but no frames ({detail}). "
                     f"Retrying in {int(retry_delay)}s..."
                 )
+                self.send_stream_error(
+                    stream_id,
+                    error_type="camera_no_frames",
+                    message=self._simplify_camera_error(detail),
+                    retry_in_sec=retry_delay,
+                )
                 camera.release()
-                self.send_status(stream_id, "Idle")
+                self.send_status(stream_id, "Error")
                 if self._wait_stream(stop_event, retry_delay):
                     break
                 retry_delay = min(retry_delay * 1.5, 60.0)
@@ -561,6 +614,7 @@ class EdgeAgent:
 
             retry_delay = 10.0
             consecutive_failures = 0
+            self.send_stream_error_cleared(stream_id)
             detection_classes = config.detection_classes()
             tracker = YoloByteTracker(
                 confidence=runtime.yolo_confidence,
@@ -720,7 +774,14 @@ class EdgeAgent:
                 pipeline.start_capture()
                 pipeline.run()
             except Exception as exc:
-                self.send_log(f"[{config.name}] [Detector Error] {exc}. Reconnecting...")
+                detail = str(exc)
+                self.send_log(f"[{config.name}] [Detector Error] {detail}. Reconnecting...")
+                self.send_stream_error(
+                    stream_id,
+                    error_type=self._classify_camera_error(detail),
+                    message=self._simplify_camera_error(detail),
+                    retry_in_sec=retry_delay,
+                )
             finally:
                 pipeline.join_capture()
                 self._stop_active_clip_encoder(pipeline_data)
@@ -730,7 +791,7 @@ class EdgeAgent:
             if stop_event.is_set() or self.shutdown_event.is_set():
                 break
 
-            self.send_status(stream_id, "Idle")
+            self.send_status(stream_id, "Error")
             if self._wait_stream(stop_event, retry_delay):
                 break
 
