@@ -2,6 +2,10 @@ import prisma from './db';
 import { retrieveReidVectors, searchIdentityPrototypes } from './qdrant';
 import { defaultPersonLabel } from './reidPeople';
 import { cropExistsLocally } from './cropResolve';
+import { extractCropFromClip } from './reidClipExtract';
+import { CROPS_DIR } from '../routes/reid';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { ReidTrackEvent } from '../routes/reid';
 import type { TrackAppearance } from './cropAppearance';
 import { buildAppearanceMap } from './yoloSummary';
@@ -14,6 +18,9 @@ export interface ClipDetectedObjectInput {
   upperColor?: string;
   lowerColor?: string;
   vehicleColor?: string;
+  cropFilename?: string;
+  clipOffsetMs?: number;
+  bbox?: string;
 }
 
 export interface ClipObjectDisplay {
@@ -27,6 +34,7 @@ export interface ClipObjectDisplay {
   detectionId?: string;
   identityId?: string | null;
   cropFilename?: string;
+  clipOffsetMs?: number;
   labelStatus: 'confirmed' | 'suggested' | 'none';
   label?: string;
   matchScore?: number;
@@ -165,6 +173,33 @@ function pickBestDetectionForTrack(
   return candidates[candidates.length - 1];
 }
 
+async function ensureYoloCropAvailable(
+  clip: { filepath: string; filename: string; deviceId: string | null },
+  object: ClipDetectedObjectInput,
+): Promise<string | undefined> {
+  if (!object.cropFilename || !object.bbox || object.clipOffsetMs == null) {
+    return object.cropFilename;
+  }
+  if (cropExistsLocally(object.cropFilename)) {
+    return object.cropFilename;
+  }
+
+  const clipPath = clip.filepath && fs.existsSync(clip.filepath)
+    ? clip.filepath
+    : null;
+  if (!clipPath) {
+    return object.cropFilename;
+  }
+
+  const cropPath = path.join(CROPS_DIR, object.cropFilename);
+  try {
+    await extractCropFromClip(clipPath, object.clipOffsetMs, object.bbox, cropPath);
+    return object.cropFilename;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function getClipObjectDetections(clipId: string): Promise<ClipObjectDisplay[]> {
   const clip = await prisma.videoClip.findUnique({ where: { id: clipId } });
   if (!clip) return [];
@@ -210,6 +245,12 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
       ? await resolveIdentityLabel(detection.id, detection.identityId, clip.camera, object.trackId)
       : { labelStatus: 'none' as const };
 
+    const yoloCropFilename = detection?.filename
+      ? undefined
+      : await ensureYoloCropAvailable(clip, object);
+    const cropFilename = detection?.filename ?? yoloCropFilename ?? object.cropFilename;
+    const clipOffsetMs = detection?.clipOffsetMs ?? object.clipOffsetMs;
+
     results.push({
       trackId: object.trackId,
       className: object.className,
@@ -220,7 +261,8 @@ export async function getClipObjectDetections(clipId: string): Promise<ClipObjec
       vehicleColor: object.vehicleColor,
       detectionId: detection?.id,
       identityId: detection?.identityId ?? null,
-      cropFilename: detection?.filename,
+      cropFilename,
+      clipOffsetMs: clipOffsetMs ?? undefined,
       ...identityInfo,
     });
   }

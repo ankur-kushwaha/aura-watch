@@ -10,6 +10,8 @@ export interface VideoClipDetectedObject {
   upperColor?: string;
   lowerColor?: string;
   vehicleColor?: string;
+  cropFilename?: string;
+  clipOffsetMs?: number;
 }
 
 export interface VideoClip {
@@ -38,6 +40,7 @@ export interface ClipObjectDetection {
   detectionId?: string;
   identityId?: string | null;
   cropFilename?: string;
+  clipOffsetMs?: number;
   labelStatus: 'confirmed' | 'suggested' | 'none';
   label?: string;
   matchScore?: number;

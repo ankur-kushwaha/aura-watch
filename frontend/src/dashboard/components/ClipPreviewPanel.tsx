@@ -181,9 +181,9 @@ export function ClipPreviewPanel({
                             filename={obj.cropFilename}
                             onPreview={onCropPreview}
                             onPlayClip={onPlayDetectionClip}
-                            clipPlayback={obj.detectionId ? {
+                            clipPlayback={(obj.detectionId || obj.clipOffsetMs != null) ? {
                               clipFilename: clip.filename,
-                              clipOffsetMs: 0,
+                              clipOffsetMs: obj.clipOffsetMs ?? 0,
                               cameraName: clip.camera ?? 'Camera',
                               detectionId: obj.detectionId,
                             } : undefined}

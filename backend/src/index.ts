@@ -30,6 +30,7 @@ import { initQdrant } from './services/qdrant';
 import { aggregateTrackEvents, enrichDetectedObjects, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
 import { indexClipForSemanticSearch } from './services/clipIndex';
 import { buildYoloSummary } from './services/yoloSummary';
+import { extractYoloPreviewCrops } from './services/yoloCropExtract';
 import { analyzeVehicleAppearancesFromClip, mergeAppearanceMaps } from './services/cropAppearance';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
 import { resolveCropImageBuffer } from './services/cropResolve';
@@ -532,8 +533,40 @@ async function processVideoClipInBackground(
       }
     }
 
+    let yoloPreviewCrops = new Map<number, { cropFilename: string; clipOffsetMs: number; bbox: string }>();
+    if (trackEvents.length > 0 && fs.existsSync(filepath)) {
+      try {
+        yoloPreviewCrops = await extractYoloPreviewCrops(
+          filepath,
+          deviceId,
+          timestamp.getTime(),
+          trackEvents,
+          frameWidth,
+          frameHeight,
+        );
+        if (yoloPreviewCrops.size > 0 && reidCropsExtracted < trackEvents.length) {
+          broadcastLogToSubscribedUIs(
+            deviceId,
+            `[${cameraName}] Saved ${yoloPreviewCrops.size} YOLO preview crop(s) for clip ${filename}.`,
+          );
+        }
+      } catch (err: any) {
+        console.warn(`[YoloCrop] Preview crop extraction failed for ${filename}:`, err.message);
+      }
+    }
+
     const detectedObjects = trackEvents.length > 0
       ? enrichDetectedObjects(aggregateTrackEvents(trackEvents), trackEvents, appearances)
+          .map((object) => {
+            const crop = yoloPreviewCrops.get(object.trackId);
+            if (!crop) return object;
+            return {
+              ...object,
+              cropFilename: crop.cropFilename,
+              clipOffsetMs: crop.clipOffsetMs,
+              bbox: crop.bbox,
+            };
+          })
       : undefined;
 
     // 2. Save metadata to MongoDB via Prisma
