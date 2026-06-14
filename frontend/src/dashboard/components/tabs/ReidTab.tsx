@@ -9,7 +9,6 @@ import {
   ThumbsUp,
   Trash2,
   UserCircle,
-  Users,
 } from 'lucide-react';
 import { REID_CROP_IMG } from '../../constants';
 import type { ReidTabState } from '../../hooks/useReidTab';
@@ -18,6 +17,7 @@ import { ReidGridAvatar } from '../CropThumbnail';
 import { EntityIds, IdsInfoIcon } from '../IdsInfoIcon';
 import { buildTimelineIdEntries } from '../idEntries';
 import { ReidTimeline } from '../ReidTimeline';
+import { TopologyDialog } from '../modals/TopologyDialog';
 
 export interface ReidTabProps {
   reid: ReidTabState;
@@ -42,10 +42,6 @@ export function ReidTab({ reid, view }: ReidTabProps) {
     selectedPerson,
     selectedDetection,
     personSuggestions,
-    linkPeopleMode,
-    setLinkPeopleMode,
-    linkPeopleSelection,
-    setLinkPeopleSelection,
     linkDetectionsMode,
     setLinkDetectionsMode,
     linkDetectionsSelection,
@@ -60,8 +56,6 @@ export function ReidTab({ reid, view }: ReidTabProps) {
     showIdentitySuggestions,
     setShowIdentitySuggestions,
     topologyRoutes,
-    newRoute,
-    setNewRoute,
     detectionFilterStreamId,
     setDetectionFilterStreamId,
     detectionFilterCameraName,
@@ -78,6 +72,7 @@ export function ReidTab({ reid, view }: ReidTabProps) {
     clearDetectionFilters,
     fetchReidPeople,
     fetchReidDetections,
+    fetchTopology,
     loadMoreReidDetections,
     openPersonDetail,
     openDetectionDetail,
@@ -85,12 +80,9 @@ export function ReidTab({ reid, view }: ReidTabProps) {
     refreshPersonDetail,
     handleSavePersonLabel,
     handleStreamTrackFeedback,
-    handleLinkPeopleSelection,
     handleLinkDetectionsSelection,
     handleDeleteIdentity,
-    handleLinkPeople,
     handleLinkDetections,
-    handleAddTopology,
   } = reid;
 
   if (view === 'people') {
@@ -104,21 +96,7 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                   </h2>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => {
-                        setLinkPeopleMode(!linkPeopleMode);
-                        setLinkPeopleSelection([]);
-                      }}
-                      className={`btn py-1 px-2 text-[0.75rem] rounded-md ${linkPeopleMode ? 'btn-primary' : 'btn-secondary'}`}
-                    >
-                      <Users size={12} /> {linkPeopleMode ? 'Cancel' : 'Link People'}
-                    </button>
-                    {linkPeopleMode && linkPeopleSelection.length === 2 && (
-                      <button onClick={handleLinkPeople} className="btn btn-primary py-1 px-2 text-[0.75rem] rounded-md">
-                        Merge 2 people
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setShowTopology(!showTopology)}
+                      onClick={() => setShowTopology(true)}
                       className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md"
                     >
                       <Network size={12} /> Topology
@@ -135,15 +113,6 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                     </button>
                   </div>
                 </div>
-
-                {linkPeopleMode && (
-                  <p className="text-[0.75rem] text-text-muted mb-4">
-                    Select 2 people that are the same person.
-                    {linkPeopleSelection.length > 0 && (
-                      <span className="text-secondary font-semibold ml-1">{linkPeopleSelection.length} selected</span>
-                    )}
-                  </p>
-                )}
 
                 <div className="flex flex-col flex-1 min-h-0 gap-5">
                   {/* Identities */}
@@ -169,32 +138,27 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                     ) : (
                       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-6">
                         {reidPeople.map((person) => {
-                          const isLinkSelected = linkPeopleSelection.includes(person.id);
                           const coverBroken = brokenIdentityCovers.has(person.id);
 
                           return (
                             <div
                               key={person.id}
-                              className={`relative flex flex-col items-center gap-2 group ${isLinkSelected ? 'opacity-100' : ''}`}
+                              className="relative flex flex-col items-center gap-2 group"
                             >
-                              {!linkPeopleMode && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleDeleteIdentity(person, e)}
-                                  disabled={deletingIdentityId === person.id}
-                                  title="Delete person"
-                                  className="absolute top-0 right-0 z-10 btn p-1 bg-[rgba(9,13,22,0.85)] text-text-muted hover:text-danger border border-[rgba(255,255,255,0.1)] rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                                >
-                                  {deletingIdentityId === person.id
-                                    ? <RefreshCw size={11} className="animate-spin" />
-                                    : <Trash2 size={11} />}
-                                </button>
-                              )}
                               <button
                                 type="button"
-                                onClick={() => linkPeopleMode
-                                  ? handleLinkPeopleSelection(person.id)
-                                  : openPersonDetail(person)}
+                                onClick={(e) => handleDeleteIdentity(person, e)}
+                                disabled={deletingIdentityId === person.id}
+                                title="Delete person"
+                                className="absolute top-0 right-0 z-10 btn p-1 bg-[rgba(9,13,22,0.85)] text-text-muted hover:text-danger border border-[rgba(255,255,255,0.1)] rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                              >
+                                {deletingIdentityId === person.id
+                                  ? <RefreshCw size={11} className="animate-spin" />
+                                  : <Trash2 size={11} />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openPersonDetail(person)}
                                 className="flex flex-col items-center gap-2 border-none bg-transparent p-0 cursor-pointer w-full"
                               >
                               <ReidGridAvatar
@@ -205,11 +169,7 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                                     <UserCircle size={32} className="text-text-muted" />
                                   </div>
                                 }
-                                borderClassName={
-                                  isLinkSelected
-                                    ? 'border-secondary shadow-[0_0_12px_rgba(6,182,212,0.5)]'
-                                    : 'border-[rgba(255,255,255,0.1)] group-hover:border-primary/50 group-hover:shadow-[0_0_12px_rgba(124,58,237,0.3)]'
-                                }
+                                borderClassName="border-[rgba(255,255,255,0.1)] group-hover:border-primary/50 group-hover:shadow-[0_0_12px_rgba(124,58,237,0.3)]"
                                 onImageError={() => {
                                   setBrokenIdentityCovers((prev) => new Set(prev).add(person.id));
                                 }}
@@ -461,43 +421,13 @@ export function ReidTab({ reid, view }: ReidTabProps) {
                 </div>
               </div>
 
-              {showTopology && (
-                <div className="glass-panel p-5 flex flex-col h-[320px] shrink-0">
-                  <h2 className="text-[1rem] flex items-center gap-2 mb-3">
-                    <Network size={16} color="var(--color-secondary)" /> Camera Topology
-                  </h2>
-                  <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
-                    <form onSubmit={handleAddTopology} className="flex flex-col gap-2 md:w-[220px] shrink-0">
-                      <select
-                        value={newRoute.fromCamera}
-                        onChange={(e) => setNewRoute({ ...newRoute, fromCamera: e.target.value })}
-                        required
-                        className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
-                      >
-                        <option value="">Source camera</option>
-                        {streams.map((s) => <option key={s.streamId} value={s.name}>{s.name}</option>)}
-                      </select>
-                      <select
-                        value={newRoute.toCamera}
-                        onChange={(e) => setNewRoute({ ...newRoute, toCamera: e.target.value })}
-                        required
-                        className="text-[0.75rem] py-1 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.08)] text-text-primary"
-                      >
-                        <option value="">Target camera</option>
-                        {streams.map((s) => <option key={s.streamId} value={s.name}>{s.name}</option>)}
-                      </select>
-                      <button type="submit" className="btn btn-primary py-1 text-[0.75rem]">Save Link Rule</button>
-                    </form>
-                    <div className="flex-1 overflow-y-auto">
-                      {topologyRoutes.map((r, rIdx) => (
-                        <div key={rIdx} className="text-[0.75rem] py-1.5 border-b border-border-glass">
-                          {r.fromCamera} ↔ {r.toCamera} ({r.minTimeSeconds}s–{r.maxTimeSeconds}s)
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
+            <TopologyDialog
+              open={showTopology}
+              onClose={() => setShowTopology(false)}
+              streams={streams}
+              routes={topologyRoutes}
+              onSaved={() => { void fetchTopology(); }}
+            />
             </div>
 
       </>

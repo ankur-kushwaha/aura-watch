@@ -772,6 +772,67 @@ router.post('/topology', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * PUT /api/reid/topology/:id
+ * Update a topology route by id
+ */
+router.put('/topology/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { fromCamera, toCamera, fromStreamId, toStreamId, minTimeSeconds, maxTimeSeconds, topologyScore } = req.body;
+
+  if (!fromCamera || !toCamera) {
+    return res.status(400).json({ error: 'fromCamera and toCamera are required' });
+  }
+
+  try {
+    const existing = await prisma.topologyRoute.findFirst({
+      where: { id, orgId: req.auth!.orgId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Topology route not found' });
+    }
+
+    const route = await prisma.topologyRoute.update({
+      where: { id },
+      data: {
+        fromCamera,
+        toCamera,
+        fromStreamId: fromStreamId || null,
+        toStreamId: toStreamId || null,
+        minTimeSeconds: parseFloat(minTimeSeconds),
+        maxTimeSeconds: parseFloat(maxTimeSeconds),
+        topologyScore: parseFloat(topologyScore || '1.0'),
+      },
+    });
+
+    res.json(route);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/reid/topology/:id
+ * Delete a topology route
+ */
+router.delete('/topology/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const existing = await prisma.topologyRoute.findFirst({
+      where: { id, orgId: req.auth!.orgId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Topology route not found' });
+    }
+
+    await prisma.topologyRoute.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const FEEDBACK_TYPES = Object.values(ReidFeedbackType);
 
 function getReidObjectCategory(className: string): 'person' | 'vehicle' | 'other' {

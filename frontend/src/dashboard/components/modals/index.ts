@@ -16,3 +16,5 @@ export { StreamConfigDialog } from './StreamConfigDialog';
 export type { StreamConfigDialogProps } from './StreamConfigDialog';
 export { TimelineClipPlaybackDialog } from './TimelineClipPlaybackDialog';
 export type { TimelineClipPlaybackDialogProps } from './TimelineClipPlaybackDialog';
+export { TopologyDialog } from './TopologyDialog';
+export type { TopologyDialogProps } from './TopologyDialog';

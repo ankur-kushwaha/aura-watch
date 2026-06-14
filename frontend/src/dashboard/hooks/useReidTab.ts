@@ -32,8 +32,6 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
   const [selectedDetection, setSelectedDetection] = useState<ReidDetection | null>(null);
   const [personSuggestions, setPersonSuggestions] = useState<ReidPersonMatch[]>([]);
   const [loadingPersonDetail, setLoadingPersonDetail] = useState(false);
-  const [linkPeopleMode, setLinkPeopleMode] = useState(false);
-  const [linkPeopleSelection, setLinkPeopleSelection] = useState<string[]>([]);
   const [linkDetectionsMode, setLinkDetectionsMode] = useState(false);
   const [linkDetectionsSelection, setLinkDetectionsSelection] = useState<string[]>([]);
   const [mergingDetections, setMergingDetections] = useState(false);
@@ -43,13 +41,6 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
   const [showTopology, setShowTopology] = useState(false);
   const [showIdentitySuggestions, setShowIdentitySuggestions] = useState(false);
   const [topologyRoutes, setTopologyRoutes] = useState<ReidRoute[]>([]);
-  const [newRoute, setNewRoute] = useState<ReidRoute>({
-    fromCamera: '',
-    toCamera: '',
-    minTimeSeconds: 5,
-    maxTimeSeconds: 60,
-    topologyScore: 1.0,
-  });
   const [detectionFilterStreamId, setDetectionFilterStreamId] = useState('');
   const [detectionFilterCameraName, setDetectionFilterCameraName] = useState('');
   const [detectionFilterStartTime, setDetectionFilterStartTime] = useState('');
@@ -379,17 +370,8 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     }
   }, [selectedPerson, reidPeople, fetchReidPeople, openPersonDetail]);
 
-  const handleLinkPeopleSelection = useCallback((personId: string) => {
-    setLinkPeopleSelection((prev) => {
-      if (prev.includes(personId)) return prev.filter((id) => id !== personId);
-      if (prev.length >= 2) return [prev[1], personId];
-      return [...prev, personId];
-    });
-  }, []);
-
   const handleDeleteIdentity = useCallback(async (person: ReidPerson, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (linkPeopleMode) return;
 
     const label = person.displayName || 'this person';
     if (!confirm(`Delete "${label}" and all ${person.photoCount} associated crop(s)? This cannot be undone.`)) {
@@ -416,7 +398,7 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     } finally {
       setDeletingIdentityId(null);
     }
-  }, [linkPeopleMode, selectedPerson?.id, closePersonDetail]);
+  }, [selectedPerson?.id, closePersonDetail]);
 
   const handleLinkDetectionsSelection = useCallback((detectionId: string) => {
     setLinkDetectionsSelection((prev) => {
@@ -454,78 +436,6 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     }
   }, [linkDetectionsSelection, fetchReidPeople, fetchReidDetections]);
 
-  const handleLinkPeople = useCallback(async () => {
-    if (linkPeopleSelection.length !== 2) {
-      alert('Select exactly 2 people to link.');
-      return;
-    }
-    try {
-      const [idA, idB] = linkPeopleSelection;
-      const [jA, jB] = await Promise.all([
-        apiFetch(`/reid/identities/${idA}/journey`).then((r) => r.json()),
-        apiFetch(`/reid/identities/${idB}/journey`).then((r) => r.json()),
-      ]);
-      const detA = jA.detections?.[0]?.id;
-      const detB = jB.detections?.[0]?.id;
-      if (!detA || !detB) {
-        alert('Could not find crops to link.');
-        return;
-      }
-      const res = await apiFetch('/reid/identities/merge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ detectionIds: [detA, detB] }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to link people');
-        return;
-      }
-      setLinkPeopleSelection([]);
-      setLinkPeopleMode(false);
-      await fetchReidPeople();
-    } catch (err) {
-      console.error('Failed to link people', err);
-    }
-  }, [linkPeopleSelection, fetchReidPeople]);
-
-  const handleAddTopology = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newRoute.fromCamera || !newRoute.toCamera) {
-      alert('Select both source and target cameras.');
-      return;
-    }
-    if (newRoute.fromCamera === newRoute.toCamera) {
-      alert('Source and target cameras must be different.');
-      return;
-    }
-    try {
-      const fromStream = streams.find((s) => s.name === newRoute.fromCamera);
-      const toStream = streams.find((s) => s.name === newRoute.toCamera);
-      const payload = {
-        ...newRoute,
-        fromStreamId: fromStream?.streamId,
-        toStreamId: toStream?.streamId,
-      };
-
-      const res = await apiFetch('/reid/topology', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        void fetchTopology();
-        setNewRoute((prev) => ({
-          ...prev,
-          fromCamera: '',
-          toCamera: '',
-        }));
-      }
-    } catch (err) {
-      console.error('Failed to save topology route', err);
-    }
-  }, [newRoute, streams, fetchTopology]);
-
   const triggerReidRefresh = useCallback(() => {
     if (reidRefreshTimerRef.current) {
       clearTimeout(reidRefreshTimerRef.current);
@@ -553,6 +463,12 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
       void fetchTopology();
     }
   }, [active, fetchReidPeople, fetchReidDetections, fetchTopology]);
+
+  useEffect(() => {
+    if (showTopology) {
+      void fetchTopology();
+    }
+  }, [showTopology, fetchTopology]);
 
   useEffect(() => {
     if (!hasOnlineDevices && reidView !== 'people') {
@@ -583,10 +499,6 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     selectedDetection,
     personSuggestions,
     loadingPersonDetail,
-    linkPeopleMode,
-    setLinkPeopleMode,
-    linkPeopleSelection,
-    setLinkPeopleSelection,
     linkDetectionsMode,
     setLinkDetectionsMode,
     linkDetectionsSelection,
@@ -601,8 +513,6 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     showIdentitySuggestions,
     setShowIdentitySuggestions,
     topologyRoutes,
-    newRoute,
-    setNewRoute,
     detectionFilterStreamId,
     setDetectionFilterStreamId,
     detectionFilterCameraName,
@@ -619,6 +529,7 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     clearDetectionFilters,
     fetchReidPeople,
     fetchReidDetections,
+    fetchTopology,
     loadMoreReidDetections,
     openPersonDetail,
     openDetectionDetail,
@@ -626,12 +537,9 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     refreshPersonDetail,
     handleSavePersonLabel,
     handleStreamTrackFeedback,
-    handleLinkPeopleSelection,
     handleLinkDetectionsSelection,
     handleDeleteIdentity,
-    handleLinkPeople,
     handleLinkDetections,
-    handleAddTopology,
     triggerReidRefresh,
   };
 }
