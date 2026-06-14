@@ -33,6 +33,12 @@ export interface OrgMember {
   createdAt: string;
 }
 
+export interface ClipAiSummaryResult {
+  id: string;
+  summary: string;
+  aiSummary: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
