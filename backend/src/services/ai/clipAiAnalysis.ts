@@ -35,7 +35,7 @@ ${durationHint}
 
 Respond with ONLY valid JSON (no markdown, no code fences) matching this schema:
 {
-  "summary": "2-4 sentence narrative of what happens in the clip",
+  "summary": "Narrative of what happens in the clip",
   "objects": [
     {
       "type": "person",
@@ -53,8 +53,11 @@ Respond with ONLY valid JSON (no markdown, no code fences) matching this schema:
 }
 
 Rules:
-- "objects" lists each clearly visible person or vehicle you can identify in the clip.
+- First identify every distinct person and vehicle clearly visible in the clip. The "objects" array must include exactly one entry per person and one entry per vehicle — do not merge or skip any.
 - type must be "person" or "vehicle" only.
+- The "summary" must mention every person and vehicle in "objects". Use distinguishing attributes (clothing, color, vehicle type, movement, location in frame) so each listed object is clearly referenced. If there are 2 people and 3 vehicles, all 5 must appear in the summary.
+- Summary and objects must stay consistent: every object in the array appears in the summary, and nothing is mentioned in the summary without a matching objects entry.
+- Write 2-4 sentences for simple scenes; use up to 6 sentences when many people or vehicles are present so nothing is left out.
 - Omit fields you cannot reasonably infer; use null for unknown scalar fields when the object is present but the attribute is not visible.
 - For people: estimate gender and age group (child, teen, adult, elderly) only when visible; list clothing colors/types in clothingColors.
 - For vehicles: include color, body style in vehicleType (sedan, SUV, truck, van, motorcycle, bicycle, etc.), and licensePlate only if legible.
