@@ -29,7 +29,7 @@ import { getOrgSettings } from './services/orgSettings';
 import { initQdrant } from './services/qdrant';
 import { aggregateTrackEvents, enrichDetectedObjects, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
 import { indexClipForSemanticSearch } from './services/clipIndex';
-import { buildYoloSummary } from './services/yoloSummary';
+import { buildYoloSummary, selectReidTrackEvents } from './services/yoloSummary';
 import { extractYoloPreviewCrops } from './services/yoloCropExtract';
 import { analyzeVehicleAppearancesFromClip, mergeAppearanceMaps } from './services/cropAppearance';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
@@ -450,6 +450,7 @@ async function processVideoClipInBackground(
     ]);
     const appearances = mergeAppearanceMaps(reidResult.appearances, vehicleAppearances);
     const reidCropsExtracted = reidResult.succeeded;
+    const reidCandidateCount = selectReidTrackEvents(trackEvents).length;
 
     let summary = '';
     if (orgSettings?.videoSummary !== false) {
@@ -486,23 +487,28 @@ async function processVideoClipInBackground(
     if (trackEvents.length === 0) {
       reidLogEntries.push({
         level: 'info',
-        message: 'No track events were bundled with this clip. ReID requires a person to be tracked for at least ~1 second during recording.',
+        message: 'No track events were bundled with this clip. ReID requires a person or vehicle to be detected during clip analysis.',
+      });
+    } else if (reidCandidateCount === 0) {
+      reidLogEntries.push({
+        level: 'warn',
+        message: `Clip included ${trackEvents.length} YOLO snapshot(s) but no ReID-ready track event with an edge embedding.`,
       });
     } else {
       reidLogEntries.push({
         level: 'info',
-        message: `Edge device bundled ${trackEvents.length} track event(s) with the clip upload.`,
+        message: `Edge bundled ${trackEvents.length} track event(s) (${reidCandidateCount} ReID candidate(s)).`,
       });
       for (const failure of reidResult.failures) {
         reidLogEntries.push({
           level: 'warn',
-          message: `Track ${failure.trackId}: crop extraction failed — ${failure.error}`,
+          message: `Track ${failure.trackId}: ReID profile creation failed — ${failure.error}`,
         });
       }
       if (reidCropsExtracted > 0) {
         reidLogEntries.push({
           level: 'info',
-          message: `Stored ${reidCropsExtracted} ReID detection(s) from the clip.`,
+          message: `Stored ${reidCropsExtracted} edge ReID profile(s) from the clip.`,
         });
       } else if (reidResult.failures.length === 0) {
         reidLogEntries.push({
@@ -523,12 +529,17 @@ async function processVideoClipInBackground(
       if (reidCropsExtracted > 0) {
         broadcastLogToSubscribedUIs(
           deviceId,
-          `[${cameraName}] Extracted ${reidCropsExtracted} ReID crop(s) from clip ${filename}.`,
+          `[${cameraName}] Stored ${reidCropsExtracted} ReID profile(s) from clip ${filename}.`,
+        );
+      } else if (reidCandidateCount > 0) {
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] ReID profile creation failed for ${reidCandidateCount} candidate(s) in ${filename}.`,
         );
       } else {
         broadcastLogToSubscribedUIs(
           deviceId,
-          `[${cameraName}] ReID crop extraction failed for ${trackEvents.length} track event(s) in ${filename}.`,
+          `[${cameraName}] Clip ${filename} had ${trackEvents.length} detection snapshot(s) but no ReID embeddings from the edge.`,
         );
       }
     }
@@ -1009,11 +1020,6 @@ async function shutdown() {
     });
   });
 
-  // Stop ReID worker
-  console.log('[Server] Stopping ReID worker process...');
-  const { reidWorker } = require('./services/reidWorker');
-  reidWorker.stop();
-
   // Disconnect database
   console.log('[Server] Disconnecting from database...');
   await prisma.$disconnect();
@@ -1057,14 +1063,6 @@ server.listen(PORT, async () => {
     console.error('Failed to cleanup empty identities:', err);
   });
 
-  // Start persistent ReID worker process
-  try {
-    const { reidWorker } = require('./services/reidWorker');
-    await reidWorker.start();
-  } catch (err) {
-    console.error('Failed to start ReID worker:', err);
-  }
-  
   // Set all devices and streams to Offline initially
   await prisma.edgeDevice.updateMany({
     data: { status: 'Offline' }

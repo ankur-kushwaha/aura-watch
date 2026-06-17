@@ -130,6 +130,9 @@ class DeviceRuntimeConfig:
             "MIN_UPLOAD_DURATION_SEC", float(_DEVICE_DEFAULTS["minUploadDurationSec"])
         )
     )
+    clip_preroll_sec: float = field(
+        default_factory=lambda: _env_float("CLIP_PREROLL_SEC", float(_DEVICE_DEFAULTS["clipPrerollSec"]))
+    )
     reid_confidence_threshold: float = field(
         default_factory=lambda: _env_float(
             "REID_CONFIDENCE_THRESHOLD", float(_DEVICE_DEFAULTS["reidConfidenceThreshold"])
@@ -169,6 +172,7 @@ class DeviceRuntimeConfig:
             recording_end_grace_sec=_pick(data, "recordingEndGraceSec", baseline.recording_end_grace_sec, float),
             recording_cooldown_sec=_pick(data, "recordingCooldownSec", baseline.recording_cooldown_sec, float),
             min_upload_duration_sec=_pick(data, "minUploadDurationSec", baseline.min_upload_duration_sec, float),
+            clip_preroll_sec=_pick(data, "clipPrerollSec", baseline.clip_preroll_sec, float),
             reid_confidence_threshold=_pick(
                 data, "reidConfidenceThreshold", baseline.reid_confidence_threshold, float
             ),

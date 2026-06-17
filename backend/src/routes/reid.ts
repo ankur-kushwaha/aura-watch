@@ -1,9 +1,10 @@
 import { Router, Request, Response } from 'express';
+import Busboy from 'busboy';
 import * as fs from 'fs';
 import * as path from 'path';
 import prisma from '../services/db';
-import reidWorker from '../services/reidWorker';
 import { upsertReidVector, searchReidVectors, deleteReidVector, deleteReidVectors, updateReidPayloadBatch, updateReidPayload, retrieveReidVectors, retrieveIdentityPrototype, searchIdentityPrototypes } from '../services/qdrant';
+import { decodeReidEmbeddingHeader, normalizeReidEmbedding } from '../services/reidEmbedding';
 import { recomputeIdentityCentroid, removeIdentityCentroid } from '../services/reidIdentity';
 import {
   findApproximateDetectionsForIdentity,
@@ -64,6 +65,7 @@ export interface ReidTrackEvent {
   confidence: number;
   className: string;
   kind?: 'snapshot' | 'reid';
+  embedding?: number[];
   appearance?: {
     heightRatio?: number;
     upperColor?: string;
@@ -80,6 +82,7 @@ export interface ReidDetectionInput {
   filename: string;
   bbox: string;
   className: string;
+  embedding: number[];
   clipFilename?: string;
   clipOffsetMs?: number;
   frameWidth?: number;
@@ -88,10 +91,9 @@ export interface ReidDetectionInput {
 
 export async function processReidDetectionFromCropFile(input: ReidDetectionInput): Promise<any> {
   const {
-    deviceId, streamId, trackId, timestamp, filename, bbox, className,
+    deviceId, streamId, trackId, timestamp, filename, bbox, className, embedding,
     clipFilename, clipOffsetMs, frameWidth, frameHeight,
   } = input;
-  const filepath = path.join(CROPS_DIR, filename);
 
   let resolvedClipFilename = clipFilename ?? null;
   let resolvedClipOffsetMs = clipOffsetMs ?? null;
@@ -131,8 +133,10 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
   const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
   const cameraName = stream?.name ?? 'Unknown Camera';
 
-  console.log(`[ReID Router] Running OSNet embedding extraction for ${filename}...`);
-  const vector = await reidWorker.generateEmbedding(filepath);
+  const vector = normalizeReidEmbedding(embedding);
+  if (!vector) {
+    throw new Error('ReID embedding must be computed on the edge device (expected 512-dim vector)');
+  }
 
   const detection = await prisma.reidDetection.create({
     data: {
@@ -246,6 +250,15 @@ export async function processReidTrackEventsFromClip(
         );
       }
 
+      const embedding = normalizeReidEmbedding(event.embedding);
+      if (!embedding) {
+        failures.push({
+          trackId: event.trackId,
+          error: 'Missing edge-computed ReID embedding for track event',
+        });
+        continue;
+      }
+
       await processReidDetectionFromCropFile({
         deviceId,
         streamId,
@@ -254,6 +267,7 @@ export async function processReidTrackEventsFromClip(
         filename,
         bbox: event.bbox,
         className: event.className || 'person',
+        embedding,
         clipFilename,
         clipOffsetMs: event.offsetMs,
         frameWidth,
@@ -276,12 +290,142 @@ export async function processReidTrackEventsFromClip(
   return { succeeded, failures, appearances };
 }
 
+interface CropUploadInput {
+  deviceId: string;
+  streamId: string;
+  trackId: number;
+  confidence: number;
+  bbox: string;
+  timestamp: Date;
+  className: string;
+  embeddingHeader: string;
+  buffer: Buffer;
+}
+
+async function saveCropUpload(input: CropUploadInput, res: Response) {
+  const {
+    deviceId, streamId, trackId, confidence, bbox, timestamp, className, embeddingHeader, buffer,
+  } = input;
+
+  if (buffer.length === 0) {
+    return res.status(400).json({ error: 'Empty crop image buffer' });
+  }
+
+  if (!embeddingHeader) {
+    return res.status(400).json({
+      error: 'Missing ReID embedding — edge must send embedding form field or x-reid-embedding header',
+    });
+  }
+
+  let embedding: number[];
+  try {
+    embedding = decodeReidEmbeddingHeader(embeddingHeader);
+  } catch (err: any) {
+    return res.status(400).json({ error: `Invalid ReID embedding: ${err.message}` });
+  }
+
+  const filename = `crop_${timestamp.getTime()}_${deviceId}_${trackId}.jpg`;
+  const filepath = path.join(CROPS_DIR, filename);
+
+  const existing = await prisma.reidDetection.findFirst({ where: { filename } });
+  if (existing && fs.existsSync(filepath)) {
+    console.log(`[ReID Router] Crop already processed for ${filename}`);
+    return res.status(200).json({ success: true, detectionId: existing.id });
+  }
+
+  fs.writeFileSync(filepath, buffer);
+  console.log(`[ReID Router] Saved edge ReID crop to ${filepath}`);
+
+  const fullDetection = await processReidDetectionFromCropFile({
+    deviceId,
+    streamId,
+    trackId,
+    timestamp,
+    filename,
+    bbox,
+    className,
+    embedding,
+  });
+
+  console.log(`[ReID Router] Stored edge ReID profile for device ${deviceId}, track ${trackId}`);
+  return res.status(200).json({ success: true, detectionId: fullDetection?.id });
+}
+
+function handleMultipartCropUpload(req: Request, res: Response, deviceId: string) {
+  const busboy = Busboy({ headers: req.headers });
+  const fields: Record<string, string> = {};
+  const imageChunks: Buffer[] = [];
+  let responded = false;
+
+  const fail = (status: number, message: string) => {
+    if (responded) return;
+    responded = true;
+    res.status(status).json({ error: message });
+  };
+
+  busboy.on('field', (name, value) => {
+    fields[name] = value;
+  });
+
+  busboy.on('file', (fieldname, file) => {
+    if (fieldname === 'image') {
+      file.on('data', (chunk: Buffer) => imageChunks.push(chunk));
+    } else {
+      file.resume();
+    }
+  });
+
+  busboy.on('finish', async () => {
+    if (responded) return;
+    try {
+      const timestampRaw = fields.timestamp || (req.headers['x-timestamp'] as string | undefined);
+      const timestamp = timestampRaw ? new Date(parseInt(timestampRaw, 10)) : new Date();
+      const embeddingHeader =
+        fields.embedding?.trim()
+        || (req.headers['x-reid-embedding'] as string | undefined)?.trim()
+        || '';
+
+      await saveCropUpload(
+        {
+          deviceId,
+          streamId: fields.streamId || (req.headers['x-stream-id'] as string) || `${deviceId}_default`,
+          trackId: parseInt(fields.trackId || (req.headers['x-track-id'] as string) || '0', 10),
+          confidence: parseFloat(fields.confidence || (req.headers['x-confidence'] as string) || '0'),
+          bbox: fields.bbox || (req.headers['x-bbox'] as string) || '0,0,0,0',
+          timestamp,
+          className: fields.className || (req.headers['x-class-name'] as string) || 'person',
+          embeddingHeader,
+          buffer: Buffer.concat(imageChunks),
+        },
+        res,
+      );
+      responded = true;
+    } catch (err: any) {
+      console.error('[ReID Router Error] Failed to process multipart crop upload:', err);
+      fail(500, err.message);
+    }
+  });
+
+  busboy.on('error', (err) => {
+    console.error('[ReID Router Error] Multipart crop parse failed:', err);
+    fail(500, 'Upload parse failed');
+  });
+
+  req.pipe(busboy);
+}
+
 /**
  * POST /api/reid/devices/:deviceId/crop
  * Edge device uploads a cropped person JPEG frame
  */
 export async function handleCropUpload(req: Request, res: Response) {
   const { deviceId } = req.params;
+  const contentType = req.headers['content-type'] || '';
+
+  if (contentType.includes('multipart/form-data')) {
+    return handleMultipartCropUpload(req, res, deviceId);
+  }
+
   const streamId = req.headers['x-stream-id'] as string || `${deviceId}_default`;
   const trackId = parseInt(req.headers['x-track-id'] as string || '0', 10);
   const confidence = parseFloat(req.headers['x-confidence'] as string || '0');
@@ -289,40 +433,26 @@ export async function handleCropUpload(req: Request, res: Response) {
   const timestampHeader = req.headers['x-timestamp'] as string;
   const timestamp = timestampHeader ? new Date(parseInt(timestampHeader, 10)) : new Date();
   const className = req.headers['x-class-name'] as string || 'person';
+  const embeddingHeader = (req.headers['x-reid-embedding'] as string | undefined)?.trim() || '';
 
   const chunks: Buffer[] = [];
   req.on('data', (chunk) => chunks.push(chunk));
   req.on('end', async () => {
     try {
-      const buffer = Buffer.concat(chunks);
-      if (buffer.length === 0) {
-        return res.status(400).json({ error: 'Empty crop image buffer' });
-      }
-
-      const filename = `crop_${timestamp.getTime()}_${deviceId}_${trackId}.jpg`;
-      const filepath = path.join(CROPS_DIR, filename);
-
-      const existing = await prisma.reidDetection.findFirst({ where: { filename } });
-      if (existing && fs.existsSync(filepath)) {
-        console.log(`[ReID Router] Crop already processed for ${filename}`);
-        return res.status(200).json({ success: true, detectionId: existing.id });
-      }
-
-      fs.writeFileSync(filepath, buffer);
-      console.log(`[ReID Router] Saved crop file to ${filepath}`);
-
-      const fullDetection = await processReidDetectionFromCropFile({
-        deviceId,
-        streamId,
-        trackId,
-        timestamp,
-        filename,
-        bbox,
-        className,
-      });
-
-      console.log(`[ReID Router] Successfully processed ReID crop for device ${deviceId}, track ${trackId}`);
-      res.status(200).json({ success: true, detectionId: fullDetection?.id });
+      await saveCropUpload(
+        {
+          deviceId,
+          streamId,
+          trackId,
+          confidence,
+          bbox,
+          timestamp,
+          className,
+          embeddingHeader,
+          buffer: Buffer.concat(chunks),
+        },
+        res,
+      );
     } catch (err: any) {
       console.error('[ReID Router Error] Failed to process crop upload:', err);
       res.status(500).json({ error: err.message });

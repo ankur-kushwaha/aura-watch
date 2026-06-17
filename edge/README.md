@@ -1,6 +1,6 @@
 # Aura Watch AI — Edge Surveillance Agent
 
-Lightweight Python agent for edge devices (Raspberry Pi, NVIDIA Jetson, macOS dev machines). It runs **YOLOv8 nano + ByteTrack** for person/vehicle detection, pushes annotated preview frames to the cloud over WebSocket, encodes detection-triggered clips on demand (no 24/7 video encoding), uploads them to the Cloud Hub, and receives configuration updates in real time.
+Lightweight Python agent for edge devices (Raspberry Pi, NVIDIA Jetson, macOS dev machines). It uses **cheap motion detection** while idle, records event clips with pre-roll, then runs **YOLOv8 nano + ByteTrack** and **OSNet ReID** on each finished clip before upload. Live preview is optional and does not run YOLO.
 
 **Node.js is not required on the edge device** — only Python 3.10+, Git, and FFmpeg.
 
@@ -146,6 +146,12 @@ cp .env.example .env
 | `CAMERA_WIDTH` / `CAMERA_HEIGHT` | Capture resolution — lower = faster |
 
 See `.env.example` for the full list.
+
+### ReID (OSNet on edge)
+
+Person/vehicle ReID profiles are created **on the edge device** using `models/osnet_x1_0.onnx`. The cloud hub stores the crop JPEG plus the 512-dim embedding vector in Qdrant — it does not run OSNet.
+
+Ensure the model exists at `edge/models/osnet_x1_0.onnx` (shipped in the repo). Override with `REID_MODEL_PATH` if needed.
 
 ---
 

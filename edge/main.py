@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aura Watch edge agent — YOLO + ByteTrack annotated video streaming."""
+"""Aura Watch edge agent — motion-triggered clips with post-record YOLO + ReID."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import os
 import platform
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
@@ -25,7 +26,7 @@ from dotenv import load_dotenv
 
 from agent_log import AgentLogger
 from camera import CameraCapture
-from crop_appearance import analyze_crop_jpeg, analyze_vehicle_crop_jpeg, analyze_vehicle_from_frame, is_vehicle_class
+from clip_processor import process_clip
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
     ClipEncoder,
@@ -35,6 +36,7 @@ from recorder import (
     upload_clip,
 )
 from device_defaults import stream_config_defaults
+from reid_embedder import ReidEmbedder
 from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -209,6 +211,12 @@ class EdgeAgent:
         self.streams_config: dict[str, EdgeConfig] = {}
         self.pipelines: dict[str, dict[str, Any]] = {}
         self._recent_logs: list[tuple[str, str]] = []
+        self.reid_embedder = ReidEmbedder()
+        reid_error = self.reid_embedder.validate()
+        if reid_error:
+            print(f"[ReID] WARNING: {reid_error}", flush=True)
+        else:
+            print(f"[ReID] OSNet ready at {self.reid_embedder.model_path}", flush=True)
 
         os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
         os.makedirs(LOCAL_CROPS_DIR, exist_ok=True)
@@ -459,22 +467,20 @@ class EdgeAgent:
             "is_recording": False,
             "recording_thread": None,
             "recording_cooldown_until": 0.0,
-            "last_detection_at": 0.0,
+            "last_motion_at": 0.0,
             "recording_lock": threading.Lock(),
-            "detection_lock": threading.Lock(),
+            "motion_lock": threading.Lock(),
             "clip_encoder_lock": threading.Lock(),
             "clip_encoder": None,
+            "preroll_frames": [],
             "frame_width": 0,
             "frame_height": 0,
             "stream_frames": False,
             "last_preview_sent_at": 0.0,
             "preview_stalled": False,
-            "clip_track_events": [],
-            "clip_track_events_lock": threading.Lock(),
-            "track_snapshot_last_at": 0.0,
-            "vehicle_appearance_tracks": set(),
             "recording_started_at_mono": None,
             "recording_started_at_ms": None,
+            "tracker": None,
         }
         self.pipelines[stream_id] = pipeline_data
 
@@ -643,15 +649,6 @@ class EdgeAgent:
             consecutive_failures = 0
             self.send_stream_error_cleared(stream_id)
             detection_classes = config.detection_classes()
-            tracker = YoloByteTracker(
-                confidence=runtime.yolo_confidence,
-                device=runtime.yolo_device,
-                class_names=detection_classes,
-                imgsz=runtime.yolo_imgsz,
-                reid_confidence_threshold=runtime.reid_confidence_threshold,
-                reid_min_bbox_size=runtime.reid_min_bbox_size,
-                reid_visible_sec=runtime.reid_visible_sec,
-            )
 
             pipeline_data = self.pipelines.get(stream_id)
             if not pipeline_data:
@@ -659,30 +656,28 @@ class EdgeAgent:
                 break
 
             pipeline_data["camera"] = camera
-            pipeline_data["tracker"] = tracker
             pipeline_data["frame_width"] = camera.width
             pipeline_data["frame_height"] = camera.height
+            pipeline_data["detection_classes"] = detection_classes
 
             self.send_log(
-                f"[{config.name}] Detection targets: {', '.join(detection_classes)} | "
-                f"device={runtime.yolo_device} imgsz={runtime.yolo_imgsz} interval={runtime.yolo_detect_interval}"
-            )
-
-            self.send_log(
-                f"[{config.name}] Started YOLO+ByteTrack pipeline ({camera.width}x{camera.height})"
+                f"[{config.name}] Motion watch active ({camera.width}x{camera.height}) | "
+                f"targets={', '.join(detection_classes)} when clips are processed"
             )
             if pipeline_data.get("stream_frames"):
-                self.send_log(f"[{config.name}] Live preview streaming enabled.")
+                self.send_log(f"[{config.name}] Live preview streaming enabled (no live YOLO).")
             self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
             settings = PipelineSettings(
-                detect_interval=runtime.yolo_detect_interval,
                 encode_fps=runtime.clip_encode_fps,
                 process_fps=runtime.camera_fps,
                 stream_fps=runtime.frame_stream_fps,
                 jpeg_quality=runtime.preview_jpeg_quality,
                 tracking_enabled=config.tracking_enabled,
                 camera_stall_timeout_sec=runtime.camera_stall_timeout_sec,
+                motion_threshold=config.motion_threshold,
+                pixel_change_threshold=config.pixel_change_threshold,
+                preroll_sec=runtime.clip_preroll_sec,
             )
             pipeline_data["settings"] = settings
             pipeline_data["runtime"] = runtime
@@ -697,106 +692,34 @@ class EdgeAgent:
             def on_preview(frame):
                 p_data = self.pipelines.get(stream_id)
                 if p_data and p_data.get("stream_frames", False):
-                    self._send_annotated_frame(stream_id, frame, settings.jpeg_quality)
+                    self._send_preview_frame(stream_id, frame, settings.jpeg_quality)
 
-            def on_reid(crop_jpeg, track_id, confidence, bbox, class_name):
-                p_data = self.pipelines.get(stream_id)
-                if not p_data:
-                    return
-
-                started_mono = p_data.get("recording_started_at_mono")
-                if p_data.get("is_recording") and started_mono is not None:
-                    offset_ms = int((time.monotonic() - started_mono) * 1000)
-                    started_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)
-                    detection_ms = started_ms + offset_ms
-                    bbox_str = ",".join(map(str, bbox))
-                    if is_vehicle_class(class_name):
-                        appearance = analyze_vehicle_crop_jpeg(crop_jpeg)
-                    else:
-                        appearance = analyze_crop_jpeg(crop_jpeg, bbox)
-                    event = {
-                        "trackId": track_id,
-                        "bbox": bbox_str,
-                        "offsetMs": offset_ms,
-                        "confidence": round(confidence, 4),
-                        "className": class_name,
-                        "kind": "reid",
-                    }
-                    if appearance:
-                        event["appearance"] = appearance
-                    with p_data["clip_track_events_lock"]:
-                        p_data["clip_track_events"].append(event)
-                    threading.Thread(
-                        target=self._upload_reid_crop,
-                        args=(stream_id, crop_jpeg, track_id, confidence, bbox, class_name),
-                        kwargs={"timestamp_ms": detection_ms},
-                        daemon=True,
-                    ).start()
-                    return
-
-                threading.Thread(
-                    target=self._upload_reid_crop,
-                    args=(stream_id, crop_jpeg, track_id, confidence, bbox, class_name),
-                    daemon=True,
-                ).start()
-
-            def on_detections(detections, new_detection, frame):
+            def on_motion_start(ratio: float, preroll_frames: list):
                 p_data = self.pipelines.get(stream_id)
                 if not p_data:
                     return
                 live_config = self.streams_config.get(stream_id)
-                tracking_on = bool(live_config and live_config.tracking_enabled)
-                with p_data["detection_lock"]:
-                    if detections:
-                        p_data["last_detection_at"] = time.monotonic()
-                if (
-                    p_data.get("is_recording")
-                    and p_data.get("recording_started_at_mono") is not None
-                    and detections
-                ):
-                    now = time.monotonic()
-                    last_snapshot_at = p_data.get("track_snapshot_last_at", 0.0)
-                    if now - last_snapshot_at >= 0.5:
-                        p_data["track_snapshot_last_at"] = now
-                        started_mono = p_data["recording_started_at_mono"]
-                        offset_ms = int((now - started_mono) * 1000)
-                        with p_data["clip_track_events_lock"]:
-                            for detection in detections:
-                                if detection.track_id is None:
-                                    continue
-                                bbox_str = ",".join(map(str, detection.bbox))
-                                event = {
-                                    "trackId": detection.track_id,
-                                    "bbox": bbox_str,
-                                    "offsetMs": offset_ms,
-                                    "confidence": round(detection.confidence, 4),
-                                    "className": detection.class_name,
-                                    "kind": "snapshot",
-                                }
-                                if is_vehicle_class(detection.class_name):
-                                    seen_vehicle_tracks = p_data.setdefault("vehicle_appearance_tracks", set())
-                                    if detection.track_id not in seen_vehicle_tracks:
-                                        appearance = analyze_vehicle_from_frame(frame, detection.bbox)
-                                        if appearance:
-                                            event["appearance"] = appearance
-                                            seen_vehicle_tracks.add(detection.track_id)
-                                p_data["clip_track_events"].append(event)
-                if new_detection and tracking_on:
-                    names = ", ".join(sorted({d.class_name for d in detections}))
-                    if not self._try_start_clip_recording(stream_id, names):
-                        with p_data["recording_lock"]:
-                            in_cooldown = time.monotonic() < p_data["recording_cooldown_until"]
-                        if in_cooldown:
-                            tracker.reset_detection_edge()
+                if not live_config or not live_config.tracking_enabled:
+                    return
+                with p_data["motion_lock"]:
+                    p_data["last_motion_at"] = time.monotonic()
+                if not self._try_start_clip_recording(stream_id, ratio, preroll_frames):
+                    return
+
+            def on_motion_active():
+                p_data = self.pipelines.get(stream_id)
+                if not p_data:
+                    return
+                with p_data["motion_lock"]:
+                    p_data["last_motion_at"] = time.monotonic()
 
             pipeline = VisionPipeline(
                 camera=camera,
-                tracker=tracker,
                 settings=settings,
                 get_clip_encoder=get_clip_encoder,
                 on_preview_frame=on_preview,
-                on_detections=on_detections,
-                on_reid_crop=on_reid,
+                on_motion_start=on_motion_start,
+                on_motion_active=on_motion_active,
                 should_stop=lambda: stop_event.is_set() or self.shutdown_event.is_set(),
             )
 
@@ -805,7 +728,7 @@ class EdgeAgent:
                 pipeline.run()
             except Exception as exc:
                 detail = str(exc)
-                self.send_log(f"[{config.name}] [Detector Error] {detail}. Reconnecting...")
+                self.send_log(f"[{config.name}] [Pipeline Error] {detail}. Reconnecting...")
                 self.send_stream_error(
                     stream_id,
                     error_type=self._classify_camera_error(detail),
@@ -816,7 +739,9 @@ class EdgeAgent:
                 pipeline.join_capture()
                 self._stop_active_clip_encoder(pipeline_data)
                 camera.release()
-                tracker.reset()
+                tracker = pipeline_data.get("tracker")
+                if tracker:
+                    tracker.reset()
 
             if stop_event.is_set() or self.shutdown_event.is_set():
                 break
@@ -833,7 +758,7 @@ class EdgeAgent:
             time.sleep(0.25)
         return False
 
-    def _send_annotated_frame(self, stream_id: str, frame, quality: int):
+    def _send_preview_frame(self, stream_id: str, frame, quality: int):
         jpeg = encode_preview_jpeg(frame, quality)
         if not jpeg:
             return
@@ -880,6 +805,9 @@ class EdgeAgent:
                 p_data["preview_stalled"] = False
                 self._ws_send({"type": "preview_resumed", "streamId": stream_id})
 
+    def _encode_reid_embedding(self, embedding: list[float]) -> str:
+        return base64.b64encode(struct.pack(f"{len(embedding)}f", *embedding)).decode("ascii")
+
     def _upload_reid_crop(
         self,
         stream_id: str,
@@ -888,6 +816,7 @@ class EdgeAgent:
         confidence: float,
         bbox: tuple[int, int, int, int],
         class_name: str = "person",
+        embedding: list[float] | None = None,
         *,
         timestamp_ms: int | None = None,
     ):
@@ -902,17 +831,36 @@ class EdgeAgent:
         except Exception as exc:
             self.send_log(f"[ReID Error] Failed to save local crop {filename}: {exc}")
 
-        headers = {
-            "Content-Type": "image/jpeg",
-            "x-track-id": str(track_id),
-            "x-confidence": f"{confidence:.4f}",
-            "x-bbox": bbox_str,
-            "x-timestamp": str(timestamp_ms),
-            "x-class-name": class_name,
-            "x-stream-id": stream_id,
-        }
+        if embedding is None:
+            try:
+                embedding = self.reid_embedder.generate_from_jpeg_bytes(crop_jpeg)
+            except Exception as exc:
+                self.send_log(f"[ReID Error] Skipping crop upload for track {track_id}: {exc}")
+                return
+
+        if len(embedding) != 512:
+            self.send_log(
+                f"[ReID Error] Skipping crop upload for track {track_id}: "
+                f"expected 512-dim embedding, got {len(embedding)}"
+            )
+            return
+
+        encoded_embedding = self._encode_reid_embedding(embedding)
         try:
-            response = requests.post(url, data=crop_jpeg, headers=headers, timeout=15)
+            response = requests.post(
+                url,
+                files={"image": (filename, crop_jpeg, "image/jpeg")},
+                data={
+                    "embedding": encoded_embedding,
+                    "trackId": str(track_id),
+                    "confidence": f"{confidence:.4f}",
+                    "bbox": bbox_str,
+                    "timestamp": str(timestamp_ms),
+                    "className": class_name,
+                    "streamId": stream_id,
+                },
+                timeout=30,
+            )
             if response.status_code >= 200 and response.status_code < 300:
                 self.send_log(f"Successfully uploaded ReID crop for track {track_id} on stream {stream_id}")
             else:
@@ -920,7 +868,44 @@ class EdgeAgent:
         except Exception as exc:
             self.send_log(f"[ReID Error] Upload exception: {exc}")
 
-    def _try_start_clip_recording(self, stream_id: str, detection_names: str) -> bool:
+    def _get_stream_tracker(self, stream_id: str) -> YoloByteTracker:
+        p_data = self.pipelines.get(stream_id)
+        if not p_data:
+            raise RuntimeError(f"No pipeline data for stream {stream_id}")
+
+        existing = p_data.get("tracker")
+        if existing is not None:
+            return existing
+
+        config = self.streams_config.get(stream_id)
+        runtime = p_data.get("runtime")
+        if runtime is None and config is not None:
+            runtime = config.runtime(self.device_runtime_config)
+        if runtime is None:
+            runtime = _DEFAULT_RUNTIME
+
+        detection_classes = p_data.get("detection_classes")
+        if not detection_classes and config is not None:
+            detection_classes = config.detection_classes()
+
+        tracker = YoloByteTracker(
+            confidence=runtime.yolo_confidence,
+            device=runtime.yolo_device,
+            class_names=detection_classes,
+            imgsz=runtime.yolo_imgsz,
+            reid_confidence_threshold=runtime.reid_confidence_threshold,
+            reid_min_bbox_size=runtime.reid_min_bbox_size,
+            reid_visible_sec=runtime.reid_visible_sec,
+        )
+        p_data["tracker"] = tracker
+        return tracker
+
+    def _try_start_clip_recording(
+        self,
+        stream_id: str,
+        motion_ratio: float,
+        preroll_frames: list,
+    ) -> bool:
         p_data = self.pipelines.get(stream_id)
         if not p_data:
             return False
@@ -933,28 +918,28 @@ class EdgeAgent:
             if time.monotonic() < p_data["recording_cooldown_until"]:
                 return False
             p_data["is_recording"] = True
-            p_data["last_detection_at"] = time.monotonic()
+            p_data["last_motion_at"] = time.monotonic()
             p_data["recording_started_at_mono"] = time.monotonic()
             p_data["recording_started_at_ms"] = int(time.time() * 1000)
-            with p_data["clip_track_events_lock"]:
-                p_data["clip_track_events"] = []
-            p_data["track_snapshot_last_at"] = 0.0
-            p_data["vehicle_appearance_tracks"] = set()
+            p_data["preroll_frames"] = list(preroll_frames)
 
         config = self.streams_config.get(stream_id)
         name = config.name if config else stream_id
-        self.send_log(f"[{name}] Objects detected: {detection_names}. Starting clip capture...")
+        self.send_log(
+            f"[{name}] Motion detected ({motion_ratio * 100:.1f}% change). "
+            f"Starting clip with {len(preroll_frames)} pre-roll frame(s)..."
+        )
 
         thread = threading.Thread(
             target=self._run_clip_recording,
-            args=(stream_id, detection_names),
+            args=(stream_id,),
             daemon=True,
         )
         p_data["recording_thread"] = thread
         thread.start()
         return True
 
-    def _run_clip_recording(self, stream_id: str, _detection_names: str):
+    def _run_clip_recording(self, stream_id: str):
         self.send_status(stream_id, "Recording")
         p_data = self.pipelines.get(stream_id)
         if not p_data:
@@ -981,15 +966,21 @@ class EdgeAgent:
         recording_start = time.monotonic()
 
         self.send_log(
-            f"[{name}] Recording while objects are detected "
+            f"[{name}] Recording motion event "
             f"(max {int(recording_max_sec)}s @ {clip_encode_fps}fps)..."
         )
 
         try:
             clip_encoder = ClipEncoder(output_path, width, height, fps=clip_encode_fps)
             clip_encoder.start()
+
+            preroll_frames = list(p_data.get("preroll_frames") or [])
+            for frame in preroll_frames:
+                clip_encoder.write_frame(frame)
+
             with p_data["clip_encoder_lock"]:
                 p_data["clip_encoder"] = clip_encoder
+            p_data["preroll_frames"] = []
 
             while not p_data["stop_event"].is_set() and not self.shutdown_event.is_set():
                 with p_data["recording_lock"]:
@@ -1004,8 +995,8 @@ class EdgeAgent:
 
                 elapsed = time.monotonic() - recording_start
 
-                with p_data["detection_lock"]:
-                    last_detection_at = p_data["last_detection_at"]
+                with p_data["motion_lock"]:
+                    last_motion_at = p_data["last_motion_at"]
 
                 if elapsed >= recording_max_sec:
                     self.send_log(f"[{name}] Max clip length ({int(recording_max_sec)}s) reached.")
@@ -1013,9 +1004,9 @@ class EdgeAgent:
 
                 if (
                     elapsed >= recording_end_grace_sec
-                    and time.monotonic() - last_detection_at >= recording_end_grace_sec
+                    and time.monotonic() - last_motion_at >= recording_end_grace_sec
                 ):
-                    self.send_log(f"[{name}] Objects left frame — finalizing clip.")
+                    self.send_log(f"[{name}] Motion ended — finalizing clip.")
                     break
 
                 time.sleep(0.2)
@@ -1044,7 +1035,7 @@ class EdgeAgent:
 
             if not clip_meets_upload_threshold(actual_duration, min_upload_duration_sec):
                 self.send_log(
-                    f"[{name}] Skipping upload for {filename}: "
+                    f"[{name}] Discarding {filename}: "
                     f"duration {actual_duration:.1f}s < {min_upload_duration_sec:.1f}s"
                 )
                 try:
@@ -1053,12 +1044,81 @@ class EdgeAgent:
                     pass
                 return
 
-            with p_data["clip_track_events_lock"]:
-                track_events = list(p_data.get("clip_track_events") or [])
+            with p_data["recording_lock"]:
+                p_data["is_recording"] = False
+            self.send_status(stream_id, "Processing")
+            self.send_log(f"[{name}] Running YOLO + ByteTrack on clip {filename}...")
+            runtime = p_data.get("runtime")
+            if runtime is None and config is not None:
+                runtime = config.runtime(self.device_runtime_config)
+            detect_interval = runtime.yolo_detect_interval if runtime else _DEFAULT_RUNTIME.yolo_detect_interval
+
+            try:
+                tracker = self._get_stream_tracker(stream_id)
+                clip_result = process_clip(
+                    output_path,
+                    tracker,
+                    self.reid_embedder,
+                    detect_interval=detect_interval,
+                )
+            except Exception as exc:
+                self.send_log(f"[{name}] Clip analysis failed for {filename}: {exc}")
+                try:
+                    os.unlink(output_path)
+                except OSError:
+                    pass
+                return
+
+            if not clip_result.has_targets:
+                self.send_log(
+                    f"[{name}] No person/vehicle in {filename} — discarding locally."
+                )
+                try:
+                    os.unlink(output_path)
+                except OSError:
+                    pass
+                return
+
+            if not clip_result.reid_crops:
+                self.send_log(
+                    f"[{name}] WARNING: YOLO found objects but no ReID profiles were created. "
+                    f"Check OSNet model ({self.reid_embedder.model_path}) and edge logs."
+                )
+
+            track_events = clip_result.track_events
+            preroll_frames = list(p_data.get("preroll_frames") or [])
+            preroll_ms = int(len(preroll_frames) / clip_encode_fps * 1000) if preroll_frames else 0
+            clip_start_ms = timestamp_ms - preroll_ms
+
+            reid_uploaded = 0
+            for crop in clip_result.reid_crops:
+                detection_ms = clip_start_ms + crop.offset_ms
+                try:
+                    self._upload_reid_crop(
+                        stream_id,
+                        crop.crop_jpeg,
+                        crop.track_id,
+                        crop.confidence,
+                        crop.bbox,
+                        crop.class_name,
+                        crop.embedding,
+                        timestamp_ms=detection_ms,
+                    )
+                    reid_uploaded += 1
+                except Exception as exc:
+                    self.send_log(
+                        f"[ReID Error] Failed to upload crop for track {crop.track_id}: {exc}"
+                    )
+
+            reid_event_count = sum(1 for event in track_events if event.get("kind") == "reid")
+            self.send_log(
+                f"[{name}] Clip analysis: {reid_event_count} ReID profile(s), "
+                f"{len(track_events)} total track event(s), {reid_uploaded} crop(s) uploaded."
+            )
 
             self.send_log(
                 f"[{name}] Uploading clip to Cloud: {filename} "
-                f"({len(track_events)} bundled track event(s))..."
+                f"({len(track_events)} track event(s))..."
             )
             upload_clip(
                 CLOUD_URL,
@@ -1070,7 +1130,7 @@ class EdgeAgent:
                 track_events=track_events,
                 frame_width=width,
                 frame_height=height,
-                clip_start_ms=timestamp_ms,
+                clip_start_ms=clip_start_ms,
             )
             self.send_log(f"[{name}] Successfully uploaded clip to Cloud: {filename}")
         except Exception as exc:
@@ -1084,19 +1144,19 @@ class EdgeAgent:
         finally:
             self._stop_active_clip_encoder(p_data)
             with p_data["recording_lock"]:
-                p_data["is_recording"] = False
+                if p_data.get("is_recording"):
+                    p_data["is_recording"] = False
                 p_data["recording_cooldown_until"] = time.monotonic() + recording_cooldown_sec
             p_data["recording_started_at_mono"] = None
             p_data["recording_started_at_ms"] = None
-            with p_data["clip_track_events_lock"]:
-                p_data["clip_track_events"] = []
+            p_data["preroll_frames"] = []
             if recording_cooldown_sec > 0:
                 self.send_log(
                     f"[{name}] Clip cooldown started ({int(recording_cooldown_sec)}s before next clip can begin)."
                 )
             tracker = p_data.get("tracker")
             if tracker:
-                tracker.reset_detection_edge()
+                tracker.reset()
 
             p_data_curr = self.pipelines.get(stream_id)
             if p_data_curr and not p_data_curr["stop_event"].is_set():

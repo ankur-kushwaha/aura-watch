@@ -78,3 +78,8 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7l" ]; then
 fi
 
 log "   ✅ Python dependencies installed."
+
+if ! sh "$DIR/scripts/setup-reid-model.sh"; then
+    log "   ⚠️  ReID OSNet model is missing — person ReID profiles will not be created until installed."
+    log "      Run: sh scripts/setup-reid-model.sh"
+fi

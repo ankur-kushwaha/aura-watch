@@ -193,6 +193,7 @@ class YoloByteTracker:
         *,
         run_inference: bool = True,
         tracking_enabled: bool = True,
+        timeline_sec: Optional[float] = None,
     ) -> tuple[np.ndarray, list[Detection], bool, list[Detection]]:
         """Run detection + tracking, return annotated frame, detections, new-detection flag, and newly stabilized ReID detections."""
         if not tracking_enabled:
@@ -202,7 +203,7 @@ class YoloByteTracker:
             detections = list(self._last_detections)
             annotated = draw_detections(frame, detections)
             new_detection = self._update_detection_state(detections)
-            stabilized = self._update_track_states_and_get_stabilized(detections)
+            stabilized = self._update_track_states_and_get_stabilized(detections, timeline_sec)
             return annotated, detections, new_detection, stabilized
 
         results = self.model.track(
@@ -222,16 +223,21 @@ class YoloByteTracker:
         self._last_detections = detections
         annotated = draw_detections(frame, detections)
         new_detection = self._update_detection_state(detections)
-        stabilized = self._update_track_states_and_get_stabilized(detections)
+        stabilized = self._update_track_states_and_get_stabilized(detections, timeline_sec)
         return annotated, detections, new_detection, stabilized
 
-    def _update_track_states_and_get_stabilized(self, detections: list[Detection]) -> list[Detection]:
+    def _update_track_states_and_get_stabilized(
+        self,
+        detections: list[Detection],
+        timeline_sec: Optional[float] = None,
+    ) -> list[Detection]:
         import time
-        now = time.monotonic()
 
-        # Prune inactive tracks (>10 seconds)
+        now = timeline_sec if timeline_sec is not None else time.monotonic()
+        prune_after = 10.0 if timeline_sec is None else 3600.0
+
         for tid in list(self._track_states.keys()):
-            if now - self._track_states[tid]["last_seen"] > 10.0:
+            if now - self._track_states[tid]["last_seen"] > prune_after:
                 del self._track_states[tid]
 
         stabilized_targets: list[Detection] = []

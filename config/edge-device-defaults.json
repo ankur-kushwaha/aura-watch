@@ -16,6 +16,7 @@
     "recordingEndGraceSec": 12,
     "recordingCooldownSec": 10,
     "minUploadDurationSec": 8,
+    "clipPrerollSec": 3,
     "reidConfidenceThreshold": 0.5,
     "reidMinBboxSize": 800,
     "reidVisibleSec": 0.5,

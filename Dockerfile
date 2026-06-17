@@ -26,7 +26,7 @@ RUN npm prune --omit=dev
 # Stage 3: Production runner
 FROM node:20-bookworm-slim AS runner
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssl ffmpeg libgomp1 python3 python3-venv python3-pip \
+    openssl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
@@ -41,13 +41,6 @@ COPY --from=backend-builder /app/backend/dist ./backend/dist
 COPY --from=backend-builder /app/config ./config
 COPY --from=backend-builder /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-builder /app/backend/prisma ./backend/prisma
-COPY --from=backend-builder /app/backend/models ./backend/models
-
-# ReID worker — venv must be built in this image (copied venvs break interpreter symlinks)
-COPY backend/requirements-reid.txt ./backend/
-COPY backend/scripts/setup-reid-venv.sh ./backend/scripts/
-RUN chmod +x backend/scripts/setup-reid-venv.sh && sh backend/scripts/setup-reid-venv.sh
-ENV REID_PYTHON=/app/backend/.venv-reid/bin/python
 
 # Copy built frontend assets
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

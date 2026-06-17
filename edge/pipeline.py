@@ -1,4 +1,4 @@
-"""Threaded vision pipeline: capture, detect, on-demand clip encode, and live preview."""
+"""Threaded capture pipeline: motion watch, pre-roll buffer, on-demand clip encode, live preview."""
 
 from __future__ import annotations
 
@@ -10,59 +10,67 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 CAMERA_STALL_TIMEOUT_SEC = float(os.getenv("CAMERA_STALL_TIMEOUT_SEC", "45"))
+CLIP_PREROLL_SEC = float(os.getenv("CLIP_PREROLL_SEC", "3"))
 
 import cv2
 import numpy as np
 
 from camera import CameraCapture
+from frame_buffer import FrameRingBuffer
+from motion_detector import MotionDetector
 from recorder import ClipEncoder
-from yolo_tracker import YoloByteTracker
 
 
 @dataclass
 class PipelineSettings:
-    detect_interval: int = 2
     encode_fps: int = 10
     process_fps: int = 15
     stream_fps: float = 12.0
     jpeg_quality: int = 70
     tracking_enabled: bool = False
     camera_stall_timeout_sec: float = CAMERA_STALL_TIMEOUT_SEC
+    motion_threshold: int = 25
+    pixel_change_threshold: float = 0.02
+    preroll_sec: float = CLIP_PREROLL_SEC
 
 
 FrameCallback = Callable[[np.ndarray], None]
-DetectionCallback = Callable[[list, bool, np.ndarray], None]
-ReidCallback = Callable[[bytes, int, float, tuple[int, int, int, int], str], None]
+MotionStartCallback = Callable[[float, list[np.ndarray]], None]
+MotionActiveCallback = Callable[[], None]
 ClipEncoderGetter = Callable[[], Optional[ClipEncoder]]
 
 
 class VisionPipeline:
-    """Capture frames on a background thread and process the latest frame only."""
+    """Capture frames on a background thread; motion-detect on the processing thread."""
 
     def __init__(
         self,
         camera: CameraCapture,
-        tracker: YoloByteTracker,
         settings: PipelineSettings,
         get_clip_encoder: Optional[ClipEncoderGetter] = None,
         on_preview_frame: Optional[FrameCallback] = None,
-        on_detections: Optional[DetectionCallback] = None,
-        on_reid_crop: Optional[ReidCallback] = None,
+        on_motion_start: Optional[MotionStartCallback] = None,
+        on_motion_active: Optional[MotionActiveCallback] = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ):
         self.camera = camera
-        self.tracker = tracker
         self.settings = settings
         self.get_clip_encoder = get_clip_encoder
         self.on_preview_frame = on_preview_frame
-        self.on_detections = on_detections
-        self.on_reid_crop = on_reid_crop
+        self.on_motion_start = on_motion_start
+        self.on_motion_active = on_motion_active
         self.should_stop = should_stop or (lambda: False)
 
+        preroll_frames = max(int(settings.preroll_sec * settings.encode_fps), 1)
+        self._preroll = FrameRingBuffer(preroll_frames)
+        self._motion = MotionDetector(
+            motion_threshold=settings.motion_threshold,
+            pixel_change_threshold=settings.pixel_change_threshold,
+        )
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
         self._capture_thread: Optional[threading.Thread] = None
-        self._frame_index = 0
         self._last_clip_write_at = 0.0
+        self._motion_active = False
 
     def start_capture(self):
         self._capture_thread = threading.Thread(
@@ -91,47 +99,29 @@ class VisionPipeline:
                 continue
 
             last_frame_received_at = time.monotonic()
-            self._frame_index += 1
-            run_inference = self._frame_index % max(self.settings.detect_interval, 1) == 0
 
-            annotated, detections, new_detection, stabilized = self.tracker.process(
-                frame,
-                run_inference=run_inference,
-                tracking_enabled=self.settings.tracking_enabled,
-            )
-
-            if self.on_detections:
-                self.on_detections(detections, new_detection, frame)
-
-            if self.on_reid_crop and stabilized:
-                h_f, w_f = frame.shape[:2]
-                for d in stabilized:
-                    x1 = max(0, min(d.bbox[0], w_f - 1))
-                    y1 = max(0, min(d.bbox[1], h_f - 1))
-                    x2 = max(0, min(d.bbox[2], w_f))
-                    y2 = max(0, min(d.bbox[3], h_f))
-                    if x2 > x1 and y2 > y1:
-                        crop = frame[y1:y2, x1:x2]
-                        ok, jpeg_buf = cv2.imencode(".jpg", crop)
-                        if ok:
-                            clipped_bbox = (x1, y1, x2, y2)
-                            self.on_reid_crop(
-                                jpeg_buf.tobytes(),
-                                d.track_id,
-                                d.confidence,
-                                clipped_bbox,
-                                d.class_name,
-                            )
+            if self.settings.tracking_enabled:
+                motion_detected, ratio = self._motion.detect(frame)
+                if motion_detected:
+                    if not self._motion_active:
+                        self._motion_active = True
+                        if self.on_motion_start:
+                            self.on_motion_start(ratio, self._preroll.snapshot())
+                    elif self.on_motion_active:
+                        self.on_motion_active()
+                else:
+                    self._motion_active = False
 
             clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
-            if clip_encoder:
-                frame_interval = 1.0 / max(self.settings.encode_fps, 1)
-            else:
-                frame_interval = 1.0 / max(self.settings.process_fps, 1)
+            frame_interval = (
+                1.0 / max(self.settings.encode_fps, 1)
+                if clip_encoder
+                else 1.0 / max(self.settings.process_fps, 1)
+            )
 
             now = time.monotonic()
             if self.on_preview_frame and now - last_stream_time >= stream_interval:
-                self.on_preview_frame(annotated)
+                self.on_preview_frame(frame)
                 last_stream_time = now
 
             elapsed = time.monotonic() - last_frame_time
@@ -156,6 +146,7 @@ class VisionPipeline:
                 continue
 
             consecutive_failures = 0
+            self._preroll.push(frame)
 
             clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
             if clip_encoder:
