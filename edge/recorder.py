@@ -7,6 +7,7 @@ import os
 import queue
 import subprocess
 import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -132,6 +133,29 @@ class ClipEncoder:
                 self._write_queue.put_nowait(frame)
             except queue.Full:
                 pass
+
+    def write_frame_blocking(self, frame: np.ndarray, timeout: float = 2.0) -> bool:
+        """Queue a frame, waiting briefly so burst writes (e.g. preroll) are not dropped."""
+        if not self.is_running():
+            return False
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                self._write_queue.put(frame, timeout=min(0.05, remaining))
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def write_frames_blocking(self, frames: list[np.ndarray]) -> int:
+        written = 0
+        for frame in frames:
+            if self.write_frame_blocking(frame):
+                written += 1
+        return written
 
     def _writer_loop(self):
         while not self._stop_writer.is_set():

@@ -1149,16 +1149,15 @@ class EdgeAgent:
                 list(p_data.get("preroll_frames") or []),
                 max(int(clip_preroll_sec * clip_fps), 1),
             )
-            for frame in preroll_frames:
-                clip_encoder.write_frame(frame)
-
-            pipeline = p_data.get("pipeline")
-            if pipeline:
-                pipeline.reset_clip_timing()
+            preroll_written = clip_encoder.write_frames_blocking(preroll_frames)
 
             with p_data["clip_encoder_lock"]:
                 p_data["clip_encoder"] = clip_encoder
             p_data["preroll_frames"] = []
+
+            pipeline = p_data.get("pipeline")
+            if pipeline:
+                pipeline.start_clip_feed(clip_encoder)
 
             while not p_data["stop_event"].is_set() and not self.shutdown_event.is_set():
                 with p_data["recording_lock"]:
@@ -1180,16 +1179,20 @@ class EdgeAgent:
                     self.send_log(f"[{name}] Max clip length ({int(recording_max_sec)}s) reached.")
                     break
 
-                if (
-                    elapsed >= recording_end_grace_sec
-                    and time.monotonic() - last_motion_at >= recording_end_grace_sec
-                ):
-                    self.send_log(f"[{name}] Motion ended — finalizing clip.")
+                since_motion = time.monotonic() - last_motion_at
+                if since_motion >= recording_end_grace_sec:
+                    self.send_log(
+                        f"[{name}] No motion for {recording_end_grace_sec:.0f}s "
+                        f"(recorded {elapsed:.1f}s) — finalizing clip."
+                    )
                     break
 
                 time.sleep(0.2)
 
             stopped_encoder = self._stop_active_clip_encoder(p_data)
+            pipeline = p_data.get("pipeline")
+            if pipeline:
+                pipeline.stop_clip_feed()
             if stopped_encoder:
                 clip_encoder = stopped_encoder
 
@@ -1237,7 +1240,7 @@ class EdgeAgent:
                     height=height,
                     actual_duration=actual_duration,
                     clip_fps=clip_fps,
-                    preroll_frame_count=len(preroll_frames),
+                    preroll_frame_count=preroll_written,
                 )
             )
         except Exception as exc:
@@ -1249,6 +1252,9 @@ class EdgeAgent:
                 except OSError:
                     pass
         finally:
+            pipeline = p_data.get("pipeline")
+            if pipeline:
+                pipeline.stop_clip_feed()
             self._stop_active_clip_encoder(p_data)
             with p_data["recording_lock"]:
                 if p_data.get("is_recording"):

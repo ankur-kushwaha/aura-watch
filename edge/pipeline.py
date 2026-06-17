@@ -68,13 +68,47 @@ class VisionPipeline:
         )
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
         self._capture_thread: Optional[threading.Thread] = None
+        self._clip_feed_thread: Optional[threading.Thread] = None
+        self._clip_feed_stop = threading.Event()
+        self._clip_feed_encoder: Optional[ClipEncoder] = None
+        self._latest_frame: Optional[np.ndarray] = None
         self._clip_frame_interval = 1.0 / max(settings.clip_fps, 1)
         self._last_preroll_at = 0.0
-        self._last_clip_write_at = 0.0
         self._motion_active = False
 
-    def reset_clip_timing(self) -> None:
-        self._last_clip_write_at = 0.0
+    def start_clip_feed(self, encoder: ClipEncoder) -> None:
+        """Write the latest camera frame on a wall-clock tick so clip length matches recording time."""
+        self.stop_clip_feed()
+        self._clip_feed_encoder = encoder
+        self._clip_feed_stop.clear()
+        self._clip_feed_thread = threading.Thread(
+            target=self._clip_feed_loop,
+            name="clip-feed",
+            daemon=True,
+        )
+        self._clip_feed_thread.start()
+
+    def stop_clip_feed(self) -> None:
+        self._clip_feed_stop.set()
+        if self._clip_feed_thread and self._clip_feed_thread.is_alive():
+            self._clip_feed_thread.join(timeout=2.0)
+        self._clip_feed_thread = None
+        self._clip_feed_encoder = None
+
+    def _clip_feed_loop(self) -> None:
+        next_tick = time.monotonic()
+        while not self._clip_feed_stop.is_set():
+            encoder = self._clip_feed_encoder
+            frame = self._latest_frame
+            if encoder and frame is not None and encoder.is_running():
+                encoder.write_frame(frame.copy())
+
+            next_tick += self._clip_frame_interval
+            sleep_for = next_tick - time.monotonic()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            else:
+                next_tick = time.monotonic()
 
     def start_capture(self):
         self._capture_thread = threading.Thread(
@@ -143,16 +177,12 @@ class VisionPipeline:
                 continue
 
             consecutive_failures = 0
+            self._latest_frame = frame
 
             now = time.monotonic()
             if now - self._last_preroll_at >= self._clip_frame_interval:
                 self._preroll.push(frame)
                 self._last_preroll_at = now
-
-            clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
-            if clip_encoder and now - self._last_clip_write_at >= self._clip_frame_interval:
-                clip_encoder.write_frame(frame)
-                self._last_clip_write_at = now
 
             try:
                 self._frame_queue.put_nowait(frame)
@@ -167,6 +197,7 @@ class VisionPipeline:
                     pass
 
     def join_capture(self, timeout: float = 5.0):
+        self.stop_clip_feed()
         if self._capture_thread and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=timeout)
 
