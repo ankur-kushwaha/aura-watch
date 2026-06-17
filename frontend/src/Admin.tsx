@@ -99,7 +99,7 @@ function SettingsReadOnly({ settings }: { settings: OrgSettings }) {
     {
       icon: <Sparkles size={18} />,
       title: 'Video summaries',
-      description: 'AI-generated descriptions for recorded clips.',
+      description: 'Detection and AI vision summaries for recorded clips.',
       enabled: settings.videoSummary,
     },
     {

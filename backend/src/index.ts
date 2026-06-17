@@ -29,7 +29,7 @@ import { getDeviceOrgId } from './services/orgScope';
 import { getOrgSettings } from './services/orgSettings';
 import { initQdrant } from './services/qdrant';
 import { aggregateTrackEvents, enrichDetectedObjects, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
-import { indexClipForSemanticSearch } from './services/clipIndex';
+import { generateClipAiSummaryFromLocalFile } from './services/clipAiSummary';
 import { buildYoloSummary, selectReidTrackEvents } from './services/yoloSummary';
 import { extractYoloPreviewCrops } from './services/yoloCropExtract';
 import { analyzeVehicleAppearancesFromClip, mergeAppearanceMaps } from './services/cropAppearance';
@@ -640,12 +640,36 @@ async function processVideoClipInBackground(
     await linkDetectionsToClip(clipDb.id, filename);
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
 
+    let clipForBroadcast = clipDb;
+    if (
+      orgSettings?.videoSummary !== false &&
+      trackEvents.length > 0 &&
+      fs.existsSync(filepath)
+    ) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Generating AI summary for clip with detected objects...`);
+      try {
+        clipForBroadcast = await generateClipAiSummaryFromLocalFile(
+          clipDb,
+          filepath,
+          orgId ?? undefined,
+          orgSettings?.semanticSearch !== false,
+        );
+        broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generated for clip ${filename}.`);
+      } catch (err: any) {
+        console.error(`[AI Summary] Auto-generation failed for ${filename}:`, err);
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] AI summary generation failed for ${filename}: ${err.message}`,
+        );
+      }
+    }
+
     if (orgSettings?.semanticSearch === false) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Semantic search indexing disabled for this organization.`);
     }
     
     // Notify all UI clients — archive is global and may not have a device/stream subscription.
-    broadcastNewClipToAllUIs(clipDb, deviceId, streamId);
+    broadcastNewClipToAllUIs(clipForBroadcast, deviceId, streamId);
 
   } catch (error: any) {
     console.error(`[Pipeline Error] Failed to process ${filename}:`, error);

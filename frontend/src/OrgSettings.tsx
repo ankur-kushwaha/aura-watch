@@ -274,7 +274,7 @@ export default function OrgSettingsPage({
             <SettingRow
               icon={<Sparkles size={18} />}
               title="Video summary"
-              description="Generate AI summaries when clips are uploaded. Hides summaries in the event archive when off."
+              description="Generate detection summaries when clips are uploaded, and AI vision summaries for clips with detected objects. Hides summaries in the event archive when off."
               checked={draft.videoSummary}
               disabled={!canEdit}
               onChange={(v) => updateDraft('videoSummary', v)}
