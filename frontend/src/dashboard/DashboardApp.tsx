@@ -19,6 +19,8 @@ import {
   Download,
   AlertTriangle,
   SlidersHorizontal,
+  ExternalLink,
+  Copy,
 } from 'lucide-react';
 import {
   apiFetch,
@@ -55,6 +57,7 @@ import {
   type StreamErrorState,
 } from './utils/streamErrors';
 import { dashboardTabFromPath } from './utils/routing';
+import { copyMacVlcTerminalCommand, copyRtspUrl, openRtspInVlc } from './utils/vlc';
 import { DashboardHeader, DashboardPlaceholder, DeviceInstallTooltip } from './components';
 import { DashboardTabs, EventsTab, ReidTab } from './components/tabs';
 import {
@@ -185,6 +188,8 @@ export default function DashboardApp() {
   const [streamError, setStreamError] = useState<StreamErrorState | null>(null);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [previewFrozen, setPreviewFrozen] = useState<boolean>(false);
+  const [vlcLaunchHint, setVlcLaunchHint] = useState<'idle' | 'opened' | 'failed'>('idle');
+  const vlcLaunchInFlightRef = useRef(false);
   const lastFrameAtRef = useRef<number>(0);
   const lastStreamRefreshAtRef = useRef<number>(0);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
@@ -210,6 +215,12 @@ export default function DashboardApp() {
     () => streams.find((s) => s.streamId === selectedStreamId) ?? null,
     [streams, selectedStreamId],
   );
+
+  const usesWebPreview = selectedStream?.cameraType !== 'rtsp';
+  const usesWebPreviewRef = useRef(usesWebPreview);
+  useEffect(() => {
+    usesWebPreviewRef.current = usesWebPreview;
+  }, [usesWebPreview]);
 
   const activeStreamError = useMemo<StreamErrorState | null>(() => {
     if (streamError) return streamError;
@@ -242,7 +253,7 @@ export default function DashboardApp() {
 
   const refreshStreamPreview = useCallback((reason: string) => {
     const streamId = selectedStreamIdRef.current;
-    if (!streamId || !liveFeedOpenRef.current) return;
+    if (!streamId || !liveFeedOpenRef.current || !usesWebPreviewRef.current) return;
 
     const now = Date.now();
     if (now - lastStreamRefreshAtRef.current < STREAM_REFRESH_COOLDOWN_MS) {
@@ -384,7 +395,7 @@ export default function DashboardApp() {
     ws.onopen = () => {
       console.log('WebSocket open. Subscribing to selected stream...');
       const currentStreamId = selectedStreamIdRef.current;
-      if (currentStreamId && liveFeedOpenRef.current) {
+      if (currentStreamId && liveFeedOpenRef.current && usesWebPreviewRef.current) {
         ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: currentStreamId }));
       }
       const deviceId = selectedStreamDeviceIdRef.current;
@@ -618,12 +629,80 @@ export default function DashboardApp() {
     }
   }, [selectedStreamId, streams]);
 
-  // Subscribe/unsubscribe live preview when the feed panel is toggled
+  const openStreamFeed = useCallback((stream: CameraStream) => {
+    setSelectedStreamId(stream.streamId);
+    setSelectedDeviceId(stream.deviceId);
+    setLiveFeedOpen(true);
+    setStreamError(null);
+    setPreviewFrozen(false);
+    setLiveFrame(null);
+    setVlcLaunchHint('idle');
+    lastFrameAtRef.current = 0;
+
+    if (stream.cameraType === 'rtsp' && stream.streamUrl) {
+      setStreamLoading(false);
+      setStreamInitTimedOut(false);
+      return;
+    }
+
+    setStreamLoading(true);
+    setStreamInitTimedOut(false);
+  }, []);
+
+  const handleOpenInVlc = useCallback(async () => {
+    const url = selectedStream?.streamUrl;
+    if (!url || vlcLaunchInFlightRef.current) return;
+
+    vlcLaunchInFlightRef.current = true;
+    setVlcLaunchHint('idle');
+
+    const result = await openRtspInVlc(url);
+    if (result === 'likely-opened') {
+      setVlcLaunchHint('opened');
+      appendLog('[Dashboard] Opened RTSP stream in VLC');
+    } else {
+      setVlcLaunchHint('failed');
+      const copied = await copyRtspUrl(url);
+      appendLog(
+        copied
+          ? '[Dashboard] vlc:// handler not found — RTSP URL copied. In VLC: Media → Open Network Stream → paste (Cmd+V).'
+          : '[Dashboard] vlc:// handler not found. Install VLC, or use Media → Open Network Stream and paste the RTSP URL.',
+      );
+    }
+
+    window.setTimeout(() => {
+      vlcLaunchInFlightRef.current = false;
+    }, 1500);
+  }, [appendLog, selectedStream?.streamUrl]);
+
+  const handleCopyMacVlcCommand = useCallback(async () => {
+    const url = selectedStream?.streamUrl;
+    if (!url) return;
+    const copied = await copyMacVlcTerminalCommand(url);
+    appendLog(
+      copied
+        ? '[Dashboard] macOS command copied — paste in Terminal: open -a VLC "rtsp://..."'
+        : '[Dashboard] Could not copy Terminal command',
+    );
+  }, [appendLog, selectedStream?.streamUrl]);
+
+  const handleCopyRtspUrl = useCallback(async () => {
+    const url = selectedStream?.streamUrl;
+    if (!url) return;
+    const copied = await copyRtspUrl(url);
+    appendLog(
+      copied
+        ? '[Dashboard] RTSP URL copied to clipboard'
+        : '[Dashboard] Could not copy RTSP URL — copy it manually from the panel',
+    );
+  }, [appendLog, selectedStream?.streamUrl]);
+
+  // Subscribe/unsubscribe live preview when the feed panel is toggled (webcam only)
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN || !selectedStreamId) return;
 
-    if (liveFeedOpen) {
+    if (liveFeedOpen && usesWebPreview) {
       setStreamLoading(true);
       setStreamInitTimedOut(false);
       setLiveFrame(null);
@@ -631,12 +710,16 @@ export default function DashboardApp() {
       ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
     } else {
       ws.send(JSON.stringify({ type: 'unsubscribe_stream' }));
-      setStreamLoading(false);
-      setStreamInitTimedOut(false);
-      setPreviewFrozen(false);
-      setLiveFrame(null);
+      if (!liveFeedOpen || !usesWebPreview) {
+        setStreamLoading(false);
+        setStreamInitTimedOut(false);
+        setPreviewFrozen(false);
+        if (!usesWebPreview) {
+          setLiveFrame(null);
+        }
+      }
     }
-  }, [liveFeedOpen, selectedStreamId]);
+  }, [liveFeedOpen, selectedStreamId, usesWebPreview]);
 
   // Sync WS device subscription when stream changes
   useEffect(() => {
@@ -687,6 +770,7 @@ export default function DashboardApp() {
     setStreamInitTimedOut(false);
     setStreamError(null);
     setPreviewFrozen(false);
+    setVlcLaunchHint('idle');
     setMotionActive(false);
     setMotionRatio(0);
     lastFrameAtRef.current = 0;
@@ -701,7 +785,7 @@ export default function DashboardApp() {
 
   // Reset stream loading only when switching streams (not on Recording/Processing status)
   useEffect(() => {
-    if (!liveFeedOpen) return;
+    if (!liveFeedOpen || !usesWebPreview) return;
     Promise.resolve().then(() => {
       setStreamLoading(true);
       setStreamInitTimedOut(false);
@@ -710,11 +794,11 @@ export default function DashboardApp() {
       lastFrameAtRef.current = 0;
       lastStreamRefreshAtRef.current = 0;
     });
-  }, [selectedStreamId, liveFeedOpen]);
+  }, [selectedStreamId, liveFeedOpen, usesWebPreview]);
 
-  // Detect frozen preview when WS frames stop arriving
+  // Detect frozen preview when WS frames stop arriving (webcam only)
   useEffect(() => {
-    if (!liveFeedOpen || !selectedStreamId || status === 'Offline') {
+    if (!liveFeedOpen || !selectedStreamId || !usesWebPreview || status === 'Offline') {
       setPreviewFrozen(false);
       return;
     }
@@ -730,11 +814,11 @@ export default function DashboardApp() {
     }, 1000);
 
     return () => clearInterval(intervalId);
-  }, [selectedStreamId, status, liveFeedOpen, refreshStreamPreview]);
+  }, [selectedStreamId, status, liveFeedOpen, usesWebPreview, refreshStreamPreview]);
 
-  // Auto-recover when the live feed never receives its first frame
+  // Auto-recover when the live feed never receives its first frame (webcam only)
   useEffect(() => {
-    if (!liveFeedOpen || !selectedStreamId || status === 'Offline' || !streamLoading) {
+    if (!liveFeedOpen || !selectedStreamId || !usesWebPreview || status === 'Offline' || !streamLoading) {
       return;
     }
 
@@ -753,6 +837,7 @@ export default function DashboardApp() {
     selectedStreamId,
     status,
     liveFeedOpen,
+    usesWebPreview,
     streamLoading,
     appendLog,
     refreshStreamPreview,
@@ -1187,11 +1272,7 @@ export default function DashboardApp() {
                             return (
                               <div
                                 key={stream.streamId}
-                                onClick={() => {
-                                  setSelectedStreamId(stream.streamId);
-                                  setSelectedDeviceId(dev.deviceId);
-                                  setLiveFeedOpen(true);
-                                }}
+                                onClick={() => openStreamFeed(stream)}
                                 className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${isSelected
                                   ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
                                   : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
@@ -1292,7 +1373,8 @@ export default function DashboardApp() {
           <div className="glass-panel p-5 relative">
             <div className={`flex justify-between items-center gap-2 flex-wrap ${liveFeedOpen ? 'mb-4' : ''}`}>
               <h2 className="text-[1.1rem] flex items-center gap-2">
-                <Video size={18} color="var(--color-secondary)" /> Live Camera Feed
+                <Video size={18} color="var(--color-secondary)" />
+                {usesWebPreview ? 'Live Camera Feed' : 'RTSP Stream'}
               </h2>
               <div className="flex items-center gap-2 flex-wrap">
                 {liveFeedOpen && status === 'Error' && (
@@ -1332,21 +1414,114 @@ export default function DashboardApp() {
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setLiveFeedOpen(true)}
+                    onClick={() => selectedStream && openStreamFeed(selectedStream)}
+                    disabled={!selectedStream}
                     className="btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5"
                   >
-                    <Play size={12} />
-                    Open Feed
+                    {usesWebPreview ? <Play size={12} /> : <ExternalLink size={12} />}
+                    {usesWebPreview ? 'Open Feed' : 'Open in VLC'}
                   </button>
                 )}
               </div>
             </div>
 
             {liveFeedOpen && (
-            <div className={`bg-[#090d16] rounded-xl w-full relative border border-[rgba(255,255,255,0.05)] ${activeStreamError && !liveFrame ? 'min-h-0' : 'min-h-[200px] overflow-hidden'}`}>
+            <div className={`bg-[#090d16] rounded-xl w-full relative border border-[rgba(255,255,255,0.05)] ${activeStreamError && !liveFrame && usesWebPreview ? 'min-h-0' : 'min-h-[200px] overflow-hidden'}`}>
 
               {selectedStreamId && status !== 'Offline' ? (
-                activeStreamError && !liveFrame ? (
+                !usesWebPreview ? (
+                  <div className="w-full p-4 sm:p-6 min-h-[200px] flex flex-col items-center justify-center text-center">
+                    <div className="bg-[rgba(124,58,237,0.12)] p-3 rounded-xl mb-4">
+                      <ExternalLink size={28} className="text-[#a78bfa]" />
+                    </div>
+                    <p className="text-[0.95rem] font-semibold text-text-primary">
+                      Watch live in VLC
+                    </p>
+                    <p className="text-[0.78rem] text-text-muted mt-2 max-w-md leading-relaxed">
+                      Click Open in VLC once. If your browser cannot launch VLC, copy the URL or use
+                      the macOS Terminal command below.
+                    </p>
+                    {vlcLaunchHint === 'opened' && (
+                      <p className="text-[0.75rem] text-emerald-400 mt-3">
+                        VLC should be opening. If not, use Copy RTSP URL or the Terminal command.
+                      </p>
+                    )}
+                    {vlcLaunchHint === 'failed' && (
+                      <div className="w-full mt-3 text-left bg-[rgba(245,158,11,0.1)] border border-[rgba(245,158,11,0.35)] rounded-xl p-3 max-w-lg">
+                        <p className="text-[0.8rem] font-semibold text-amber-300">
+                          Browser could not open vlc://
+                        </p>
+                        <p className="text-[0.75rem] text-text-muted mt-1 leading-relaxed">
+                          Install VLC from{' '}
+                          <a
+                            href="https://www.videolan.org/vlc/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#a78bfa] hover:underline"
+                          >
+                            videolan.org
+                          </a>
+                          , open the app once, then retry. Or in VLC:{' '}
+                          <span className="text-text-primary">Media → Open Network Stream</span> and paste
+                          the RTSP URL (already copied if you clicked Open in VLC).
+                        </p>
+                      </div>
+                    )}
+                    {selectedStream?.streamUrl && (
+                      <p className="text-[0.7rem] text-text-muted mt-3 break-all max-w-lg font-mono bg-[rgba(0,0,0,0.35)] rounded-lg px-3 py-2 border border-[rgba(255,255,255,0.06)]">
+                        {selectedStream.streamUrl}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenInVlc()}
+                        className="btn btn-primary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                      >
+                        <ExternalLink size={12} />
+                        Open in VLC
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyRtspUrl()}
+                        className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                      >
+                        <Copy size={12} />
+                        Copy RTSP URL
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyMacVlcCommand()}
+                        className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                      >
+                        <Terminal size={12} />
+                        Copy macOS command
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowConfigDialog(true)}
+                        className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                      >
+                        <Settings size={12} />
+                        Stream Settings
+                      </button>
+                    </div>
+                    {activeStreamError && (
+                      <div className="w-full mt-5 text-left bg-[rgba(244,63,94,0.08)] border border-[rgba(244,63,94,0.35)] rounded-xl p-4">
+                        <p className="text-[0.85rem] font-semibold text-danger">
+                          {getStreamErrorTitle(activeStreamError.errorType)}
+                        </p>
+                        <p className="text-[0.78rem] text-text-muted mt-2 leading-relaxed">
+                          {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-[0.72rem] text-text-muted mt-4 max-w-md">
+                      Motion detection and clip recording still run on the edge device. This panel only
+                      replaces the in-browser preview.
+                    </p>
+                  </div>
+                ) : activeStreamError && !liveFrame ? (
                   <div className="w-full p-4 sm:p-5">
                     <div className="bg-[rgba(244,63,94,0.08)] border border-[rgba(244,63,94,0.35)] rounded-xl p-4 sm:p-5">
                       <div className="flex items-start gap-3 mb-3">

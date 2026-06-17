@@ -644,6 +644,21 @@ async function processVideoClipInBackground(
   }
 }
 
+async function markEdgeDeviceOnline(deviceId: string): Promise<boolean> {
+  const result = await prisma.edgeDevice.updateMany({
+    where: { deviceId },
+    data: { status: 'Online', lastHeartbeat: new Date() },
+  });
+  return result.count > 0;
+}
+
+async function markEdgeDeviceOffline(deviceId: string): Promise<void> {
+  await prisma.edgeDevice.updateMany({
+    where: { deviceId },
+    data: { status: 'Offline' },
+  });
+}
+
 // WebSocket Connections
 wss.on('connection', async (ws: WebSocket, req) => {
   // Parse role and deviceId from query parameters
@@ -662,10 +677,16 @@ wss.on('connection', async (ws: WebSocket, req) => {
     console.log(`[WS] Edge device connected: ${deviceId}. Online count: ${activeDevices.size}`);
 
     // Update device status and set all its streams to Idle/Monitoring initially
-    await prisma.edgeDevice.update({
-      where: { deviceId },
-      data: { status: 'Online', lastHeartbeat: new Date() }
-    });
+    const deviceKnown = await markEdgeDeviceOnline(deviceId);
+    if (!deviceKnown) {
+      console.warn(
+        `[WS] Edge device ${deviceId} connected but is not registered. ` +
+          'Closing connection — edge agent should POST /api/devices/register first.',
+      );
+      activeDevices.delete(deviceId);
+      ws.close(4001, 'Device not registered');
+      return;
+    }
 
     const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
     for (const stream of streams) {
@@ -701,13 +722,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
         const data = JSON.parse(messageData);
         switch (data.type) {
           case 'heartbeat':
-            await prisma.edgeDevice.update({
-              where: { deviceId },
-              data: {
-                lastHeartbeat: new Date(),
-                status: 'Online',
-              }
-            });
+            await markEdgeDeviceOnline(deviceId);
             break;
           case 'status_change':
             if (data.streamId) {
@@ -850,10 +865,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
       activeDevices.delete(deviceId);
       console.log(`[WS] Edge device disconnected: ${deviceId}. Online count: ${activeDevices.size}`);
 
-      await prisma.edgeDevice.update({
-        where: { deviceId },
-        data: { status: 'Offline' }
-      });
+      await markEdgeDeviceOffline(deviceId);
 
       await prisma.cameraStream.updateMany({
         where: { deviceId },

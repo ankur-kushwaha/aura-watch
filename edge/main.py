@@ -1590,9 +1590,21 @@ class EdgeAgent:
         if self.preview_stall_timer:
             self.preview_stall_timer.cancel()
         if not self.shutdown_event.is_set():
-            self.reconnect_timer = threading.Timer(5.0, self.connect_ws)
+            self.reconnect_timer = threading.Timer(5.0, self._reconnect_cloud_ws)
             self.reconnect_timer.daemon = True
             self.reconnect_timer.start()
+
+    def _reconnect_cloud_ws(self):
+        if self.shutdown_event.is_set():
+            return
+        try:
+            print("[Edge WS] Re-registering device before reconnect...", flush=True)
+            registered = self.register_device()
+            streams_list = registered.get("streams", [])
+            self.update_streams_config(streams_list)
+        except Exception as exc:
+            print(f"[Edge WS] Re-registration failed: {exc}", flush=True)
+        self.connect_ws()
 
     def _on_ws_error(self, _ws, error):
         print(f"[Edge WS] Connection error: {error}", flush=True)
