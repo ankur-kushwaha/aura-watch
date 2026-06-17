@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Copy, Info, Plus, X } from 'lucide-react';
 import {
   Dialog,
@@ -6,14 +6,26 @@ import {
   DialogDescription,
   DialogTitle,
 } from '../../components/ui/dialog';
+import { apiFetch } from '../../api';
 import { buildInstallCmd } from '../utils/media';
 
 export function DeviceInstallTooltip({ orgId }: { orgId: string }) {
   const [open, setOpen] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
+  const [tailscaleAuthKey, setTailscaleAuthKey] = useState<string | null>(null);
 
-  const installCmd = buildInstallCmd(orgId);
+  const installCmd = buildInstallCmd(orgId, tailscaleAuthKey);
+
+  useEffect(() => {
+    if (!open) return;
+    void apiFetch('/devices/install-config')
+      .then((res) => res.json())
+      .then((data: { tailscaleAuthKey?: string | null }) => {
+        setTailscaleAuthKey(data.tailscaleAuthKey ?? null);
+      })
+      .catch(() => setTailscaleAuthKey(null));
+  }, [open]);
 
   const handleCopyCmd = () => {
     navigator.clipboard.writeText(installCmd).then(() => {
@@ -98,6 +110,9 @@ export function DeviceInstallTooltip({ orgId }: { orgId: string }) {
 
           <p className="text-[0.72rem] text-text-muted mt-4 leading-relaxed">
             After the agent connects, the device appears here. Add camera streams from the device card.
+            {tailscaleAuthKey
+              ? ' Tailscale is included in the install command for remote SSH access.'
+              : ' Set TAILSCALE_AUTH_KEY on the hub server to auto-join devices to your tailnet during install.'}
           </p>
         </DialogContent>
       </Dialog>

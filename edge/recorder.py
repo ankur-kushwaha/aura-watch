@@ -254,27 +254,27 @@ def upload_clip(
     clip_start_ms: Optional[int] = None,
 ):
     url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/upload"
-    size = os.path.getsize(filepath)
-    headers = {
-        "Content-Type": "application/octet-stream",
-        "x-filename": filename,
-        "Content-Length": str(size),
-    }
+    metadata: dict = {"filename": filename}
     if duration is not None and duration > 0:
-        headers["x-duration"] = f"{duration:.2f}"
+        metadata["duration"] = duration
     if stream_id:
-        headers["x-stream-id"] = stream_id
+        metadata["streamId"] = stream_id
     if track_events:
-        headers["x-track-events"] = json.dumps(track_events)
+        metadata["trackEvents"] = track_events
     if frame_width is not None and frame_width > 0:
-        headers["x-frame-width"] = str(frame_width)
+        metadata["frameWidth"] = frame_width
     if frame_height is not None and frame_height > 0:
-        headers["x-frame-height"] = str(frame_height)
+        metadata["frameHeight"] = frame_height
     if clip_start_ms is not None:
-        headers["x-clip-start-ms"] = str(clip_start_ms)
+        metadata["clipStartMs"] = clip_start_ms
 
     with open(filepath, "rb") as handle:
-        response = requests.post(url, data=handle, headers=headers, timeout=120)
+        response = requests.post(
+            url,
+            data={"metadata": json.dumps(metadata)},
+            files={"video": (filename, handle, "video/mp4")},
+            timeout=120,
+        )
 
     if response.status_code < 200 or response.status_code >= 300:
         raise RuntimeError(f"Upload failed ({response.status_code}): {response.text}")

@@ -122,7 +122,7 @@ def collect_system_metrics() -> dict[str, Any]:
     except (OSError, AttributeError):
         pass
 
-    return {
+    metrics: dict[str, Any] = {
         "hostname": platform.node(),
         "platform": platform.platform(),
         "cpu_percent": _cpu_usage_percent(),
@@ -139,6 +139,33 @@ def collect_system_metrics() -> dict[str, Any]:
         "uptime_seconds": uptime_sec,
         "timestamp": time.time(),
     }
+    metrics.update(_tailscale_metrics())
+    return metrics
+
+
+def _tailscale_metrics() -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return {}
+        data = json.loads(result.stdout)
+        self_info = data.get("Self") or {}
+        ips = self_info.get("TailscaleIPs") or []
+        tailscale_ip = next((ip for ip in ips if ":" not in str(ip)), ips[0] if ips else None)
+        dns_name = str(self_info.get("DNSName") or "").rstrip(".")
+        return {
+            "tailscale_ip": tailscale_ip,
+            "tailscale_hostname": dns_name or None,
+            "tailscale_online": data.get("BackendState") == "Running",
+        }
+    except Exception:
+        return {}
 
 
 @dataclass

@@ -72,6 +72,28 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/
 4. Creates a Python **virtual environment** at `edge/.venv` (avoids PEP 668 / `externally-managed-environment` on Raspberry Pi OS)
 5. On **ARM** (Pi): uses `requirements-pi.txt` (headless OpenCV) and installs CPU-only PyTorch first
 6. Optionally registers a **systemd** service (Linux) or starts the agent in the background
+7. On **Linux**, optionally installs **Tailscale** for remote SSH access to the device
+
+**Remote access (Tailscale):**
+
+Set a reusable auth key on the Cloud Hub (`TAILSCALE_AUTH_KEY` in backend `.env`). The dashboard install command will include it automatically. Each device joins your tailnet with Tailscale SSH enabled.
+
+```bash
+# Hub .env
+TAILSCALE_AUTH_KEY=tskey-auth-xxxxxxxxxxxx
+
+# Or pass manually on install
+TAILSCALE_AUTH_KEY='tskey-auth-...' CLOUD_URL='https://...' sh -c "$(curl -fsSL .../install.sh)"
+```
+
+After install, SSH to a device from any machine on your tailnet:
+
+```bash
+ssh pi@100.x.x.x          # Tailscale IP (shown in Device Metrics)
+ssh pi@aura-office-edge   # MagicDNS hostname
+```
+
+Generate keys at [Tailscale admin → Settings → Keys](https://login.tailscale.com/admin/settings/keys). Use a **reusable** key for fleet installs.
 
 **First install time (venv + dependencies):**
 
@@ -352,6 +374,7 @@ sudo edge/scripts/refresh-systemd-service.sh   # or ./edge/scripts/setup-service
 | Script | Purpose |
 |--------|---------|
 | `scripts/install.sh` | Full interactive / one-line installer |
+| `scripts/setup-tailscale.sh` | Install Tailscale and join tailnet for remote SSH |
 | `scripts/setup-venv.sh` | Create `.venv` and install Python deps |
 | `scripts/setup-service.sh` | Register systemd service (Linux) |
 | `scripts/refresh-systemd-service.sh` | Re-apply systemd unit from template (sudo) |

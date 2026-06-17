@@ -100,6 +100,9 @@ export interface EdgeDevice {
 
 export interface DeviceSystemMetrics {
   hostname?: string;
+  tailscale_ip?: string | null;
+  tailscale_hostname?: string | null;
+  tailscale_online?: boolean;
   platform?: string;
   cpu_percent?: number | null;
   cpu_count?: number;

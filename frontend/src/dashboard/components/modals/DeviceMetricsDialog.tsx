@@ -98,6 +98,17 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
                 <div className="text-text-muted text-[0.68rem] uppercase tracking-wide">Uptime</div>
                 <div className="font-medium mt-1">{formatUptime(metrics.uptime_seconds)}</div>
               </div>
+              {(metrics.tailscale_ip || metrics.tailscale_hostname) && (
+                <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3 col-span-2">
+                  <div className="text-text-muted text-[0.68rem] uppercase tracking-wide">Tailscale (remote SSH)</div>
+                  <div className="font-medium mt-1 truncate font-mono text-[0.75rem] text-sky-300">
+                    {metrics.tailscale_hostname || metrics.tailscale_ip}
+                  </div>
+                  {metrics.tailscale_hostname && metrics.tailscale_ip && (
+                    <p className="text-[0.68rem] text-text-muted mt-1">{metrics.tailscale_ip}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-3.5">

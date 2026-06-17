@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import Busboy from 'busboy';
 import prisma from '../services/db';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -16,6 +17,180 @@ import {
 
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
+
+interface ClipUploadMeta {
+  filename?: string;
+  streamId?: string;
+  duration?: number;
+  frameWidth?: number;
+  frameHeight?: number;
+  clipStartMs?: number;
+  trackEvents?: ReidTrackEvent[];
+}
+
+function finishClipUpload(
+  res: Response,
+  filepath: string,
+  filename: string,
+  deviceId: string,
+  meta: ClipUploadMeta,
+) {
+  console.log(`[Cloud Hub] Upload finished and saved to ${filepath}`);
+  res.status(200).json({ message: 'Upload successful', filename });
+
+  const duration = meta.duration ?? 10.0;
+  const timestamp = meta.clipStartMs ? new Date(meta.clipStartMs) : new Date();
+  const streamId = meta.streamId || `${deviceId}_default`;
+  const trackEvents = Array.isArray(meta.trackEvents) ? meta.trackEvents : [];
+
+  if (onClipUploadedCallback) {
+    onClipUploadedCallback(
+      filepath,
+      filename,
+      timestamp,
+      deviceId,
+      duration,
+      streamId,
+      trackEvents,
+      meta.frameWidth,
+      meta.frameHeight,
+    ).catch((err) => console.error(`[Cloud Hub] Error processing uploaded clip ${filename}:`, err));
+  }
+}
+
+function handleRawClipUpload(
+  req: Request,
+  res: Response,
+  deviceId: string,
+  deviceName: string,
+  tempDir: string,
+) {
+  const streamId = (req.headers['x-stream-id'] as string) || `${deviceId}_default`;
+  const filename = (req.headers['x-filename'] as string) || `clip_${Date.now()}_${deviceId}.mp4`;
+  const filepath = path.join(tempDir, filename);
+
+  console.log(`[Cloud Hub] Receiving video file upload: ${filename} for device: ${deviceName}, stream: ${streamId}`);
+
+  const fileStream = fs.createWriteStream(filepath);
+
+  req.pipe(fileStream);
+
+  fileStream.on('error', (err) => {
+    console.error('[Cloud Hub] File stream error:', err);
+    res.status(500).json({ error: 'File writing failed' });
+  });
+
+  fileStream.on('finish', () => {
+    const durationHeader = req.headers['x-duration'];
+    const duration = durationHeader ? parseFloat(String(durationHeader)) : undefined;
+
+    const clipStartHeader = req.headers['x-clip-start-ms'] as string | undefined;
+    const clipStartMs = clipStartHeader ? parseInt(clipStartHeader, 10) : undefined;
+
+    const frameWidthHeader = req.headers['x-frame-width'] as string | undefined;
+    const frameHeightHeader = req.headers['x-frame-height'] as string | undefined;
+    const frameWidth = frameWidthHeader ? parseInt(frameWidthHeader, 10) : undefined;
+    const frameHeight = frameHeightHeader ? parseInt(frameHeightHeader, 10) : undefined;
+
+    let trackEvents: ReidTrackEvent[] = [];
+    const trackEventsHeader = req.headers['x-track-events'] as string | undefined;
+    if (trackEventsHeader) {
+      try {
+        const parsed = JSON.parse(trackEventsHeader);
+        if (Array.isArray(parsed)) {
+          trackEvents = parsed;
+        }
+      } catch (err) {
+        console.warn('[Cloud Hub] Failed to parse x-track-events header:', err);
+      }
+    }
+
+    finishClipUpload(res, filepath, filename, deviceId, {
+      streamId,
+      duration,
+      clipStartMs,
+      frameWidth,
+      frameHeight,
+      trackEvents,
+    });
+  });
+}
+
+function handleMultipartClipUpload(
+  req: Request,
+  res: Response,
+  deviceId: string,
+  deviceName: string,
+  tempDir: string,
+) {
+  const busboy = Busboy({ headers: req.headers });
+  let metadata: ClipUploadMeta = {};
+  let filename = `clip_${Date.now()}_${deviceId}.mp4`;
+  let filepath = '';
+  let fileWritePromise: Promise<void> | null = null;
+  let responded = false;
+
+  const fail = (status: number, message: string) => {
+    if (responded) return;
+    responded = true;
+    res.status(status).json({ error: message });
+  };
+
+  busboy.on('field', (name, value) => {
+    if (name !== 'metadata') return;
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object') {
+        metadata = parsed as ClipUploadMeta;
+      }
+    } catch (err) {
+      console.warn('[Cloud Hub] Failed to parse clip upload metadata field:', err);
+    }
+  });
+
+  busboy.on('file', (fieldname, file, info) => {
+    if (fieldname !== 'video') {
+      file.resume();
+      return;
+    }
+
+    filename = metadata.filename || info.filename || filename;
+    filepath = path.join(tempDir, filename);
+    const streamId = metadata.streamId || `${deviceId}_default`;
+    console.log(`[Cloud Hub] Receiving video file upload: ${filename} for device: ${deviceName}, stream: ${streamId}`);
+
+    const fileStream = fs.createWriteStream(filepath);
+    fileWritePromise = new Promise((resolve, reject) => {
+      file.pipe(fileStream);
+      fileStream.on('finish', () => resolve());
+      fileStream.on('error', reject);
+      file.on('error', reject);
+    });
+  });
+
+  busboy.on('finish', async () => {
+    if (responded) return;
+    try {
+      if (!fileWritePromise || !filepath) {
+        fail(400, 'No video file in upload');
+        return;
+      }
+      await fileWritePromise;
+      responded = true;
+      finishClipUpload(res, filepath, filename, deviceId, metadata);
+    } catch (err) {
+      console.error('[Cloud Hub] Multipart clip upload error:', err);
+      fail(500, 'File writing failed');
+    }
+  });
+
+  busboy.on('error', (err) => {
+    console.error('[Cloud Hub] Busboy error:', err);
+    fail(500, 'Upload parse failed');
+  });
+
+  req.pipe(busboy);
+}
 
 export type ClipUploadCallback = (
   filepath: string,
@@ -149,6 +324,19 @@ router.post('/check-versions', async (req: Request, res: Response) => {
     console.error('Error checking device versions:', error);
     res.status(500).json({ error: 'Failed to check device versions' });
   }
+});
+
+/**
+ * GET /api/devices/install-config
+ * Optional hub settings for the edge install command (e.g. Tailscale auth key).
+ */
+router.get('/install-config', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const tailscaleAuthKey = process.env.TAILSCALE_AUTH_KEY?.trim() || null;
+  res.json({ tailscaleAuthKey });
 });
 
 /**
@@ -361,14 +549,12 @@ router.delete('/:deviceId', async (req: Request, res: Response) => {
 
 /**
  * POST /api/devices/:deviceId/upload
- * Edge device uploads a raw recorded video clip
+ * Edge device uploads a raw recorded video clip (multipart form or legacy raw stream)
  */
 router.post('/:deviceId/upload', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
-  const streamId = (req.headers['x-stream-id'] as string) || `${deviceId}_default`;
-  const filename = req.headers['x-filename'] as string || `clip_${Date.now()}_${deviceId}.mp4`;
+  const contentType = req.headers['content-type'] || '';
   const tempDir = path.join(__dirname, '../../storage/temp');
-  const filepath = path.join(tempDir, filename);
 
   try {
     const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
@@ -376,65 +562,16 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Device not found. Register first.' });
     }
 
-    // Ensure temp directory exists
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    console.log(`[Cloud Hub] Receiving video file upload: ${filename} for device: ${device.name}, stream: ${streamId}`);
+    if (contentType.includes('multipart/form-data')) {
+      handleMultipartClipUpload(req, res, deviceId, device.name, tempDir);
+      return;
+    }
 
-    const fileStream = fs.createWriteStream(filepath);
-    
-    req.pipe(fileStream);
-
-    fileStream.on('error', (err) => {
-      console.error('[Cloud Hub] File stream error:', err);
-      res.status(500).json({ error: 'File writing failed' });
-    });
-
-    fileStream.on('finish', () => {
-      console.log(`[Cloud Hub] Upload finished and saved to ${filepath}`);
-      res.status(200).json({ message: 'Upload successful', filename });
-
-      const durationHeader = req.headers['x-duration'];
-      const duration = durationHeader ? parseFloat(String(durationHeader)) : 10.0;
-
-      const clipStartHeader = req.headers['x-clip-start-ms'] as string | undefined;
-      const timestamp = clipStartHeader ? new Date(parseInt(clipStartHeader, 10)) : new Date();
-
-      const frameWidthHeader = req.headers['x-frame-width'] as string | undefined;
-      const frameHeightHeader = req.headers['x-frame-height'] as string | undefined;
-      const frameWidth = frameWidthHeader ? parseInt(frameWidthHeader, 10) : undefined;
-      const frameHeight = frameHeightHeader ? parseInt(frameHeightHeader, 10) : undefined;
-
-      let trackEvents: ReidTrackEvent[] = [];
-      const trackEventsHeader = req.headers['x-track-events'] as string | undefined;
-      if (trackEventsHeader) {
-        try {
-          const parsed = JSON.parse(trackEventsHeader);
-          if (Array.isArray(parsed)) {
-            trackEvents = parsed;
-          }
-        } catch (err) {
-          console.warn('[Cloud Hub] Failed to parse x-track-events header:', err);
-        }
-      }
-
-      // Run background processing (Gemini pipelines, MongoDB, Qdrant) asynchronously
-      if (onClipUploadedCallback) {
-        onClipUploadedCallback(
-          filepath,
-          filename,
-          timestamp,
-          deviceId,
-          duration,
-          streamId,
-          trackEvents,
-          frameWidth,
-          frameHeight,
-        ).catch((err) => console.error(`[Cloud Hub] Error processing uploaded clip ${filename}:`, err));
-      }
-    });
+    handleRawClipUpload(req, res, deviceId, device.name, tempDir);
   } catch (error) {
     console.error('Error uploading clip:', error);
     res.status(500).json({ error: 'Failed to process file upload' });

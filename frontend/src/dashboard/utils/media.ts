@@ -13,7 +13,8 @@ export function identityCoverUrl(identityId: string) {
   return `${API_BASE}/reid/identities/${identityId}/cover${qs}`;
 }
 
-export function buildInstallCmd(enrollmentToken?: string) {
+export function buildInstallCmd(enrollmentToken?: string, tailscaleAuthKey?: string | null) {
   const tokenPart = enrollmentToken ? ` ENROLLMENT_TOKEN='${enrollmentToken}'` : '';
-  return `CLOUD_URL='${HUB_HTTP}'${tokenPart} sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
+  const tailscalePart = tailscaleAuthKey ? ` TAILSCALE_AUTH_KEY='${tailscaleAuthKey}'` : '';
+  return `CLOUD_URL='${HUB_HTTP}'${tokenPart}${tailscalePart} sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
 }

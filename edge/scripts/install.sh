@@ -363,6 +363,56 @@ PYTHON_CMD="$EDGE_DIR/.venv/bin/python"
 echo "   ✅ Python dependencies installed in $EDGE_DIR/.venv"
 echo ""
 
+setup_tailscale() {
+    TAILSCALE_SCRIPT="$EDGE_DIR/scripts/setup-tailscale.sh"
+    if [ ! -f "$TAILSCALE_SCRIPT" ]; then
+        echo "   ⚠️  Tailscale setup script not found: $TAILSCALE_SCRIPT"
+        return 1
+    fi
+    chmod +x "$TAILSCALE_SCRIPT"
+    echo "🔐 Setting up Tailscale for remote SSH access..."
+    if sh "$TAILSCALE_SCRIPT" "$DEVICE_NAME"; then
+        echo "   ✅ Tailscale setup complete."
+        return 0
+    fi
+    echo "   ⚠️  Tailscale setup did not complete. Remote SSH may be unavailable."
+    return 1
+}
+
+SHOULD_SETUP_TAILSCALE=false
+if [ "$(detect_os)" = "linux" ]; then
+    if [ -n "${TAILSCALE_AUTH_KEY:-}" ]; then
+        SHOULD_SETUP_TAILSCALE=true
+    elif [ "$NONINTERACTIVE" = true ]; then
+        case "${INSTALL_TAILSCALE:-false}" in
+            [Yy1]*|[Tt][Rr][Uu][Ee]*) SHOULD_SETUP_TAILSCALE=true ;;
+        esac
+    else
+        echo "🔐 Tailscale enables remote SSH to this device over your private network."
+        read -r -p "Install and configure Tailscale? (y/n) [y]: " INSTALL_TS </dev/tty
+        INSTALL_TS=${INSTALL_TS:-y}
+        case "$INSTALL_TS" in
+            [Yy]*) SHOULD_SETUP_TAILSCALE=true ;;
+        esac
+        if [ "$SHOULD_SETUP_TAILSCALE" = true ] && [ -z "${TAILSCALE_AUTH_KEY:-}" ]; then
+            echo ""
+            echo "   Tip: set TAILSCALE_AUTH_KEY for non-interactive join (from Tailscale admin → Settings → Keys)."
+            read -r -p "Tailscale auth key (leave blank to finish install manually): " TS_KEY_INPUT </dev/tty
+            if [ -n "$TS_KEY_INPUT" ]; then
+                TAILSCALE_AUTH_KEY="$TS_KEY_INPUT"
+                export TAILSCALE_AUTH_KEY
+            fi
+        fi
+    fi
+
+    if [ "$SHOULD_SETUP_TAILSCALE" = true ]; then
+        setup_tailscale || true
+    elif [ "$NONINTERACTIVE" != true ]; then
+        echo "   ℹ️  Skipping Tailscale. Install later: sh $EDGE_DIR/scripts/setup-tailscale.sh"
+    fi
+    echo ""
+fi
+
 install_systemd_service() {
     echo "⚙️  Running daemon registration..."
     chmod +x scripts/setup-service.sh scripts/refresh-systemd-service.sh 2>/dev/null || true
@@ -447,6 +497,17 @@ if [ "$(detect_os)" = "linux" ]; then
     else
         echo "To register the systemd service (auto-start on boot):"
         echo "   cd $EDGE_DIR && sh scripts/setup-service.sh"
+    fi
+    if command -v tailscale >/dev/null 2>&1 && tailscale ip -4 >/dev/null 2>&1; then
+        TS_IP=$(tailscale ip -4 2>/dev/null || true)
+        echo ""
+        echo "Remote SSH via Tailscale:"
+        echo "   ssh $(id -un)@${TS_IP}"
+        echo "   (or check Device Metrics in the dashboard for the tailnet hostname)"
+    elif [ -f "$EDGE_DIR/scripts/setup-tailscale.sh" ]; then
+        echo ""
+        echo "To enable remote SSH via Tailscale:"
+        echo "   TAILSCALE_AUTH_KEY='tskey-auth-...' sh $EDGE_DIR/scripts/setup-tailscale.sh \"$DEVICE_NAME\""
     fi
     echo ""
 fi
