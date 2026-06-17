@@ -5,6 +5,7 @@ import type { ClipObjectDetection, ClipReidLog, CropClipPlayback, VideoClip } fr
 import { getClipDetectionCount } from '../utils/clips';
 import { formatClipDuration, formatDate } from '../utils/format';
 import { mediaUrl } from '../utils/media';
+import { tryParseClipAiAnalysis } from '../utils/summary';
 import { CropThumbnail } from './CropThumbnail';
 import { IdsInfoIcon, InlineCopyIds } from './IdsInfoIcon';
 import { buildTimelineIdEntries } from './idEntries';
@@ -43,7 +44,7 @@ export function ClipPreviewPanel({
   const selectedDurationLabel = formatClipDuration(clip.duration);
   const selectedDetectionCount = getClipDetectionCount(clip);
   const detectionSummary = clip.summary?.trim();
-  const aiSummary = clip.aiSummary?.trim();
+  const aiAnalysis = tryParseClipAiAnalysis(clip.aiSummary);
   const canGenerateAiSummary = orgSettings.aiChat && !!onGenerateAiSummary;
   const [videoError, setVideoError] = useState<string | null>(null);
 
@@ -94,7 +95,7 @@ export function ClipPreviewPanel({
           </div>
         </div>
         <InlineCopyIds ids={buildTimelineIdEntries({ clipId: clip.id })} />
-        {orgSettings.videoSummary && (
+        {orgSettings.videoSummary && !aiAnalysis && (
           <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5 mt-2">
             <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-1 tracking-wider flex items-center gap-1">
               <ScanSearch size={12} />Detection Summary
@@ -110,7 +111,7 @@ export function ClipPreviewPanel({
               <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase tracking-wider flex items-center gap-1">
                 <Sparkles size={12} />AI Summary
               </p>
-              {canGenerateAiSummary && !aiSummary && (
+              {canGenerateAiSummary && (
                 <button
                   type="button"
                   onClick={onGenerateAiSummary}
@@ -131,8 +132,48 @@ export function ClipPreviewPanel({
                 </button>
               )}
             </div>
-            {aiSummary ? (
-              <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{aiSummary}</p>
+            {aiAnalysis ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{aiAnalysis.summary}</p>
+                <div className="flex flex-wrap gap-2 text-[0.72rem]">
+                  <span className="bg-[rgba(124,58,237,0.12)] text-[#c4b5fd] px-2 py-0.5 rounded-full border border-[rgba(124,58,237,0.2)]">
+                    {aiAnalysis.objectCounts.person} person{aiAnalysis.objectCounts.person === 1 ? '' : 's'}
+                  </span>
+                  <span className="bg-[rgba(124,58,237,0.12)] text-[#c4b5fd] px-2 py-0.5 rounded-full border border-[rgba(124,58,237,0.2)]">
+                    {aiAnalysis.objectCounts.vehicle} vehicle{aiAnalysis.objectCounts.vehicle === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {aiAnalysis.objects.length > 0 && (
+                  <div className="flex flex-col gap-1.5 mt-0.5">
+                    {aiAnalysis.objects.map((obj, index) => (
+                      <div
+                        key={index}
+                        className="text-[0.75rem] text-text-muted leading-snug border-l-2 border-[rgba(124,58,237,0.25)] pl-2"
+                      >
+                        {obj.type === 'person' ? (
+                          <>
+                            <span className="text-[#c4b5fd] font-medium capitalize">Person {index + 1}</span>
+                            {obj.gender && <span> · {obj.gender}</span>}
+                            {obj.age && <span> · {obj.age}</span>}
+                            {obj.clothingColors?.length ? (
+                              <span> · {obj.clothingColors.join(', ')}</span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-[#c4b5fd] font-medium capitalize">Vehicle {index + 1}</span>
+                            {obj.color && <span> · {obj.color}</span>}
+                            {obj.vehicleType && <span> · {obj.vehicleType}</span>}
+                            {obj.licensePlate && <span> · plate {obj.licensePlate}</span>}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : clip.aiSummary?.trim() ? (
+              <p className="text-[0.8rem] text-text-secondary leading-[1.4]">{clip.aiSummary}</p>
             ) : (
               <p className="text-[0.75rem] text-text-muted leading-[1.4]">
                 {generatingAiSummary

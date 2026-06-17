@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import OpenAI from 'openai';
 import { AIService } from './types';
+import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
 
 const execAsync = promisify(exec);
@@ -12,17 +13,6 @@ const DEFAULT_CHAT_MODEL = 'openrouter/free';
 const DEFAULT_VIDEO_MODEL = 'nvidia/nemotron-nano-12b-v2-vl:free';
 const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
 const MAX_FRAMES = 10;
-
-const VIDEO_SUMMARY_PROMPT = (cameraName: string) => `You are an expert AI video surveillance assistant monitoring a stream named "${cameraName}". 
-Analyze this 10-second security video clip. 
-Summarize what happens in the video in a concise paragraph (2-4 sentences). 
-Include specific details such as:
-- Any motion or changes detected.
-- Objects, people, animals, or vehicles that appear.
-- Actions taken (e.g., a person walking, a door opening, a car driving by).
-- For each person clearly visible, include searchable visual attributes when discernible: approximate age group (child, teen, adult, elderly), perceived gender presentation, clothing colors and types (e.g., red jacket, blue jeans), and accessories (hat, backpack, bag).
-- For each vehicle clearly visible, include searchable attributes when discernible: color, type/body style (sedan, SUV, truck, van, motorcycle, bicycle), and distinguishing features (e.g., roof rack, trailer, license plate visible).
-Be objective, precise, and descriptive. Only state attributes you can reasonably infer from visible appearance; use cautious wording when uncertain. Do not assume context not shown in the video.`;
 
 export class OpenRouterService implements AIService {
   private client: OpenAI;
@@ -59,9 +49,14 @@ export class OpenRouterService implements AIService {
     };
   }
 
-  private async chatCompletion(model: string, messages: any[], tools?: any[]): Promise<any> {
+  private async chatCompletion(
+    model: string,
+    messages: any[],
+    options?: { tools?: any[]; jsonMode?: boolean },
+  ): Promise<any> {
     const body: Record<string, unknown> = { model, messages };
-    if (tools) body.tools = tools;
+    if (options?.tools) body.tools = options.tools;
+    if (options?.jsonMode) body.response_format = { type: 'json_object' };
 
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -139,7 +134,7 @@ export class OpenRouterService implements AIService {
         content: [
           {
             type: 'text',
-            text: VIDEO_SUMMARY_PROMPT(cameraName),
+            text: buildVideoAnalysisPrompt(cameraName),
           },
           {
             type: 'video_url',
@@ -149,9 +144,10 @@ export class OpenRouterService implements AIService {
           },
         ],
       },
-    ]);
+    ], { jsonMode: true });
 
-    return data.choices[0].message?.content || 'No summary could be generated.';
+    const raw = data.choices[0].message?.content || '';
+    return normalizeAiSummaryJson(raw);
   }
 
   private async summarizeWithFrames(filepath: string, cameraName: string): Promise<string> {
@@ -169,7 +165,7 @@ export class OpenRouterService implements AIService {
         content: [
           {
             type: 'text',
-            text: VIDEO_SUMMARY_PROMPT(cameraName),
+            text: buildVideoAnalysisPrompt(cameraName),
           },
           ...base64Frames.map(frame => ({
             type: 'image_url',
@@ -180,9 +176,10 @@ export class OpenRouterService implements AIService {
           })),
         ],
       },
-    ]);
+    ], { jsonMode: true });
 
-    return data.choices[0].message?.content || 'No summary could be generated.';
+    const raw = data.choices[0].message?.content || '';
+    return normalizeAiSummaryJson(raw);
   }
 
   private shouldUseNativeVideo(): boolean {

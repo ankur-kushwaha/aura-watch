@@ -1,6 +1,7 @@
 import type { ReidTrackEvent } from '../routes/reid';
 import type { TrackAppearance } from './cropAppearance';
 import { formatTrackAppearance, analyzeAppearanceFromBbox } from './cropAppearance';
+import { formatAiAnalysisForContext, formatAiAnalysisForSearch } from './ai/clipAiAnalysis';
 
 export type { TrackAppearance as PersonAppearance };
 
@@ -344,9 +345,9 @@ function estimatePeakConcurrent(events: ReidTrackEvent[]): number {
   return peak;
 }
 
-export function buildClipSearchText(summary: string, aiSummary?: string | null): string {
-  const parts = [summary.trim(), aiSummary?.trim()].filter(Boolean);
-  return parts.join('\n\n');
+/** Text embedded in Qdrant — AI summary only; YOLO text is excluded to avoid conflicting search results. */
+export function buildClipSearchText(_summary: string, aiSummary?: string | null): string {
+  return formatAiAnalysisForSearch(aiSummary);
 }
 
 export function buildClipIndexStats(detectedObjects: unknown): {
@@ -380,12 +381,9 @@ export function formatClipContextSummary(payload: {
   summary?: string | null;
   aiSummary?: string | null;
 }): string {
-  const detection = payload.summary?.trim();
-  const ai = payload.aiSummary?.trim();
-  if (detection && ai) {
-    return `Detection summary: ${detection}\nAI summary: ${ai}`;
-  }
-  return detection || ai || 'No summary available.';
+  const ai = formatAiAnalysisForContext(payload.aiSummary);
+  if (ai) return ai;
+  return payload.summary?.trim() || 'No summary available.';
 }
 
 export function selectReidTrackEvents(trackEvents: ReidTrackEvent[]): ReidTrackEvent[] {

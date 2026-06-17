@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import prisma from './db';
 import { summarizeVideo } from './ai';
+import { type ClipAiAnalysis, tryParseClipAiAnalysis } from './ai/clipAiAnalysis';
 import { indexClipForSemanticSearch } from './clipIndex';
 import { fetchFileFromEdge } from './edgeFileFetch';
 import { getDeviceOrgId } from './orgScope';
@@ -9,10 +10,14 @@ import { transcodeForGemini } from './videoTranscode';
 
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../storage/videos');
 
+function toAiSummaryResponse(raw?: string | null): ClipAiAnalysis | null {
+  return tryParseClipAiAnalysis(raw);
+}
+
 export async function generateClipAiSummary(clipId: string): Promise<{
   id: string;
   summary: string;
-  aiSummary: string;
+  aiSummary: ClipAiAnalysis;
 }> {
   const clip = await prisma.videoClip.findUnique({ where: { id: clipId } });
   if (!clip) {
@@ -23,11 +28,12 @@ export async function generateClipAiSummary(clipId: string): Promise<{
     throw new Error('Clip is not linked to an edge device');
   }
 
-  if (clip.aiSummary?.trim()) {
+  const existing = toAiSummaryResponse(clip.aiSummary);
+  if (existing) {
     return {
       id: clip.id,
       summary: clip.summary,
-      aiSummary: clip.aiSummary,
+      aiSummary: existing,
     };
   }
 
@@ -47,20 +53,25 @@ export async function generateClipAiSummary(clipId: string): Promise<{
     fs.writeFileSync(tempPath, data);
     geminiPath = await transcodeForGemini(tempPath);
     const summaryPath = geminiPath !== tempPath ? geminiPath : tempPath;
-    const aiSummary = await summarizeVideo(summaryPath, clip.camera);
+    const aiSummaryJson = await summarizeVideo(summaryPath, clip.camera);
 
     const updated = await prisma.videoClip.update({
       where: { id: clip.id },
-      data: { aiSummary },
+      data: { aiSummary: aiSummaryJson },
     });
 
     const orgId = clip.deviceId ? await getDeviceOrgId(clip.deviceId) : null;
     await indexClipForSemanticSearch(updated, orgId ?? undefined);
 
+    const aiSummary = toAiSummaryResponse(updated.aiSummary ?? aiSummaryJson);
+    if (!aiSummary) {
+      throw new Error('Failed to parse AI summary response');
+    }
+
     return {
       id: updated.id,
       summary: updated.summary,
-      aiSummary: updated.aiSummary ?? aiSummary,
+      aiSummary,
     };
   } finally {
     if (geminiPath && geminiPath !== tempPath && fs.existsSync(geminiPath)) {

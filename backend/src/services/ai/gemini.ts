@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import * as fs from 'fs';
 import { AIService } from './types';
+import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
 
 export class GeminiService implements AIService {
@@ -72,24 +73,18 @@ export class GeminiService implements AIService {
             role: 'user',
             parts: [
               { fileData: { fileUri: fileInfo.uri!, mimeType: fileInfo.mimeType! } },
-              {
-                text: `You are an expert AI video surveillance assistant monitoring a stream named "${cameraName}". 
-Analyze this 10-second security video clip. 
-Summarize what happens in the video in a concise paragraph (2-4 sentences). 
-Include specific details such as:
-- Any motion or changes detected.
-- Objects, people, animals, or vehicles that appear.
-- Actions taken (e.g., a person walking, a door opening, a car driving by).
-- Lighting changes or environment details.
-Be objective, precise, and descriptive. Do not assume context not shown in the video.`
-              }
-            ]
-          }
-        ]
+              { text: buildVideoAnalysisPrompt(cameraName) },
+            ],
+          },
+        ],
+        config: {
+          responseMimeType: 'application/json',
+        },
       });
 
-      const summary = response.text || 'No summary could be generated.';
-      console.log(`[Gemini] Summary generated: "${summary}"`);
+      const raw = response.text || '';
+      const summary = normalizeAiSummaryJson(raw);
+      console.log(`[Gemini] Summary generated: ${summary}`);
 
       return summary;
     } finally {

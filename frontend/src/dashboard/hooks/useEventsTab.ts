@@ -12,6 +12,7 @@ import type {
   VideoClip,
 } from '../types';
 import { buildClipsQueryString } from '../utils/clips';
+import { serializeClipAiAnalysis } from '../utils/summary';
 
 export interface UseEventsTabOptions {
   devices: EdgeDevice[];
@@ -238,7 +239,7 @@ export function useEventsTab({
       const updatedClip: VideoClip = {
         ...selectedClip,
         summary: result.summary,
-        aiSummary: result.aiSummary,
+        aiSummary: serializeClipAiAnalysis(result.aiSummary),
       };
       setSelectedClip(updatedClip);
       setClips((prev) => prev.map((clip) => (clip.id === updatedClip.id ? updatedClip : clip)));

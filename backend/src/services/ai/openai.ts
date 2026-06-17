@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import OpenAI from 'openai';
 import { AIService } from './types';
+import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
 
 const execAsync = promisify(exec);
@@ -94,31 +95,24 @@ export class OpenAIService implements AIService {
             content: [
               {
                 type: 'text',
-                text: `You are an expert AI video surveillance assistant monitoring a stream named "${cameraName}". 
-Analyze this sequence of frames from a 10-second security video clip. 
-Summarize what happens in the video in a concise paragraph (2-4 sentences). 
-Include specific details such as:
-- Any motion or changes detected.
-- Objects, people, animals, or vehicles that appear.
-- Actions taken (e.g., a person walking, a door opening, a car driving by).
-- For each person clearly visible, include searchable visual attributes when discernible: approximate age group (child, teen, adult, elderly), perceived gender presentation, clothing colors and types (e.g., red jacket, blue jeans), and accessories (hat, backpack, bag).
-- For each vehicle clearly visible, include searchable attributes when discernible: color, type/body style (sedan, SUV, truck, van, motorcycle, bicycle), and distinguishing features (e.g., roof rack, trailer, license plate visible).
-Be objective, precise, and descriptive. Only state attributes you can reasonably infer from visible appearance; use cautious wording when uncertain. Do not assume context not shown in the video.`
+                text: buildVideoAnalysisPrompt(cameraName),
               },
               ...base64Frames.map(frame => ({
                 type: 'image_url' as const,
                 image_url: {
                   url: `data:image/jpeg;base64,${frame}`,
-                  detail: 'low' as const // 85 tokens per frame, optimal for speed/cost
-                }
-              }))
-            ]
-          }
-        ]
+                  detail: 'low' as const,
+                },
+              })),
+            ],
+          },
+        ],
+        response_format: { type: 'json_object' },
       });
 
-      const summary = response.choices[0].message?.content || 'No summary could be generated.';
-      console.log(`[OpenAI] Summary generated: "${summary}"`);
+      const raw = response.choices[0].message?.content || '';
+      const summary = normalizeAiSummaryJson(raw);
+      console.log(`[OpenAI] Summary generated: ${summary}`);
       return summary;
     } catch (error) {
       console.error('[OpenAI] Error generating video summary:', error);

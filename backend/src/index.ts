@@ -587,10 +587,7 @@ async function processVideoClipInBackground(
     await linkDetectionsToClip(clipDb.id, filename);
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata to MongoDB with ID: ${clipDb.id}`);
 
-    if (orgSettings?.semanticSearch !== false && summary.trim()) {
-      await indexClipForSemanticSearch(clipDb, orgId ?? undefined);
-      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Successfully indexed clip in Qdrant.`);
-    } else if (orgSettings?.semanticSearch === false) {
+    if (orgSettings?.semanticSearch === false) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Semantic search indexing disabled for this organization.`);
     }
     

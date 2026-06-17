@@ -17,7 +17,10 @@ export interface ClipIndexInput {
 
 export async function indexClipForSemanticSearch(clip: ClipIndexInput, orgId?: string): Promise<void> {
   const searchText = buildClipSearchText(clip.summary, clip.aiSummary);
-  if (!searchText.trim()) return;
+  if (!searchText.trim()) {
+    console.log(`[ClipIndex] Skipping Qdrant index for clip ${clip.id} — no AI summary yet`);
+    return;
+  }
 
   const vector = await generateTextEmbedding(searchText);
   const stats = buildClipIndexStats(clip.detectedObjects);

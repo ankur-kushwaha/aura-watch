@@ -33,10 +33,37 @@ export interface OrgMember {
   createdAt: string;
 }
 
+export interface ClipAiPersonObject {
+  type: 'person';
+  age?: string | null;
+  gender?: string | null;
+  clothingColors?: string[];
+}
+
+export interface ClipAiVehicleObject {
+  type: 'vehicle';
+  color?: string | null;
+  vehicleType?: string | null;
+  licensePlate?: string | null;
+}
+
+export type ClipAiDetectedObject = ClipAiPersonObject | ClipAiVehicleObject;
+
+export interface ClipAiObjectCounts {
+  person: number;
+  vehicle: number;
+}
+
+export interface ClipAiAnalysis {
+  summary: string;
+  objectCounts: ClipAiObjectCounts;
+  objects: ClipAiDetectedObject[];
+}
+
 export interface ClipAiSummaryResult {
   id: string;
   summary: string;
-  aiSummary: string;
+  aiSummary: ClipAiAnalysis;
 }
 
 export interface AuthUser {

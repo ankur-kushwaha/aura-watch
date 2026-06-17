@@ -208,81 +208,87 @@ export async function fallbackSearchClips(
     }
 
     if (terms.length === 0) {
-      // Return recent clips if no search terms
       const recentClips = await prisma.videoClip.findMany({
-        where: baseWhere,
+        where: {
+          ...baseWhere,
+          aiSummary: { not: null },
+        },
         orderBy: { timestamp: 'desc' },
         take: limit,
       });
-      return recentClips.map(clip => ({
-        id: mongoIdToUuid(clip.id),
-        version: 1,
-        score: 0.1,
-        payload: {
-          mongoId: clip.id,
-          filepath: clip.filepath,
-          filename: clip.filename,
-          timestamp: clip.timestamp.toISOString(),
-          summary: clip.summary,
-          aiSummary: clip.aiSummary,
-          searchText: buildClipSearchText(clip.summary, clip.aiSummary),
-          camera: clip.camera,
-          deviceId: clip.deviceId,
-          streamId: clip.streamId,
-        }
-      }));
+      return recentClips
+        .map(clip => {
+          const searchText = buildClipSearchText(clip.summary, clip.aiSummary);
+          if (!searchText.trim()) return null;
+          return {
+            id: mongoIdToUuid(clip.id),
+            version: 1,
+            score: 0.1,
+            payload: {
+              mongoId: clip.id,
+              filepath: clip.filepath,
+              filename: clip.filename,
+              timestamp: clip.timestamp.toISOString(),
+              summary: clip.summary,
+              aiSummary: clip.aiSummary,
+              searchText,
+              camera: clip.camera,
+              deviceId: clip.deviceId,
+              streamId: clip.streamId,
+            },
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item != null);
     }
 
-    // Search clips matching any of the terms in the summary
+    // Search clips matching any of the terms in the AI summary only
     const matchingClips = await prisma.videoClip.findMany({
       where: {
         ...baseWhere,
-        OR: terms.flatMap(term => ([
-          {
-            summary: {
-              contains: term,
-              mode: 'insensitive' as const,
-            },
+        aiSummary: { not: null },
+        OR: terms.map(term => ({
+          aiSummary: {
+            contains: term,
+            mode: 'insensitive' as const,
           },
-          {
-            aiSummary: {
-              contains: term,
-              mode: 'insensitive' as const,
-            },
-          },
-        ])),
+        })),
       },
       take: limit,
       orderBy: { timestamp: 'desc' },
     });
 
-    // Score based on term matches
-    return matchingClips.map(clip => {
-      const summaryLower = buildClipSearchText(clip.summary, clip.aiSummary).toLowerCase();
-      let matchedCount = 0;
-      terms.forEach(term => {
-        if (summaryLower.includes(term)) matchedCount++;
-      });
-      const score = matchedCount / terms.length;
+    // Score based on term matches in AI summary text
+    return matchingClips
+      .map(clip => {
+        const searchText = buildClipSearchText(clip.summary, clip.aiSummary);
+        if (!searchText.trim()) return null;
 
-      return {
-        id: mongoIdToUuid(clip.id),
-        version: 1,
-        score: Math.min(score + 0.1, 0.95), // Fake score above 0
-        payload: {
-          mongoId: clip.id,
-          filepath: clip.filepath,
-          filename: clip.filename,
-          timestamp: clip.timestamp.toISOString(),
-          summary: clip.summary,
-          aiSummary: clip.aiSummary,
-          searchText: buildClipSearchText(clip.summary, clip.aiSummary),
-          camera: clip.camera,
-          deviceId: clip.deviceId,
-          streamId: clip.streamId,
-        }
-      };
-    });
+        const summaryLower = searchText.toLowerCase();
+        let matchedCount = 0;
+        terms.forEach(term => {
+          if (summaryLower.includes(term)) matchedCount++;
+        });
+        const score = matchedCount / terms.length;
+
+        return {
+          id: mongoIdToUuid(clip.id),
+          version: 1,
+          score: Math.min(score + 0.1, 0.95),
+          payload: {
+            mongoId: clip.id,
+            filepath: clip.filepath,
+            filename: clip.filename,
+            timestamp: clip.timestamp.toISOString(),
+            summary: clip.summary,
+            aiSummary: clip.aiSummary,
+            searchText,
+            camera: clip.camera,
+            deviceId: clip.deviceId,
+            streamId: clip.streamId,
+          },
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item != null);
 
   } catch (error) {
     console.error('Error performing fallback search in MongoDB:', error);

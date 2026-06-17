@@ -19,7 +19,7 @@ import {
 } from '../modals';
 import type { EventsTabState } from '../../hooks/useEventsTab';
 import { formatClipDuration, formatClipListDateTime, getClipDetectionCount } from '../../utils';
-import { getClipListPreview } from '../../utils/summary';
+import { getClipListPreview, shouldShowClipListPreview } from '../../utils/summary';
 
 export interface EventsTabProps {
   events: EventsTabState;
@@ -275,7 +275,7 @@ export function EventsTab({ events }: EventsTabProps) {
                                     </span>
                                   )}
                                 </div>
-                                {orgSettings.videoSummary && getClipListPreview(c) && (
+                                {shouldShowClipListPreview(c, orgSettings) && (
                                   <p className="text-[0.75rem] text-text-secondary overflow-hidden text-ellipsis whitespace-nowrap">
                                     {getClipListPreview(c)}
                                   </p>
