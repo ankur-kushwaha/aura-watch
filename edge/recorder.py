@@ -36,6 +36,18 @@ def _log_ffmpeg_stderr(process: subprocess.Popen, prefix: str) -> None:
             print(f"[{prefix}] {text}", flush=True)
 
 
+def subsample_frames(frames: list[np.ndarray], target_count: int) -> list[np.ndarray]:
+    """Evenly pick frames so count matches target FPS × duration (avoids preroll time-stretch)."""
+    if target_count <= 0:
+        return []
+    if len(frames) <= target_count:
+        return list(frames)
+    return [
+        frames[min(int(i * len(frames) / target_count), len(frames) - 1)]
+        for i in range(target_count)
+    ]
+
+
 class ClipEncoder:
     """Pipe annotated BGR frames into FFmpeg for a single MP4 clip file."""
 

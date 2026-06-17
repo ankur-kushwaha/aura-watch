@@ -94,7 +94,8 @@ class DeviceRuntimeConfig:
                 _env_int("ENCODE_FPS", int(_DEVICE_DEFAULTS["clipEncodeFps"])),
             ),
             1,
-        )
+        ),
+        repr=False,
     )
     camera_stall_timeout_sec: float = field(
         default_factory=lambda: _env_float(

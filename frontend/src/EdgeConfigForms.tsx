@@ -63,7 +63,14 @@ export function DeviceConfigFields({
       <Section title="Capture">
         <NumberField label="Width (px)" value={config.cameraWidth} onChange={(v) => set('cameraWidth', v)} min={160} max={3840} />
         <NumberField label="Height (px)" value={config.cameraHeight} onChange={(v) => set('cameraHeight', v)} min={120} max={2160} />
-        <NumberField label="FPS" value={config.cameraFps} onChange={(v) => set('cameraFps', v)} min={1} max={60} />
+        <NumberField
+          label="FPS"
+          value={config.cameraFps}
+          onChange={(v) => set('cameraFps', v)}
+          min={1}
+          max={60}
+          hint="Capture and clip encode rate. Match what the camera delivers; lower is fine."
+        />
         <NumberField
           label="Reconnect if no frames (sec)"
           value={config.cameraStallTimeoutSec}
@@ -103,7 +110,6 @@ export function DeviceConfigFields({
       </Section>
 
       <Section title="Recording">
-        <NumberField label="Encode FPS" value={config.clipEncodeFps} onChange={(v) => set('clipEncodeFps', v)} min={1} max={30} />
         <NumberField label="Max clip length (sec)" value={config.recordingMaxSec} onChange={(v) => set('recordingMaxSec', v)} min={5} max={300} />
         <NumberField
           label="End grace (sec)"

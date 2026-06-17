@@ -23,8 +23,7 @@ from recorder import ClipEncoder
 
 @dataclass
 class PipelineSettings:
-    encode_fps: int = 10
-    process_fps: int = 15
+    clip_fps: int = 15
     stream_fps: float = 12.0
     jpeg_quality: int = 70
     tracking_enabled: bool = False
@@ -61,16 +60,21 @@ class VisionPipeline:
         self.on_motion_active = on_motion_active
         self.should_stop = should_stop or (lambda: False)
 
-        preroll_frames = max(int(settings.preroll_sec * settings.encode_fps), 1)
-        self._preroll = FrameRingBuffer(preroll_frames)
+        preroll_capacity = max(int(settings.preroll_sec * settings.clip_fps), 1)
+        self._preroll = FrameRingBuffer(preroll_capacity)
         self._motion = MotionDetector(
             motion_threshold=settings.motion_threshold,
             pixel_change_threshold=settings.pixel_change_threshold,
         )
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
         self._capture_thread: Optional[threading.Thread] = None
+        self._clip_frame_interval = 1.0 / max(settings.clip_fps, 1)
+        self._last_preroll_at = 0.0
         self._last_clip_write_at = 0.0
         self._motion_active = False
+
+    def reset_clip_timing(self) -> None:
+        self._last_clip_write_at = 0.0
 
     def start_capture(self):
         self._capture_thread = threading.Thread(
@@ -112,20 +116,13 @@ class VisionPipeline:
                 else:
                     self._motion_active = False
 
-            clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
-            frame_interval = (
-                1.0 / max(self.settings.encode_fps, 1)
-                if clip_encoder
-                else 1.0 / max(self.settings.process_fps, 1)
-            )
-
             now = time.monotonic()
             if self.on_preview_frame and now - last_stream_time >= stream_interval:
                 self.on_preview_frame(frame)
                 last_stream_time = now
 
             elapsed = time.monotonic() - last_frame_time
-            sleep_for = frame_interval - elapsed
+            sleep_for = self._clip_frame_interval - elapsed
             if sleep_for > 0:
                 time.sleep(sleep_for)
             last_frame_time = time.monotonic()
@@ -146,15 +143,16 @@ class VisionPipeline:
                 continue
 
             consecutive_failures = 0
-            self._preroll.push(frame)
+
+            now = time.monotonic()
+            if now - self._last_preroll_at >= self._clip_frame_interval:
+                self._preroll.push(frame)
+                self._last_preroll_at = now
 
             clip_encoder = self.get_clip_encoder() if self.get_clip_encoder else None
-            if clip_encoder:
-                clip_interval = 1.0 / max(self.settings.encode_fps, 1)
-                now = time.monotonic()
-                if now - self._last_clip_write_at >= clip_interval:
-                    clip_encoder.write_frame(frame)
-                    self._last_clip_write_at = now
+            if clip_encoder and now - self._last_clip_write_at >= self._clip_frame_interval:
+                clip_encoder.write_frame(frame)
+                self._last_clip_write_at = now
 
             try:
                 self._frame_queue.put_nowait(frame)

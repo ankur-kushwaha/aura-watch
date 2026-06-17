@@ -34,6 +34,7 @@ from recorder import (
     clip_meets_upload_threshold,
     get_video_duration_seconds,
     kill_ffmpeg_for_path,
+    subsample_frames,
     upload_clip,
 )
 from device_defaults import stream_config_defaults
@@ -204,7 +205,7 @@ class ClipProcessingJob:
     width: int
     height: int
     actual_duration: float
-    clip_encode_fps: int
+    clip_fps: int
     preroll_frame_count: int
 
 
@@ -787,8 +788,7 @@ class EdgeAgent:
             self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
             settings = PipelineSettings(
-                encode_fps=runtime.clip_encode_fps,
-                process_fps=runtime.camera_fps,
+                clip_fps=runtime.camera_fps,
                 stream_fps=runtime.frame_stream_fps,
                 jpeg_quality=runtime.preview_jpeg_quality,
                 tracking_enabled=config.tracking_enabled,
@@ -842,6 +842,7 @@ class EdgeAgent:
                 on_motion_active=on_motion_active,
                 should_stop=lambda: stop_event.is_set() or self.shutdown_event.is_set(),
             )
+            pipeline_data["pipeline"] = pipeline
 
             try:
                 pipeline.start_capture()
@@ -858,6 +859,7 @@ class EdgeAgent:
                 self._mark_stream_error(stream_id)
                 self.send_status(stream_id, "Error")
             finally:
+                pipeline_data.pop("pipeline", None)
                 pipeline.join_capture()
                 self._stop_active_clip_encoder(pipeline_data)
                 camera.release()
@@ -1080,7 +1082,8 @@ class EdgeAgent:
         recording_end_grace_sec = runtime.recording_end_grace_sec if runtime else _DEFAULT_RUNTIME.recording_end_grace_sec
         recording_cooldown_sec = runtime.recording_cooldown_sec if runtime else _DEFAULT_RUNTIME.recording_cooldown_sec
         min_upload_duration_sec = runtime.min_upload_duration_sec if runtime else _DEFAULT_RUNTIME.min_upload_duration_sec
-        clip_encode_fps = runtime.clip_encode_fps if runtime else _DEFAULT_RUNTIME.clip_encode_fps
+        clip_fps = runtime.camera_fps if runtime else _DEFAULT_RUNTIME.camera_fps
+        clip_preroll_sec = runtime.clip_preroll_sec if runtime else _DEFAULT_RUNTIME.clip_preroll_sec
 
         timestamp_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)
         p_data["recording_started_at_ms"] = timestamp_ms
@@ -1093,16 +1096,23 @@ class EdgeAgent:
 
         self.send_log(
             f"[{name}] Recording motion event "
-            f"(max {int(recording_max_sec)}s @ {clip_encode_fps}fps)..."
+            f"(max {int(recording_max_sec)}s @ {clip_fps}fps)..."
         )
 
         try:
-            clip_encoder = ClipEncoder(output_path, width, height, fps=clip_encode_fps)
+            clip_encoder = ClipEncoder(output_path, width, height, fps=clip_fps)
             clip_encoder.start()
 
-            preroll_frames = list(p_data.get("preroll_frames") or [])
+            preroll_frames = subsample_frames(
+                list(p_data.get("preroll_frames") or []),
+                max(int(clip_preroll_sec * clip_fps), 1),
+            )
             for frame in preroll_frames:
                 clip_encoder.write_frame(frame)
+
+            pipeline = p_data.get("pipeline")
+            if pipeline:
+                pipeline.reset_clip_timing()
 
             with p_data["clip_encoder_lock"]:
                 p_data["clip_encoder"] = clip_encoder
@@ -1149,8 +1159,8 @@ class EdgeAgent:
 
             actual_duration = get_video_duration_seconds(output_path)
             if actual_duration <= 0:
-                actual_duration = clip_encoder.frames_written / clip_encode_fps
-            encoded_duration = clip_encoder.frames_written / clip_encode_fps
+                actual_duration = clip_encoder.frames_written / clip_fps
+            encoded_duration = clip_encoder.frames_written / clip_fps
             if encoded_duration > actual_duration:
                 actual_duration = encoded_duration
             file_size = os.path.getsize(output_path)
@@ -1184,7 +1194,7 @@ class EdgeAgent:
                     width=width,
                     height=height,
                     actual_duration=actual_duration,
-                    clip_encode_fps=clip_encode_fps,
+                    clip_fps=clip_fps,
                     preroll_frame_count=len(preroll_frames),
                 )
             )
@@ -1260,7 +1270,7 @@ class EdgeAgent:
 
         track_events = clip_result.track_events
         preroll_ms = (
-            int(job.preroll_frame_count / job.clip_encode_fps * 1000)
+            int(job.preroll_frame_count / job.clip_fps * 1000)
             if job.preroll_frame_count
             else 0
         )
