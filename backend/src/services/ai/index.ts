@@ -1,23 +1,26 @@
-import { GeminiService } from './gemini';
-import { OpenAIService } from './openai';
-import { OpenRouterService } from './openrouter';
-import { AIService } from './types';
+import * as gemini from './gemini';
+import * as openai from './openai';
+import * as openrouter from './openrouter';
 
 const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
-let activeService: AIService;
+
+const modules = {
+  openai,
+  openrouter,
+  gemini,
+} as const;
+
+const activeModule =
+  provider === 'openai'
+    ? modules.openai
+    : provider === 'openrouter'
+      ? modules.openrouter
+      : modules.gemini;
 
 console.log(`[AI Factory] Initializing AI Service Provider: ${provider.toUpperCase()}`);
 
-if (provider === 'openai') {
-  activeService = new OpenAIService();
-} else if (provider === 'openrouter') {
-  activeService = new OpenRouterService();
-} else {
-  activeService = new GeminiService();
-}
-
-// Export the functions bound to the active service instance
-export const summarizeVideo = activeService.summarizeVideo.bind(activeService);
-export const generateTextEmbedding = activeService.generateTextEmbedding.bind(activeService);
-export const answerQuestionWithContext = activeService.answerQuestionWithContext.bind(activeService);
-export const answerWithTools = activeService.answerWithTools.bind(activeService);
+export const activeService = activeModule.service;
+export const summarizeVideo = activeModule.summarizeVideo;
+export const generateTextEmbedding = activeModule.generateTextEmbedding;
+export const answerQuestionWithContext = activeModule.answerQuestionWithContext;
+export const answerWithTools = activeModule.answerWithTools;

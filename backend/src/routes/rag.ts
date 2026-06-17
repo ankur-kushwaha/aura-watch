@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { generateTextEmbedding, answerWithTools } from '../services/ai';
+import { generateTextEmbedding, answerWithTools } from '../services/ai/openai';
 import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
 import prisma from '../services/db';
 import { getOrgOnlineDeviceIds } from '../services/orgScope';

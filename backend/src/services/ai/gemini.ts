@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import * as fs from 'fs';
+import { bindAIServiceMethods } from './bindService';
 import { AIService } from './types';
 import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
@@ -373,3 +374,13 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
     }
   }
 }
+
+const {
+  service,
+  summarizeVideo,
+  generateTextEmbedding,
+  answerQuestionWithContext,
+  answerWithTools,
+} = bindAIServiceMethods(new GeminiService());
+
+export { service as geminiService, service, summarizeVideo, generateTextEmbedding, answerQuestionWithContext, answerWithTools };

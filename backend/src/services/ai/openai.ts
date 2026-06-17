@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
 import OpenAI from 'openai';
+import { bindAIServiceMethods } from './bindService';
 import { AIService } from './types';
 import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
@@ -386,3 +387,14 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
     }
   }
 }
+
+const {
+  service,
+  summarizeVideo,
+  generateTextEmbedding,
+  answerQuestionWithContext,
+  answerWithTools,
+} = bindAIServiceMethods(new OpenAIService());
+
+export { service as openaiService, service, summarizeVideo, generateTextEmbedding, answerQuestionWithContext, answerWithTools };
+
