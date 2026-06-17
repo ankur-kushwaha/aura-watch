@@ -10,6 +10,7 @@ export interface EdgeDeviceConfig {
   cameraFps?: number | null;
   clipEncodeFps?: number | null;
   cameraStallTimeoutSec?: number | null;
+  livePreviewEnabled?: boolean | null;
   frameStreamFps?: number | null;
   previewJpegQuality?: number | null;
   previewStallTimeoutSec?: number | null;

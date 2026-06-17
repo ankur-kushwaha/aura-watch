@@ -40,7 +40,7 @@ import {
   DEFAULT_STREAM_CONFIG,
   type EffectiveEdgeDeviceConfig,
 } from '../edgeConfig';
-import { PREVIEW_STALL_MS, STREAM_INIT_TIMEOUT_MS, STREAM_REFRESH_COOLDOWN_MS, WS_BASE } from './constants';
+import { LIVE_PREVIEW_ENABLED, PREVIEW_STALL_MS, STREAM_INIT_TIMEOUT_MS, STREAM_REFRESH_COOLDOWN_MS, WS_BASE } from './constants';
 import type {
   CameraConfig,
   CameraStream,
@@ -216,7 +216,9 @@ export default function DashboardApp() {
     [streams, selectedStreamId],
   );
 
-  const usesWebPreview = selectedStream?.cameraType !== 'rtsp';
+  const usesWebPreview = LIVE_PREVIEW_ENABLED && selectedStream?.cameraType !== 'rtsp';
+  const usesRtspExternal = selectedStream?.cameraType === 'rtsp';
+  const usesExternalView = !usesWebPreview;
   const usesWebPreviewRef = useRef(usesWebPreview);
   useEffect(() => {
     usesWebPreviewRef.current = usesWebPreview;
@@ -640,6 +642,12 @@ export default function DashboardApp() {
     lastFrameAtRef.current = 0;
 
     if (stream.cameraType === 'rtsp' && stream.streamUrl) {
+      setStreamLoading(false);
+      setStreamInitTimedOut(false);
+      return;
+    }
+
+    if (!LIVE_PREVIEW_ENABLED) {
       setStreamLoading(false);
       setStreamInitTimedOut(false);
       return;
@@ -1374,7 +1382,7 @@ export default function DashboardApp() {
             <div className={`flex justify-between items-center gap-2 flex-wrap ${liveFeedOpen ? 'mb-4' : ''}`}>
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Video size={18} color="var(--color-secondary)" />
-                {usesWebPreview ? 'Live Camera Feed' : 'RTSP Stream'}
+                {usesWebPreview ? 'Live Camera Feed' : usesRtspExternal ? 'RTSP Stream' : 'Camera Stream'}
               </h2>
               <div className="flex items-center gap-2 flex-wrap">
                 {liveFeedOpen && status === 'Error' && (
@@ -1419,7 +1427,7 @@ export default function DashboardApp() {
                     className="btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5"
                   >
                     {usesWebPreview ? <Play size={12} /> : <ExternalLink size={12} />}
-                    {usesWebPreview ? 'Open Feed' : 'Open in VLC'}
+                    {usesWebPreview ? 'Open Feed' : usesRtspExternal ? 'Open in VLC' : 'Open Panel'}
                   </button>
                 )}
               </div>
@@ -1429,7 +1437,7 @@ export default function DashboardApp() {
             <div className={`bg-[#090d16] rounded-xl w-full relative border border-[rgba(255,255,255,0.05)] ${activeStreamError && !liveFrame && usesWebPreview ? 'min-h-0' : 'min-h-[200px] overflow-hidden'}`}>
 
               {selectedStreamId && status !== 'Offline' ? (
-                !usesWebPreview ? (
+                usesRtspExternal ? (
                   <div className="w-full p-4 sm:p-6 min-h-[200px] flex flex-col items-center justify-center text-center">
                     <div className="bg-[rgba(124,58,237,0.12)] p-3 rounded-xl mb-4">
                       <ExternalLink size={28} className="text-[#a78bfa]" />
@@ -1520,6 +1528,44 @@ export default function DashboardApp() {
                       Motion detection and clip recording still run on the edge device. This panel only
                       replaces the in-browser preview.
                     </p>
+                  </div>
+                ) : usesExternalView ? (
+                  <div className="w-full p-4 sm:p-6 min-h-[200px] flex flex-col items-center justify-center text-center">
+                    <div className="bg-[rgba(124,58,237,0.12)] p-3 rounded-xl mb-4">
+                      <Activity size={28} className="text-[#a78bfa]" />
+                    </div>
+                    <p className="text-[0.95rem] font-semibold text-text-primary">
+                      {status === 'Recording' ? 'Recording motion clip' : status === 'Monitoring' ? 'Monitoring for motion' : status}
+                    </p>
+                    <p className="text-[0.78rem] text-text-muted mt-2 max-w-md leading-relaxed">
+                      Live browser preview is disabled to reduce edge CPU and bandwidth. Motion detection,
+                      clip recording, and hub commands still run normally.
+                    </p>
+                    {motionActive && (
+                      <p className="text-[0.75rem] text-danger mt-3 font-semibold">
+                        Motion detected: {(motionRatio * 100).toFixed(1)}%
+                      </p>
+                    )}
+                    {activeStreamError && (
+                      <div className="w-full mt-5 text-left bg-[rgba(244,63,94,0.08)] border border-[rgba(244,63,94,0.35)] rounded-xl p-4 max-w-lg">
+                        <p className="text-[0.85rem] font-semibold text-danger">
+                          {getStreamErrorTitle(activeStreamError.errorType)}
+                        </p>
+                        <p className="text-[0.78rem] text-text-muted mt-2 leading-relaxed">
+                          {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
+                        </p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setShowConfigDialog(true)}
+                        className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
+                      >
+                        <Settings size={12} />
+                        Stream Settings
+                      </button>
+                    </div>
                   </div>
                 ) : activeStreamError && !liveFrame ? (
                   <div className="w-full p-4 sm:p-5">

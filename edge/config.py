@@ -101,6 +101,11 @@ class DeviceRuntimeConfig:
             "CAMERA_STALL_TIMEOUT_SEC", float(_DEVICE_DEFAULTS["cameraStallTimeoutSec"])
         )
     )
+    live_preview_enabled: bool = field(
+        default_factory=lambda: _env_bool(
+            "LIVE_PREVIEW_ENABLED", bool(_DEVICE_DEFAULTS["livePreviewEnabled"])
+        )
+    )
     frame_stream_fps: float = field(
         default_factory=lambda: _env_float("FRAME_STREAM_FPS", float(_DEVICE_DEFAULTS["frameStreamFps"]))
     )
@@ -163,6 +168,9 @@ class DeviceRuntimeConfig:
             camera_fps=max(_pick(data, "cameraFps", baseline.camera_fps, int), 1),
             clip_encode_fps=max(_pick(data, "clipEncodeFps", baseline.clip_encode_fps, int), 1),
             camera_stall_timeout_sec=_pick(data, "cameraStallTimeoutSec", baseline.camera_stall_timeout_sec, float),
+            live_preview_enabled=_pick(data, "livePreviewEnabled", baseline.live_preview_enabled, bool)
+            if "livePreviewEnabled" in data
+            else baseline.live_preview_enabled,
             frame_stream_fps=_pick(data, "frameStreamFps", baseline.frame_stream_fps, float),
             preview_jpeg_quality=_pick(data, "previewJpegQuality", baseline.preview_jpeg_quality, int),
             preview_stall_timeout_sec=_pick(

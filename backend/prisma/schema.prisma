@@ -25,6 +25,7 @@ type EdgeDeviceConfig {
   cameraFps               Int?
   clipEncodeFps           Int?
   cameraStallTimeoutSec   Float?
+  livePreviewEnabled      Boolean?
   frameStreamFps          Float?
   previewJpegQuality      Int?
   previewStallTimeoutSec  Float?

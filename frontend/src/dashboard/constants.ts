@@ -1,4 +1,9 @@
-export const PREVIEW_STALL_MS = 5000;
+import { DEFAULT_DEVICE_CONFIG } from '../edgeConfig';
+
+/** In-browser JPEG preview over WebSocket — default from config/edge-device-defaults.json */
+export const LIVE_PREVIEW_ENABLED = DEFAULT_DEVICE_CONFIG.livePreviewEnabled;
+
+export const PREVIEW_STALL_MS = DEFAULT_DEVICE_CONFIG.previewStallTimeoutSec * 1000;
 /** Show a stalled-init message and auto-retry preview if no frame arrives. */
 export const STREAM_INIT_TIMEOUT_MS = 30_000;
 /** Minimum gap between automatic preview refresh attempts. */

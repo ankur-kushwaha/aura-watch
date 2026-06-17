@@ -11,6 +11,7 @@ export interface EdgeDeviceConfigDefaults {
   cameraFps: number;
   clipEncodeFps: number;
   cameraStallTimeoutSec: number;
+  livePreviewEnabled: boolean;
   frameStreamFps: number;
   previewJpegQuality: number;
   previewStallTimeoutSec: number;

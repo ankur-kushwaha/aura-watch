@@ -40,6 +40,7 @@ import prisma from './services/db';
 import { recordDeviceEventFromLogSafe, recordDeviceEventSafe } from './services/deviceEvents';
 import { getEffectiveStreamStatus } from './services/deviceStatus';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
+import { EDGE_DEVICE_CONFIG_DEFAULTS } from './config/edgeDeviceDefaults';
 
 const app = express();
 const server = http.createServer(app);
@@ -47,6 +48,7 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 5000;
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../storage/videos');
+const LIVE_PREVIEW_ENABLED = EDGE_DEVICE_CONFIG_DEFAULTS.livePreviewEnabled;
 
 // Ensure storage directories exist
 if (!fs.existsSync(VIDEO_DIR)) {
@@ -61,7 +63,24 @@ app.use(cors());
 app.use(express.json());
 app.use(requireAuth);
 
-// Serve static videos or proxy them from the edge device
+function resolveLocalClipPath(clip: { filepath: string; filename: string }): string | null {
+  const candidates = [clip.filepath, path.join(VIDEO_DIR, clip.filename)];
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return path.resolve(candidate);
+    }
+  }
+  return null;
+}
+
+function edgeFileFetchTimeoutMs(filename: string): number {
+  if (filename.startsWith('clip_') && filename.endsWith('.mp4')) {
+    return 120_000;
+  }
+  return 30_000;
+}
+
+// Serve archived clips from cloud storage, or proxy from the edge device on demand
 app.get('/api/videos/:filename', async (req, res) => {
   const { filename } = req.params;
   try {
@@ -73,38 +92,22 @@ app.get('/api/videos/:filename', async (req, res) => {
       return res.status(404).json({ error: `Clip metadata not found for ${filename}` });
     }
 
-    const deviceId = clip.deviceId;
-    const deviceSocket = activeDevices.get(deviceId);
-    if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) {
-      return res.status(503).json({ error: `Edge device ${deviceId} is offline` });
+    const localPath = resolveLocalClipPath(clip);
+    if (localPath) {
+      res.setHeader('Content-Type', 'video/mp4');
+      return res.sendFile(localPath);
     }
 
-    const requestId = `req_${Date.now()}_${nextStreamRequestId++}`;
-    
-    // 15 seconds timeout
-    const timeout = setTimeout(() => {
-      pendingStreamRequests.delete(requestId);
-      res.status(504).json({ error: `Timeout waiting for clip file ${filename} from device` });
-    }, 15000);
-
-    pendingStreamRequests.set(requestId, {
-      resolve: (result) => {
-        clearTimeout(timeout);
-        res.setHeader('Content-Type', result.contentType);
-        res.send(result.data);
-      },
-      reject: (err) => {
-        clearTimeout(timeout);
-        res.status(500).json({ error: err.message });
-      },
-      timeout
-    });
-
-    deviceSocket.send(JSON.stringify({
-      type: 'request_stream_file',
-      requestId,
-      filename
-    }));
+    const deviceId = clip.deviceId;
+    try {
+      const result = await fetchFileFromEdge(deviceId, filename);
+      res.setHeader('Content-Type', result.contentType);
+      return res.send(result.data);
+    } catch (error: any) {
+      const message = error?.message || 'Failed to fetch clip from edge device';
+      const status = message.includes('offline') ? 503 : message.includes('Timeout') ? 504 : 500;
+      return res.status(status).json({ error: message });
+    }
   } catch (error: any) {
     console.error(`[Video Proxy] Error fetching video ${filename}:`, error);
     res.status(500).json({ error: error.message });
@@ -238,6 +241,8 @@ function broadcastLogToSubscribedUIs(deviceId: string, message: string, timestam
 }
 
 function requestPreviewForStream(streamId: string, reason: string) {
+  if (!LIVE_PREVIEW_ENABLED) return;
+
   const deviceId = streamDeviceCache.get(streamId);
   if (!deviceId) return;
 
@@ -252,6 +257,8 @@ function requestPreviewForStream(streamId: string, reason: string) {
 }
 
 function requestPreviewForDeviceSubscribers(deviceId: string, reason: string) {
+  if (!LIVE_PREVIEW_ENABLED) return;
+
   const deviceSocket = activeDevices.get(deviceId);
   if (!deviceSocket || deviceSocket.readyState !== WebSocket.OPEN) return;
 
@@ -331,10 +338,39 @@ interface PendingStreamRequest {
   resolve: (value: { contentType: string; data: Buffer | string }) => void;
   reject: (reason: any) => void;
   timeout: NodeJS.Timeout;
+  chunks?: Buffer[];
+  contentType?: string;
+  expectedSize?: number;
 }
 
 const pendingStreamRequests = new Map<string, PendingStreamRequest>();
 let nextStreamRequestId = 0;
+
+function clearPendingStreamRequest(requestId: string): void {
+  const pending = pendingStreamRequests.get(requestId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingStreamRequests.delete(requestId);
+}
+
+function resolvePendingStreamRequest(
+  requestId: string,
+  result: { contentType: string; data: Buffer | string },
+): void {
+  const pending = pendingStreamRequests.get(requestId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingStreamRequests.delete(requestId);
+  pending.resolve(result);
+}
+
+function rejectPendingStreamRequest(requestId: string, error: Error): void {
+  const pending = pendingStreamRequests.get(requestId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingStreamRequests.delete(requestId);
+  pending.reject(error);
+}
 
 function fetchFileFromEdge(deviceId: string, filename: string): Promise<{ contentType: string; data: Buffer | string }> {
   const deviceSocket = activeDevices.get(deviceId);
@@ -343,12 +379,13 @@ function fetchFileFromEdge(deviceId: string, filename: string): Promise<{ conten
   }
 
   const requestId = `req_${Date.now()}_${nextStreamRequestId++}`;
+  const timeoutMs = edgeFileFetchTimeoutMs(filename);
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      pendingStreamRequests.delete(requestId);
+      clearPendingStreamRequest(requestId);
       reject(new Error(`Timeout waiting for file ${filename} from device`));
-    }, 15000);
+    }, timeoutMs);
 
     pendingStreamRequests.set(requestId, { resolve, reject, timeout });
 
@@ -609,13 +646,23 @@ async function processVideoClipInBackground(
     console.error(`[Pipeline Error] Failed to process ${filename}:`, error);
     broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);
   } finally {
-    // Delete temporary backend video file
+    // Archive uploaded clip on the hub so playback works even when the edge is offline
     if (fs.existsSync(filepath)) {
       try {
-        fs.unlinkSync(filepath);
-        console.log(`[Cloud Hub] Deleted temporary upload file: ${filepath}`);
+        const archivePath = path.join(VIDEO_DIR, filename);
+        fs.renameSync(filepath, archivePath);
+        await prisma.videoClip.updateMany({
+          where: { filename },
+          data: { filepath: archivePath },
+        });
+        console.log(`[Cloud Hub] Archived clip for playback: ${archivePath}`);
       } catch (err: any) {
-        console.error(`[Cloud Hub] Failed to delete temporary file ${filepath}:`, err);
+        console.error(`[Cloud Hub] Failed to archive clip ${filename}:`, err);
+        try {
+          fs.unlinkSync(filepath);
+        } catch {
+          // ignore cleanup failure
+        }
       }
     }
 
@@ -833,20 +880,42 @@ wss.on('connection', async (ws: WebSocket, req) => {
             break;
           case 'response_stream_file': {
             const { requestId, success, contentType, data: fileData, error } = data;
-            const pending = pendingStreamRequests.get(requestId);
-            if (pending) {
-              clearTimeout(pending.timeout);
-              pendingStreamRequests.delete(requestId);
-              
-              if (success) {
-                const bufferOrString = contentType.startsWith('text/') || contentType === 'application/x-mpegURL'
-                  ? fileData
-                  : Buffer.from(fileData, 'base64');
-                pending.resolve({ contentType, data: bufferOrString });
-              } else {
-                pending.reject(new Error(error || 'Failed to fetch HLS file from device'));
-              }
+            if (!requestId) break;
+            if (success) {
+              const bufferOrString = contentType.startsWith('text/') || contentType === 'application/x-mpegURL'
+                ? fileData
+                : Buffer.from(fileData, 'base64');
+              resolvePendingStreamRequest(requestId, { contentType, data: bufferOrString });
+            } else {
+              rejectPendingStreamRequest(requestId, new Error(error || 'Failed to fetch file from device'));
             }
+            break;
+          }
+          case 'response_stream_file_begin': {
+            const pending = pendingStreamRequests.get(data.requestId);
+            if (!pending) break;
+            pending.contentType = data.contentType || 'application/octet-stream';
+            pending.expectedSize = typeof data.size === 'number' ? data.size : undefined;
+            pending.chunks = [];
+            break;
+          }
+          case 'response_stream_file_chunk': {
+            const pending = pendingStreamRequests.get(data.requestId);
+            if (!pending || !pending.chunks || !data.data) break;
+            pending.chunks.push(Buffer.from(data.data, 'base64'));
+            break;
+          }
+          case 'response_stream_file_end': {
+            const { requestId, success, error } = data;
+            const pending = pendingStreamRequests.get(requestId);
+            if (!pending) break;
+            if (!success) {
+              rejectPendingStreamRequest(requestId, new Error(error || 'Failed to fetch file from device'));
+              break;
+            }
+            const contentType = pending.contentType || 'application/octet-stream';
+            const buffer = Buffer.concat(pending.chunks || []);
+            resolvePendingStreamRequest(requestId, { contentType, data: buffer });
             break;
           }
           case 'log':
@@ -962,7 +1031,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
             const hasOtherSubscribers = Array.from(uiStreamSubscriptions.values()).includes(prevStreamId);
             if (!hasOtherSubscribers) {
               const stream = await prisma.cameraStream.findUnique({ where: { streamId: prevStreamId } });
-              if (stream) {
+              if (stream && LIVE_PREVIEW_ENABLED) {
                 const deviceSocket = activeDevices.get(stream.deviceId);
                 if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) {
                   deviceSocket.send(JSON.stringify({ type: 'toggle_stream', streamId: prevStreamId, stream: false }));
@@ -985,7 +1054,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
 
       if (prevStreamId) {
         const hasOtherSubscribers = Array.from(uiStreamSubscriptions.values()).includes(prevStreamId);
-        if (!hasOtherSubscribers) {
+        if (!hasOtherSubscribers && LIVE_PREVIEW_ENABLED) {
           prisma.cameraStream.findUnique({ where: { streamId: prevStreamId } }).then((stream) => {
             if (stream) {
               const deviceSocket = activeDevices.get(stream.deviceId);
