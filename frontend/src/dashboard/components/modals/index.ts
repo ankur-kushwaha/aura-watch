@@ -14,6 +14,8 @@ export { PersonAppearancesDialog } from './PersonAppearancesDialog';
 export type { PersonAppearancesDialogProps } from './PersonAppearancesDialog';
 export { StreamConfigDialog } from './StreamConfigDialog';
 export type { StreamConfigDialogProps } from './StreamConfigDialog';
+export { SystemStatusLogsDialog } from './SystemStatusLogsDialog';
+export type { SystemStatusLogsDialogProps } from './SystemStatusLogsDialog';
 export { TimelineClipPlaybackDialog } from './TimelineClipPlaybackDialog';
 export type { TimelineClipPlaybackDialogProps } from './TimelineClipPlaybackDialog';
 export { TopologyDialog } from './TopologyDialog';

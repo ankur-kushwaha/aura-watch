@@ -21,6 +21,7 @@ import {
   SlidersHorizontal,
   ExternalLink,
   Copy,
+  Maximize2,
 } from 'lucide-react';
 import {
   apiFetch,
@@ -59,12 +60,14 @@ import {
 import { dashboardTabFromPath } from './utils/routing';
 import { copyMacVlcTerminalCommand, copyRtspUrl, openRtspInVlc } from './utils/vlc';
 import { DashboardHeader, DashboardPlaceholder, DeviceInstallTooltip } from './components';
+import { SystemStatusLogsList } from './components/SystemStatusLogsList';
 import { DashboardTabs, EventsTab, ReidTab } from './components/tabs';
 import {
   DeviceConfigDialog,
   DeviceLogsDialog,
   DeviceMetricsDialog,
   StreamConfigDialog,
+  SystemStatusLogsDialog,
 } from './components/modals';
 import { useEventsTab, useReidTab } from './hooks';
 
@@ -95,6 +98,7 @@ export default function DashboardApp() {
   const [addingStreamForDeviceId, setAddingStreamForDeviceId] = useState<string | null>(null);
   const [deviceLogsDevice, setDeviceLogsDevice] = useState<{ deviceId: string; name: string } | null>(null);
   const [deviceMetricsDevice, setDeviceMetricsDevice] = useState<{ deviceId: string; name: string } | null>(null);
+  const [showSystemLogsDialog, setShowSystemLogsDialog] = useState(false);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
   const [refreshingDevices, setRefreshingDevices] = useState(false);
 
@@ -1713,30 +1717,23 @@ export default function DashboardApp() {
 
           {/* LIVE TERMINAL LOGS */}
           <div className="glass-panel p-5">
-            <h2 className="text-[1.1rem] flex items-center gap-2 mb-3">
-              <Terminal size={18} color="var(--color-secondary)" /> System Status Logs
-            </h2>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h2 className="text-[1.1rem] flex items-center gap-2">
+                <Terminal size={18} color="var(--color-secondary)" /> System Status Logs
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowSystemLogsDialog(true)}
+                className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1 shrink-0"
+                title="View logs fullscreen"
+                aria-label="View logs fullscreen"
+              >
+                <Maximize2 size={12} />
+                Expand
+              </button>
+            </div>
             <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3.5 text-[0.85rem] leading-[1.4] text-[#38bdf8] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]" ref={terminalContainerRef}>
-              {logs.length === 0 ? (
-                <div className="text-text-muted text-[0.8rem]">
-                  {selectedStreamId
-                    ? 'Waiting for edge device events... (camera errors, reconnects, and clip activity appear here)'
-                    : 'Select a camera stream to view logs.'}
-                </div>
-              ) : (
-                logs.map((log, index) => {
-                  const isError = /\[Detector Error\]|WebSocket|stream lost|failed|error|timed out/i.test(log.message);
-                  const isWarn = /stalled|retry|reconnect|cooldown/i.test(log.message);
-                  return (
-                    <div key={index} className="mb-1">
-                      <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                      <span className={isError ? 'text-rose-400' : isWarn ? 'text-amber-300' : undefined}>
-                        {log.message}
-                      </span>
-                    </div>
-                  );
-                })
-              )}
+              <SystemStatusLogsList logs={logs} selectedStreamId={selectedStreamId} />
             </div>
           </div>
         </div>
@@ -1756,6 +1753,13 @@ export default function DashboardApp() {
 
 
       </div>
+
+      <SystemStatusLogsDialog
+        open={showSystemLogsDialog}
+        onClose={() => setShowSystemLogsDialog(false)}
+        logs={logs}
+        selectedStreamId={selectedStreamId}
+      />
 
       <DeviceLogsDialog
         device={deviceLogsDevice}
