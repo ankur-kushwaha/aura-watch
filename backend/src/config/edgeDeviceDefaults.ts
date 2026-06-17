@@ -18,6 +18,7 @@ export interface EdgeDeviceConfigDefaults {
   recordingEndGraceSec: number;
   recordingCooldownSec: number;
   minUploadDurationSec: number;
+  clipPrerollSec: number;
   reidConfidenceThreshold: number;
   reidMinBboxSize: number;
   reidVisibleSec: number;

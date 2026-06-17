@@ -131,6 +131,15 @@ export function DeviceConfigFields({
           step={0.5}
           hint="Skip cloud upload for clips shorter than this (0 = disabled)."
         />
+        <NumberField
+          label="Pre-roll (sec)"
+          value={config.clipPrerollSec}
+          onChange={(v) => set('clipPrerollSec', v)}
+          min={0}
+          max={30}
+          step={0.5}
+          hint="Seconds of footage to include before motion is detected."
+        />
       </Section>
 
       <Section title="ReID">

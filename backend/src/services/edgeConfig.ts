@@ -37,8 +37,16 @@ export function mergeDeviceConfigUpdate(
   existing: EdgeDeviceConfig | null | undefined,
   patch: Record<string, unknown>,
 ): EdgeDeviceConfig {
-  const next: Record<string, unknown> = { ...(existing ?? {}) };
+  const allowedKeys = new Set(DEVICE_CONFIG_KEYS);
+  const next: Record<string, unknown> = {};
+  for (const key of DEVICE_CONFIG_KEYS) {
+    const existingValue = existing?.[key as keyof EdgeDeviceConfig];
+    if (existingValue !== null && existingValue !== undefined) {
+      next[key] = existingValue;
+    }
+  }
   for (const [key, value] of Object.entries(patch)) {
+    if (!allowedKeys.has(key)) continue;
     if (value === null || value === '') {
       delete next[key];
     } else if (value !== undefined) {

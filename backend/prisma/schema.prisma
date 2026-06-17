@@ -32,6 +32,7 @@ type EdgeDeviceConfig {
   recordingEndGraceSec    Float?
   recordingCooldownSec    Float?
   minUploadDurationSec    Float?
+  clipPrerollSec          Float?
   reidConfidenceThreshold Float?
   reidMinBboxSize         Int?
   reidVisibleSec          Float?
