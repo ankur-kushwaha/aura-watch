@@ -7,7 +7,12 @@ import { handleCropUpload, ReidTrackEvent } from './reid';
 import { sendDeviceCommand } from '../services/deviceCommands';
 import { getEffectiveDeviceStatus } from '../services/deviceStatus';
 import { assertDeviceInOrg } from '../services/orgScope';
-import { getDeviceEvents } from '../services/deviceEvents';
+import {
+  getDeviceEvents,
+  recordDeviceEvent,
+  type DeviceEventCategory,
+  type DeviceEventSeverity,
+} from '../services/deviceEvents';
 import {
   extractDeviceConfigPatch,
   mergeDeviceConfig,
@@ -207,6 +212,7 @@ export type ClipUploadCallback = (
 let onClipUploadedCallback: ClipUploadCallback | null = null;
 let onDevicesChangedCallback: (() => void) | null = null;
 let onDeviceConfigUpdatedCallback: ((deviceId: string) => Promise<void>) | null = null;
+let onDeviceEventRecordedCallback: ((deviceId: string, event: object) => void) | null = null;
 
 export function registerOnClipUploaded(cb: ClipUploadCallback) {
   onClipUploadedCallback = cb;
@@ -218,6 +224,10 @@ export function registerOnDevicesChanged(cb: () => void) {
 
 export function registerOnDeviceConfigUpdated(cb: (deviceId: string) => Promise<void>) {
   onDeviceConfigUpdatedCallback = cb;
+}
+
+export function registerOnDeviceEventRecorded(cb: (deviceId: string, event: object) => void) {
+  onDeviceEventRecordedCallback = cb;
 }
 
 export async function triggerDeviceConfigUpdated(deviceId: string) {
@@ -651,6 +661,63 @@ router.get('/:deviceId/metrics', async (req: Request, res: Response) => {
   } catch (error: any) {
     const status = error.message === 'Device is offline' ? 503 : 500;
     res.status(status).json({ error: error.message || 'Failed to fetch device metrics' });
+  }
+});
+
+/**
+ * POST /api/devices/:deviceId/report-event
+ * Edge agent reports a durable device event (e.g. software update lifecycle).
+ */
+router.post('/:deviceId/report-event', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const { category, severity, eventType, message, detail, streamId } = req.body ?? {};
+
+  if (!category || !severity || !eventType || !message) {
+    return res.status(400).json({ error: 'category, severity, eventType, and message are required' });
+  }
+
+  const allowedCategories: DeviceEventCategory[] = [
+    'camera',
+    'websocket',
+    'device',
+    'preview',
+    'recovery',
+    'update',
+  ];
+  const allowedSeverities: DeviceEventSeverity[] = ['info', 'warn', 'error'];
+
+  if (!allowedCategories.includes(category)) {
+    return res.status(400).json({ error: 'Invalid category' });
+  }
+  if (!allowedSeverities.includes(severity)) {
+    return res.status(400).json({ error: 'Invalid severity' });
+  }
+
+  try {
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found. Register first.' });
+    }
+
+    const event = await recordDeviceEvent({
+      deviceId,
+      streamId: typeof streamId === 'string' ? streamId : null,
+      orgId: device.orgId,
+      category,
+      severity,
+      eventType: String(eventType),
+      message: String(message),
+      detail: detail ?? null,
+    });
+
+    if (event) {
+      onDeviceEventRecordedCallback?.(deviceId, event);
+    }
+
+    res.json({ ok: true, recorded: !!event, event });
+  } catch (error: any) {
+    console.error(`[Devices] Failed to record event for ${deviceId}:`, error);
+    res.status(500).json({ error: error.message || 'Failed to record device event' });
   }
 });
 

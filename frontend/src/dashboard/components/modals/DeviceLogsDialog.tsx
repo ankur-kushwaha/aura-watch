@@ -8,6 +8,7 @@ export interface DeviceLogsDialogProps {
   device: { deviceId: string; name: string } | null;
   onClose: () => void;
   registerLiveLogSink?: (sink: ((entry: LogEntry) => void) | null) => void;
+  registerLiveEventSink?: (sink: ((event: DeviceEvent) => void) | null) => void;
 }
 
 function severityClass(severity: string): string {
@@ -16,7 +17,7 @@ function severityClass(severity: string): string {
   return 'text-emerald-300';
 }
 
-export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: DeviceLogsDialogProps) {
+export function DeviceLogsDialog({ device, onClose, registerLiveLogSink, registerLiveEventSink }: DeviceLogsDialogProps) {
   const [journalLogs, setJournalLogs] = useState('');
   const [loadingJournal, setLoadingJournal] = useState(false);
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
@@ -71,6 +72,7 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
       setLiveLogs([]);
       setSavedEvents([]);
       registerLiveLogSink?.(null);
+      registerLiveEventSink?.(null);
       return;
     }
 
@@ -87,8 +89,20 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
       });
     });
 
-    return () => registerLiveLogSink?.(null);
-  }, [device, refreshAll, registerLiveLogSink]);
+    registerLiveEventSink?.((event) => {
+      setSavedEvents((prev) => {
+        if (prev.some((existing) => existing.id === event.id)) {
+          return prev;
+        }
+        return [event, ...prev].slice(0, 100);
+      });
+    });
+
+    return () => {
+      registerLiveLogSink?.(null);
+      registerLiveEventSink?.(null);
+    };
+  }, [device, refreshAll, registerLiveLogSink, registerLiveEventSink]);
 
   useEffect(() => {
     if (logsContainerRef.current) {
@@ -140,7 +154,7 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
         <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
           <div>
             <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">
-              Saved Network Events (90 days)
+              Saved Device Events (90 days)
             </h3>
             <div
               ref={eventsContainerRef}
@@ -150,7 +164,7 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
                 <span className="text-text-muted">Loading saved events...</span>
               ) : savedEvents.length === 0 ? (
                 <span className="text-text-muted">
-                  No saved connectivity events yet. Camera and WebSocket issues are recorded here automatically.
+                  No saved events yet. Camera issues, software updates, and connectivity events are recorded here automatically.
                 </span>
               ) : (
                 savedEvents.map((event) => (
@@ -162,6 +176,7 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink }: Devic
                       <span className={`uppercase text-[0.65rem] tracking-wide ${severityClass(event.severity)}`}>
                         {event.severity}
                       </span>
+                      <span className="text-[0.65rem] text-text-muted">{event.category}</span>
                       <span className="text-[0.65rem] text-text-muted">{event.eventType}</span>
                     </div>
                     <span className={severityClass(event.severity)}>{event.message}</span>

@@ -1,7 +1,7 @@
 import prisma from './db';
 import type { Prisma } from '@prisma/client';
 
-export type DeviceEventCategory = 'camera' | 'websocket' | 'device' | 'preview' | 'recovery';
+export type DeviceEventCategory = 'camera' | 'websocket' | 'device' | 'preview' | 'recovery' | 'update';
 export type DeviceEventSeverity = 'info' | 'warn' | 'error';
 
 export interface RecordDeviceEventInput {
@@ -224,7 +224,7 @@ async function pruneOldEvents(): Promise<void> {
 
 let lastPruneAt = 0;
 
-export async function recordDeviceEvent(input: RecordDeviceEventInput): Promise<void> {
+export async function recordDeviceEvent(input: RecordDeviceEventInput) {
   const dedupeWindowMs = input.dedupeWindowMs ?? DEFAULT_DEDUPE_MS;
   const streamName = input.streamName ?? null;
   const resolvedStreamId = await resolveStreamId(input.deviceId, input.streamId, streamName);
@@ -233,10 +233,10 @@ export async function recordDeviceEvent(input: RecordDeviceEventInput): Promise<
   if (
     await isDuplicate(input.deviceId, resolvedStreamId, input.eventType, dedupeWindowMs)
   ) {
-    return;
+    return null;
   }
 
-  await prisma.deviceEvent.create({
+  const event = await prisma.deviceEvent.create({
     data: {
       deviceId: input.deviceId,
       streamId: resolvedStreamId,
@@ -256,6 +256,8 @@ export async function recordDeviceEvent(input: RecordDeviceEventInput): Promise<
       console.error('[DeviceEvents] Retention prune failed:', err);
     });
   }
+
+  return event;
 }
 
 export async function recordDeviceEventFromLog(

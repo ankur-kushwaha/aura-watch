@@ -68,6 +68,7 @@ HEALTH_HEARTBEAT_SEC = max(60, int(os.getenv("HEALTH_HEARTBEAT_SEC", "300")))
 DEBUG_LOGS = _DEFAULT_RUNTIME.debug_logs
 PREVIEW_STALL_TIMEOUT_SEC = _DEFAULT_RUNTIME.preview_stall_timeout_sec
 STREAM_FILE_CHUNK_BYTES = max(64 * 1024, int(os.getenv("STREAM_FILE_CHUNK_BYTES", str(256 * 1024))))
+AUTO_UPDATE_ON_BOOT = os.getenv("AUTO_UPDATE_ON_BOOT", "true").strip().lower() not in ("0", "false", "no")
 
 
 def _read_proc_meminfo() -> dict[str, int]:
@@ -281,6 +282,42 @@ class EdgeAgent:
             self._recent_logs = self._recent_logs[-100:]
         self._ws_send({"type": "log", "message": message, "timestamp": timestamp})
 
+    def send_device_event(
+        self,
+        *,
+        category: str,
+        severity: str,
+        event_type: str,
+        message: str,
+        detail: dict[str, Any] | None = None,
+        stream_id: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "category": category,
+            "severity": severity,
+            "eventType": event_type,
+            "message": message,
+        }
+        if detail:
+            payload["detail"] = detail
+        if stream_id:
+            payload["streamId"] = stream_id
+
+        if self.ws:
+            self._ws_send({"type": "device_event", **payload})
+            return
+
+        try:
+            url = f"{CLOUD_URL.rstrip('/')}/api/devices/{self.device_id}/report-event"
+            response = requests.post(url, json=payload, timeout=15)
+            if response.status_code >= 400:
+                print(
+                    f"[Edge] Device event report failed ({response.status_code}): {response.text[:200]}",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(f"[Edge] Failed to report device event: {exc}", flush=True)
+
     def _replay_recent_logs(self, limit: int = 25) -> None:
         for message, timestamp in self._recent_logs[-limit:]:
             self._ws_send({"type": "log", "message": message, "timestamp": timestamp})
@@ -458,6 +495,7 @@ class EdgeAgent:
 
     def register_device(self) -> dict[str, Any]:
         url = f"{CLOUD_URL.rstrip('/')}/api/devices/register"
+        version_info = self._check_git_versions()
         # Backwards compatible parameters if hub expects single-stream fields
         payload: dict[str, Any] = {
             "deviceId": self.device_id,
@@ -472,6 +510,10 @@ class EdgeAgent:
         enrollment_token = os.getenv("ENROLLMENT_TOKEN", "").strip()
         if enrollment_token:
             payload["enrollmentToken"] = enrollment_token
+        if version_info.get("gitCommit"):
+            payload["gitCommit"] = version_info["gitCommit"]
+        if version_info.get("remoteGitCommit"):
+            payload["remoteGitCommit"] = version_info["remoteGitCommit"]
 
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
@@ -1432,61 +1474,213 @@ class EdgeAgent:
             return False, output or "Failed to refresh systemd service"
         return True, output or "Systemd unit refreshed."
 
-    def _run_update(self, request_id: str) -> None:
+    def _perform_service_update(self) -> tuple[bool, str, str]:
+        """Pull latest code, refresh deps + systemd unit. Returns (success, summary, error)."""
+        repo_root = self._find_repo_root()
+        if not os.path.isdir(os.path.join(repo_root, ".git")):
+            return False, "", f"No git repository found at {repo_root}. Install via install.sh first."
+
+        self.send_log(f"Force-pulling latest code in {repo_root}...")
+        pull_ok, pull_output = self._git_force_pull(repo_root)
+        if not pull_ok:
+            return False, pull_output, "git force pull failed"
+
+        summary = pull_output.splitlines()[-1] if pull_output else "done"
+        self.send_log(f"Force pull complete: {summary}")
+
+        edge_dir = os.path.join(repo_root, "edge") if os.path.isdir(os.path.join(repo_root, "edge")) else repo_root
+        update_output = [pull_output]
+
+        venv_script = os.path.join(edge_dir, "scripts", "setup-venv.sh")
+        if os.path.isfile(venv_script):
+            self.send_log("Updating Python dependencies...")
+            venv_ok, venv_output = self._run_logged_command(
+                ["sh", venv_script, edge_dir, "python3"],
+                cwd=edge_dir,
+                timeout_sec=600,
+            )
+            if venv_output:
+                update_output.append(venv_output)
+            if not venv_ok:
+                return False, "\n\n".join(update_output), "Python dependency update failed"
+        else:
+            self.send_log("setup-venv.sh not found; skipping dependency update.")
+
+        self.send_log("Refreshing systemd service unit...")
+        systemd_ok, systemd_output = self._refresh_systemd_service(edge_dir)
+        if systemd_output:
+            update_output.append(systemd_output)
+        if not systemd_ok:
+            return False, "\n\n".join(update_output), "Systemd service refresh failed"
+
+        combined_output = "\n\n".join(part for part in update_output if part)
+        return True, combined_output, ""
+
+    def _report_update_started(self, trigger: str, local_commit: str | None, remote_commit: str | None) -> None:
+        from_label = local_commit[:8] if local_commit else "unknown"
+        to_label = remote_commit[:8] if remote_commit else "unknown"
+        self.send_device_event(
+            category="update",
+            severity="info",
+            event_type="update_started",
+            message=f"Software update started ({trigger}): {from_label} → {to_label}",
+            detail={
+                "trigger": trigger,
+                "fromCommit": local_commit,
+                "toCommit": remote_commit,
+            },
+        )
+
+    def _report_update_finished(
+        self,
+        *,
+        trigger: str,
+        success: bool,
+        local_commit: str | None,
+        remote_commit: str | None,
+        error: str = "",
+        output: str = "",
+    ) -> None:
+        from_label = local_commit[:8] if local_commit else "unknown"
+        to_label = remote_commit[:8] if remote_commit else "unknown"
+        if success:
+            self.send_device_event(
+                category="update",
+                severity="info",
+                event_type="update_success",
+                message=f"Software update complete ({trigger}): {from_label} → {to_label}",
+                detail={
+                    "trigger": trigger,
+                    "fromCommit": local_commit,
+                    "toCommit": remote_commit,
+                },
+            )
+            return
+
+        detail: dict[str, Any] = {
+            "trigger": trigger,
+            "fromCommit": local_commit,
+            "toCommit": remote_commit,
+            "error": error,
+        }
+        if output:
+            detail["output"] = output[-2000:]
+        self.send_device_event(
+            category="update",
+            severity="error",
+            event_type="update_failed",
+            message=f"Software update failed ({trigger}): {error or 'unknown error'}",
+            detail=detail,
+        )
+
+    def _run_update(self, request_id: str, *, trigger: str = "manual") -> None:
         def respond(success: bool, message: str = "", **extra: Any) -> None:
             self._send_command_response(request_id, success, message=message, **extra)
 
+        version_info = self._check_git_versions()
+        local_commit = version_info.get("gitCommit")
+        remote_commit = version_info.get("remoteGitCommit")
+        self._report_update_started(trigger, local_commit, remote_commit)
+
         try:
-            repo_root = self._find_repo_root()
-            if not os.path.isdir(os.path.join(repo_root, ".git")):
-                respond(False, error=f"No git repository found at {repo_root}. Install via install.sh first.")
-                return
-
-            self.send_log(f"Force-pulling latest code in {repo_root}...")
-            pull_ok, pull_output = self._git_force_pull(repo_root)
-            if not pull_ok:
-                respond(False, error="git force pull failed", output=pull_output)
-                return
-
-            summary = pull_output.splitlines()[-1] if pull_output else "done"
-            self.send_log(f"Force pull complete: {summary}")
-
-            edge_dir = os.path.join(repo_root, "edge") if os.path.isdir(os.path.join(repo_root, "edge")) else repo_root
-            update_output = [pull_output]
-
-            venv_script = os.path.join(edge_dir, "scripts", "setup-venv.sh")
-            if os.path.isfile(venv_script):
-                self.send_log("Updating Python dependencies...")
-                venv_ok, venv_output = self._run_logged_command(
-                    ["sh", venv_script, edge_dir, "python3"],
-                    cwd=edge_dir,
-                    timeout_sec=600,
+            success, output, error = self._perform_service_update()
+            if not success:
+                self._report_update_finished(
+                    trigger=trigger,
+                    success=False,
+                    local_commit=local_commit,
+                    remote_commit=remote_commit,
+                    error=error,
+                    output=output,
                 )
-                if venv_output:
-                    update_output.append(venv_output)
-                if not venv_ok:
-                    respond(False, error="Python dependency update failed", output="\n\n".join(update_output))
-                    return
-            else:
-                self.send_log("setup-venv.sh not found; skipping dependency update.")
-
-            self.send_log("Refreshing systemd service unit...")
-            systemd_ok, systemd_output = self._refresh_systemd_service(edge_dir)
-            if systemd_output:
-                update_output.append(systemd_output)
-            if not systemd_ok:
-                respond(False, error="Systemd service refresh failed", output="\n\n".join(update_output))
+                respond(False, error=error, output=output)
                 return
 
-            combined_output = "\n\n".join(part for part in update_output if part)
-            respond(True, message="Update complete. Restarting edge agent...", output=combined_output)
+            self._report_update_finished(
+                trigger=trigger,
+                success=True,
+                local_commit=local_commit,
+                remote_commit=remote_commit,
+            )
+            respond(True, message="Update complete. Restarting edge agent...", output=output)
             self._schedule_graceful_exit()
         except subprocess.TimeoutExpired:
+            self._report_update_finished(
+                trigger=trigger,
+                success=False,
+                local_commit=local_commit,
+                remote_commit=remote_commit,
+                error="Update timed out.",
+            )
             respond(False, error="Update timed out.")
         except FileNotFoundError as exc:
+            self._report_update_finished(
+                trigger=trigger,
+                success=False,
+                local_commit=local_commit,
+                remote_commit=remote_commit,
+                error=f"Required command not found: {exc}",
+            )
             respond(False, error=f"Required command not found: {exc}")
         except Exception as exc:
+            self._report_update_finished(
+                trigger=trigger,
+                success=False,
+                local_commit=local_commit,
+                remote_commit=remote_commit,
+                error=str(exc),
+            )
             respond(False, error=f"Update failed: {exc}")
+
+    def _maybe_auto_update_on_boot(self) -> bool:
+        """Apply pending updates on boot. Returns True if the agent is exiting to restart."""
+        if not AUTO_UPDATE_ON_BOOT:
+            return False
+
+        version_info = self._check_git_versions()
+        local_commit = version_info.get("gitCommit")
+        remote_commit = version_info.get("remoteGitCommit")
+        if not local_commit or not remote_commit or local_commit == remote_commit:
+            return False
+
+        self.send_log(
+            f"Boot update available: local {local_commit[:8]} != remote {remote_commit[:8]}"
+        )
+        self._report_update_started("boot", local_commit, remote_commit)
+
+        try:
+            success, output, error = self._perform_service_update()
+            if not success:
+                self._report_update_finished(
+                    trigger="boot",
+                    success=False,
+                    local_commit=local_commit,
+                    remote_commit=remote_commit,
+                    error=error,
+                    output=output,
+                )
+                self.send_log(f"Boot update failed: {error}")
+                return False
+
+            self._report_update_finished(
+                trigger="boot",
+                success=True,
+                local_commit=local_commit,
+                remote_commit=remote_commit,
+            )
+            self.send_log("Boot update complete. Restarting edge agent...")
+            self._schedule_graceful_exit()
+            return True
+        except Exception as exc:
+            self._report_update_finished(
+                trigger="boot",
+                success=False,
+                local_commit=local_commit,
+                remote_commit=remote_commit,
+                error=str(exc),
+            )
+            self.send_log(f"Boot update failed: {exc}")
+            return False
 
     def _reboot_device(self) -> None:
         self.shutdown()
@@ -1860,6 +2054,11 @@ class EdgeAgent:
                 f"[Edge] Registration successful. Applied {len(streams_list)} stream(s) config.",
                 flush=True,
             )
+
+            if self._maybe_auto_update_on_boot():
+                while not self.shutdown_event.is_set():
+                    time.sleep(1)
+                return
 
             self.connect_ws()
             self._schedule_health_heartbeat()

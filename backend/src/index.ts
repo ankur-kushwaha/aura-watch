@@ -15,6 +15,7 @@ import devicesRouter, {
   registerOnClipUploaded,
   registerOnDevicesChanged,
   registerOnDeviceConfigUpdated,
+  registerOnDeviceEventRecorded,
 } from './routes/devices';
 import streamsRouter, { registerOnStreamsUpdated } from './routes/streams';
 import { buildConfigurePayload } from './services/edgeConfig';
@@ -37,7 +38,7 @@ import { resolveCropImageBuffer } from './services/cropResolve';
 import { registerEdgeFileFetcher } from './services/edgeFileFetch';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import prisma from './services/db';
-import { recordDeviceEventFromLogSafe, recordDeviceEventSafe } from './services/deviceEvents';
+import { recordDeviceEventFromLogSafe, recordDeviceEventSafe, recordDeviceEvent } from './services/deviceEvents';
 import { getEffectiveStreamStatus } from './services/deviceStatus';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
 import { EDGE_DEVICE_CONFIG_DEFAULTS } from './config/edgeDeviceDefaults';
@@ -167,6 +168,10 @@ function broadcastDevicesChanged() {
 
 registerOnDevicesChanged(() => {
   broadcastDevicesChanged();
+});
+
+registerOnDeviceEventRecorded((deviceId, event) => {
+  broadcastToSubscribedUIs(deviceId, { type: 'device_event', deviceId, event });
 });
 
 function broadcastToSubscribedUIs(deviceId: string, data: any) {
@@ -916,6 +921,23 @@ wss.on('connection', async (ws: WebSocket, req) => {
             const contentType = pending.contentType || 'application/octet-stream';
             const buffer = Buffer.concat(pending.chunks || []);
             resolvePendingStreamRequest(requestId, { contentType, data: buffer });
+            break;
+          }
+          case 'device_event': {
+            const { category, severity, eventType, message, detail, streamId } = data;
+            if (!category || !severity || !eventType || !message) break;
+            const event = await recordDeviceEvent({
+              deviceId,
+              streamId: streamId || null,
+              category,
+              severity,
+              eventType,
+              message,
+              detail: detail ?? null,
+            });
+            if (event) {
+              broadcastToSubscribedUIs(deviceId, { type: 'device_event', deviceId, event });
+            }
             break;
           }
           case 'log':

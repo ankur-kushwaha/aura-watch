@@ -45,6 +45,7 @@ import { LIVE_PREVIEW_ENABLED, PREVIEW_STALL_MS, STREAM_INIT_TIMEOUT_MS, STREAM_
 import type {
   CameraConfig,
   CameraStream,
+  DeviceEvent,
   EdgeDevice,
   LogEntry,
   VideoClip,
@@ -136,6 +137,7 @@ export default function DashboardApp() {
   const onlineDeviceIdsRef = useRef<Set<string>>(new Set());
   const deviceLogsDeviceRef = useRef(deviceLogsDevice);
   const deviceLogSinkRef = useRef<((entry: LogEntry) => void) | null>(null);
+  const deviceEventSinkRef = useRef<((event: DeviceEvent) => void) | null>(null);
 
   useEffect(() => {
     deviceLogsDeviceRef.current = deviceLogsDevice;
@@ -474,6 +476,19 @@ export default function DashboardApp() {
           setMotionActive(data.active);
           setMotionRatio(data.ratio);
           break;
+        case 'device_event': {
+          const modalDevice = deviceLogsDeviceRef.current;
+          const event = data.event as DeviceEvent | undefined;
+          if (
+            event &&
+            modalDevice &&
+            data.deviceId === modalDevice.deviceId &&
+            deviceEventSinkRef.current
+          ) {
+            deviceEventSinkRef.current(event);
+          }
+          break;
+        }
         case 'log': {
           const logEntry = { message: data.message, timestamp: data.timestamp };
           setLogs((prev) => {
@@ -1765,6 +1780,7 @@ export default function DashboardApp() {
         device={deviceLogsDevice}
         onClose={closeDeviceLogsModal}
         registerLiveLogSink={(sink) => { deviceLogSinkRef.current = sink; }}
+        registerLiveEventSink={(sink) => { deviceEventSinkRef.current = sink; }}
       />
 
       <DeviceMetricsDialog
