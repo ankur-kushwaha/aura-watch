@@ -167,7 +167,7 @@ class YoloByteTracker:
         self.class_ids = resolve_class_ids(class_names)
         self.class_names = class_names or list(DEFAULT_DETECT_CLASSES)
         self.use_half = self.device == "cuda" and os.getenv("YOLO_HALF", "false").lower() == "true"
-        self.model = YOLO(self.model_path)
+        self.model = YOLO(self.model_path, task="detect")
         self._objects_active = False
         self._last_detections: list[Detection] = []
         
