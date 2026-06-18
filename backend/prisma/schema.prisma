@@ -38,6 +38,10 @@ type EdgeDeviceConfig {
   reidMinBboxSize         Int?
   reidVisibleSec          Float?
   debugLogs               Boolean?
+  /// Stored SSID of the configured WiFi network (safe to return to UI)
+  wifiSsid                String?
+  /// AES-256-GCM encrypted WiFi password — NEVER return this to the frontend
+  wifiPasswordEncrypted   String?
 }
 
 model Organization {

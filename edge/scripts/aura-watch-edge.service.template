@@ -1,7 +1,10 @@
 [Unit]
 Description=Aura Watch AI Edge Surveillance Agent
-After=network-online.target
+# Run after WiFi provisioning check (AP fallback if no WiFi)
+After=network-online.target aura-watch-wifi-setup.service
 Wants=network-online.target
+# Wait for WiFi setup to finish before starting the agent
+After=aura-watch-wifi-setup.service
 
 [Service]
 Type=simple

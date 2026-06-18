@@ -1,0 +1,25 @@
+[Unit]
+Description=Aura Watch WiFi AP Setup (captive portal provisioning)
+Documentation=https://github.com/ankur-kushwaha/aura-watch
+# Must run before the main edge agent
+Before=aura-watch-edge.service
+# Only run on first boot or when WiFi isn't configured
+After=network-pre.target
+Wants=network-pre.target
+# Don't block boot if it fails (it's a best-effort provisioner)
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/bin/sh %h/aura-watch-edge/edge/scripts/wifi-ap-setup.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=0
+# Run as root so it can configure network interfaces
+User=root
+# Pass device ID so AP SSID can be derived
+EnvironmentFile=-/home/%h/aura-watch-edge/edge/.env
+
+[Install]
+WantedBy=multi-user.target

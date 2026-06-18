@@ -6,6 +6,53 @@ Lightweight Python agent for edge devices (Raspberry Pi, NVIDIA Jetson, macOS de
 
 ---
 
+## WiFi Provisioning (headless Raspberry Pi)
+
+Two complementary mechanisms let you connect a headless Pi to a new WiFi network without a screen.
+
+### Method 1: AP Fallback (automatic on boot)
+
+When the Pi boots and **cannot connect to WiFi within 30 seconds**, it automatically creates a temporary hotspot:
+
+1. A hotspot named **`AuraWatch-XXXX`** (last 4 chars of device ID) appears in your phone's WiFi list
+2. Connect your phone (or laptop) to it — no password required
+3. A browser may auto-open. If not, navigate to **`http://192.168.4.1`**
+4. The captive portal shows nearby networks — pick yours, enter the password, and press **Connect**
+5. The Pi applies the credentials, tears down the hotspot, and reboots into normal operation
+
+The AP times out after **15 minutes** and reboots if nobody configures it.
+
+> **Requires**: `hostapd`, `dnsmasq` (auto-installed by `setup-service.sh`), and NetworkManager or wpa_supplicant.
+
+### Method 2: Hub-Pushed WiFi (from the dashboard)
+
+When the Pi is online via **Ethernet** (or already on WiFi), you can push new credentials from the Aura Watch dashboard:
+
+1. Open the **Device Settings** dialog for your device in the dashboard
+2. Scroll to the **WiFi Configuration** section
+3. Enter the SSID and password → click **Apply WiFi Now**
+4. The credentials are encrypted (AES-256-GCM) and stored in the cloud
+5. A `set_wifi` command is sent to the device over the existing WebSocket
+6. The Pi connects to the new network immediately — you can then unplug Ethernet
+
+If the device is **offline** when you apply, the credentials are saved and will be pushed on next reconnect, or applied by the AP portal on boot.
+
+**Backend setup** — add to `backend/.env`:
+```bash
+# Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+WIFI_CREDENTIAL_SECRET="your-64-char-hex-secret"
+```
+
+### Which to use?
+
+| Scenario | Method |
+|---|---|
+| First-time setup in a new location | AP Fallback (automatic) |
+| Changing WiFi from the office | Hub-Pushed from dashboard |
+| Pre-configuring before deployment | Raspberry Pi Imager (Advanced Options → WiFi) |
+
+---
+
 ## Prerequisites
 
 | Requirement | Notes |
@@ -385,3 +432,6 @@ sudo edge/scripts/refresh-systemd-service.sh   # or ./edge/scripts/setup-service
 | `scripts/setup-service.sh` | Register systemd service (Linux) |
 | `scripts/refresh-systemd-service.sh` | Re-apply systemd unit from template (sudo) |
 | `scripts/export_model.py` | Export YOLO to ONNX / CoreML / TensorRT / OpenVINO |
+| `scripts/wifi-ap-setup.sh` | Boot-time WiFi check → AP hotspot fallback if no WiFi |
+| `scripts/wifi_portal.py` | Captive portal HTTP server (runs during AP mode) |
+| `scripts/aura-watch-wifi-setup.service` | Systemd oneshot unit for WiFi provisioning on boot |

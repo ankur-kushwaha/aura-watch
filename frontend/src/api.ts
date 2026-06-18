@@ -269,4 +269,52 @@ export async function generateClipAiSummary(clipId: string): Promise<ClipAiSumma
   return res.json();
 }
 
+export interface SetDeviceWifiResult {
+  ok: boolean;
+  ssid: string;
+  credentialsSaved: boolean;
+  deviceOnline: boolean;
+  message?: string;
+}
+
+/**
+ * Set WiFi credentials for an edge device.
+ * Credentials are encrypted at-rest in the backend — the password is NEVER
+ * returned by any GET endpoint.
+ */
+export async function setDeviceWifi(
+  deviceId: string,
+  ssid: string,
+  password: string,
+): Promise<SetDeviceWifiResult> {
+  const res = await apiFetch(`/devices/${deviceId}/command/set-wifi`, {
+    method: 'POST',
+    body: JSON.stringify({ ssid, password }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to configure WiFi');
+  }
+  return res.json();
+}
+
+export interface DeviceWifiStatus {
+  connected: boolean;
+  ssid?: string | null;
+  ip?: string | null;
+  message?: string;
+}
+
+/**
+ * Ask the online edge device for its current WiFi connection state.
+ */
+export async function getDeviceWifiStatus(deviceId: string): Promise<DeviceWifiStatus> {
+  const res = await apiFetch(`/devices/${deviceId}/command/get-wifi-status`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to get WiFi status');
+  }
+  return res.json();
+}
+
 export { API_BASE };

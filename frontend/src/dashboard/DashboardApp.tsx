@@ -1809,7 +1809,7 @@ export default function DashboardApp() {
 
       <DeviceConfigDialog
         open={showDeviceConfigDialog}
-        deviceId={deviceConfigDeviceId}
+        device={devices.find((d) => d.deviceId === deviceConfigDeviceId) ?? null}
         initialName={deviceConfigName}
         initialConfig={deviceConfig}
         onClose={() => {

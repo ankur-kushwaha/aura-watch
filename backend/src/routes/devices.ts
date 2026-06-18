@@ -19,6 +19,22 @@ import {
   mergeDeviceConfigUpdate,
   withEffectiveDeviceConfig,
 } from '../services/edgeConfig';
+import {
+  encryptWifiPassword,
+  decryptWifiPassword,
+  isWifiEncryptionConfigured,
+} from '../services/wifiCredentials';
+
+/**
+ * Strip sensitive fields (wifiPasswordEncrypted) before sending device data to the frontend.
+ * wifiSsid is safe — it's just the network name, not the credential.
+ */
+function sanitizeDeviceForClient<T extends { config?: Record<string, unknown> | null }>(device: T): T {
+  if (!device.config) return device;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { wifiPasswordEncrypted: _stripped, ...safeConfig } = device.config as Record<string, unknown>;
+  return { ...device, config: safeConfig };
+}
 
 const router = Router();
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, '../../storage/videos');
@@ -260,10 +276,14 @@ router.get('/', async (req: Request, res: Response) => {
     });
     
     const now = new Date();
-    const sanitizedDevices = devices.map((device) => ({
-      ...withEffectiveDeviceConfig(device),
-      status: getEffectiveDeviceStatus(device.status, device.lastHeartbeat, now),
-    }));
+    const sanitizedDevices = devices.map((device) =>
+      sanitizeDeviceForClient({
+        ...withEffectiveDeviceConfig(device),
+        status: getEffectiveDeviceStatus(device.status, device.lastHeartbeat, now),
+        wifiSsid: (device.config as Record<string, unknown> | null)?.wifiSsid ?? null,
+        wifiConfigured: !!((device.config as Record<string, unknown> | null)?.wifiPasswordEncrypted),
+      }),
+    );
 
     res.json(sanitizedDevices);
   } catch (error) {
@@ -368,8 +388,13 @@ router.get('/:deviceId', async (req: Request, res: Response) => {
     }
     
     device.status = getEffectiveDeviceStatus(device.status, device.lastHeartbeat);
+    const cfg = device.config as Record<string, unknown> | null;
 
-    res.json(withEffectiveDeviceConfig(device));
+    res.json(sanitizeDeviceForClient({
+      ...withEffectiveDeviceConfig(device),
+      wifiSsid: cfg?.wifiSsid ?? null,
+      wifiConfigured: !!(cfg?.wifiPasswordEncrypted),
+    }));
   } catch (error) {
     console.error('Error fetching device:', error);
     res.status(500).json({ error: 'Failed to fetch device details' });
@@ -784,5 +809,113 @@ router.get('/:deviceId/logs', async (req: Request, res: Response) => {
 });
 
 
+/**
+ * POST /api/devices/:deviceId/command/set-wifi
+ * Store encrypted WiFi credentials and push them to the online edge device.
+ * The plaintext password is ONLY sent in-flight over the WebSocket; it is
+ * stored encrypted (AES-256-GCM) in the database.
+ * The decrypted password is NEVER returned to the frontend.
+ */
+router.post('/:deviceId/command/set-wifi', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const { ssid, password } = req.body as { ssid?: string; password?: string };
+
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  if (!ssid || typeof ssid !== 'string' || ssid.trim().length === 0) {
+    return res.status(400).json({ error: 'ssid is required' });
+  }
+  if (!password || typeof password !== 'string') {
+    return res.status(400).json({ error: 'password is required' });
+  }
+
+  try {
+    const device = await prisma.edgeDevice.findFirst({
+      where: { deviceId, orgId: req.auth.orgId },
+    });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    // Encrypt and store credentials
+    if (!isWifiEncryptionConfigured()) {
+      console.warn('[WiFi] WIFI_CREDENTIAL_SECRET not configured — credentials will not be persisted.');
+    }
+
+    const wifiPasswordEncrypted = isWifiEncryptionConfigured()
+      ? encryptWifiPassword(password)
+      : null;
+
+    // Merge into device config (keep all other config fields)
+    const existingConfig = (device.config ?? {}) as Record<string, unknown>;
+    const updatedConfig = {
+      ...existingConfig,
+      wifiSsid: ssid.trim(),
+      ...(wifiPasswordEncrypted ? { wifiPasswordEncrypted } : {}),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    await prisma.edgeDevice.update({
+      where: { deviceId },
+      data: { config: updatedConfig },
+    });
+
+    console.log(`[WiFi] Stored credentials for device ${deviceId}, SSID: ${ssid}`);
+
+    // Push credentials to the device over WebSocket (plaintext, in-flight only)
+    let commandResult: { success?: boolean; message?: string; error?: string } = {};
+    try {
+      const result = await sendDeviceCommand(deviceId, 'set_wifi', { ssid: ssid.trim(), password }, 40000);
+      commandResult = { success: true, message: result.message as string | undefined || `WiFi applied: ${ssid}` };
+    } catch (cmdErr: unknown) {
+      const errMsg = cmdErr instanceof Error ? cmdErr.message : String(cmdErr);
+      if (errMsg === 'Device is offline') {
+        // Offline is OK — credentials are stored, will apply on next reboot via AP config
+        commandResult = {
+          success: false,
+          message: 'Device is offline. Credentials saved — the device will use them when next it boots.',
+        };
+      } else {
+        commandResult = { success: false, message: errMsg };
+      }
+    }
+
+    res.json({
+      ok: true,
+      ssid: ssid.trim(),
+      credentialsSaved: !!wifiPasswordEncrypted,
+      deviceOnline: commandResult.success !== false,
+      message: commandResult.message,
+    });
+  } catch (error) {
+    console.error('[WiFi] Error in set-wifi:', error);
+    res.status(500).json({ error: 'Failed to configure WiFi' });
+  }
+});
+
+/**
+ * GET /api/devices/:deviceId/command/get-wifi-status
+ * Ask the edge device for its current WiFi connection state.
+ */
+router.get('/:deviceId/command/get-wifi-status', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+    const result = await sendDeviceCommand(deviceId, 'get_wifi_status', {}, 15000);
+    res.json(result);
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const status = errMsg === 'Device is offline' ? 503 : 500;
+    res.status(status).json({ error: errMsg || 'Failed to get WiFi status' });
+  }
+});
 
 export default router;

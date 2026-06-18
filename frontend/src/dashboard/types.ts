@@ -96,6 +96,10 @@ export interface EdgeDevice {
   remoteGitCommit?: string | null;
   config?: Record<string, unknown> | null;
   effectiveConfig?: EffectiveEdgeDeviceConfig;
+  /** SSID of the currently configured WiFi network (safe to display) */
+  wifiSsid?: string | null;
+  /** True if an encrypted WiFi password is stored for this device */
+  wifiConfigured?: boolean;
 }
 
 export interface DeviceSystemMetrics {

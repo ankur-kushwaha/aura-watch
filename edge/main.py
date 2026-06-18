@@ -1692,6 +1692,115 @@ class EdgeAgent:
         self.shutdown()
         subprocess.run(["sudo", "-n", "reboot"], check=False)
 
+    # ── WiFi management ────────────────────────────────────────────────────────
+
+    def _has_networkmanager(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "NetworkManager"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def _apply_wifi(self, ssid: str, password: str) -> tuple[bool, str]:
+        """Apply WiFi credentials via nmcli or wpa_supplicant."""
+        if self._has_networkmanager():
+            return self._apply_wifi_nmcli(ssid, password)
+        return self._apply_wifi_wpa(ssid, password)
+
+    def _apply_wifi_nmcli(self, ssid: str, password: str) -> tuple[bool, str]:
+        conn_name = f"aura-{ssid}"
+        # Remove existing connection with same name to prevent conflicts
+        subprocess.run(["nmcli", "connection", "delete", conn_name],
+                       capture_output=True, timeout=10)
+        wifi_iface = os.environ.get("WIFI_IFACE", "wlan0")
+        result = subprocess.run(
+            [
+                "nmcli", "device", "wifi", "connect", ssid,
+                "password", password,
+                "name", conn_name,
+                "ifname", wifi_iface,
+            ],
+            capture_output=True, text=True, timeout=35,
+        )
+        if result.returncode == 0:
+            return True, f"Connected to {ssid} via nmcli"
+        err = (result.stderr or result.stdout or "nmcli connect failed").strip()
+        return False, err
+
+    def _apply_wifi_wpa(self, ssid: str, password: str) -> tuple[bool, str]:
+        """Write wpa_supplicant.conf and reconfigure."""
+        import re
+        wifi_iface = os.environ.get("WIFI_IFACE", "wlan0")
+        conf_path = "/etc/wpa_supplicant/wpa_supplicant.conf"
+        # Generate PSK block
+        psk_result = subprocess.run(
+            ["wpa_passphrase", ssid, password], capture_output=True, text=True, timeout=10
+        )
+        if psk_result.returncode == 0:
+            block = "\n" + "\n".join(
+                line for line in psk_result.stdout.splitlines()
+                if not line.strip().startswith("#psk=")
+            )
+        else:
+            block = f'\nnetwork={{\n    ssid="{ssid}"\n    psk="{password}"\n}}\n'
+
+        try:
+            with open(conf_path, "r") as f:
+                existing = f.read()
+        except FileNotFoundError:
+            existing = "country=IN\nctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\n"
+
+        existing = re.sub(
+            r'\nnetwork=\{[^}]*ssid="' + re.escape(ssid) + r'"[^}]*\}', "", existing
+        )
+        new_conf = existing.rstrip() + block
+        try:
+            with open(conf_path, "w") as f:
+                f.write(new_conf)
+        except PermissionError:
+            return False, "Permission denied writing wpa_supplicant.conf (run as root)"
+
+        subprocess.run(["wpa_cli", "-i", wifi_iface, "reconfigure"],
+                       capture_output=True, timeout=10)
+        import time as _time
+        _time.sleep(4)
+        status_result = subprocess.run(
+            ["wpa_cli", "-i", wifi_iface, "status"], capture_output=True, text=True, timeout=10
+        )
+        if "wpa_state=COMPLETED" in status_result.stdout:
+            return True, f"Connected to {ssid} via wpa_supplicant"
+        return False, "wpa_supplicant: could not connect — check SSID/password and try again"
+
+    def _get_wifi_status(self) -> dict[str, Any]:
+        """Return current WiFi connection state."""
+        wifi_iface = os.environ.get("WIFI_IFACE", "wlan0")
+        if self._has_networkmanager():
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "device"],
+                capture_output=True, text=True, timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split(":")
+                if parts and parts[0] == wifi_iface:
+                    state = parts[1] if len(parts) > 1 else ""
+                    ssid = parts[2] if len(parts) > 2 else ""
+                    connected = state == "connected"
+                    return {"connected": connected, "ssid": ssid if connected else None, "message": state}
+        # Fallback: check ip route
+        ip_result = subprocess.run(
+            ["ip", "-4", "addr", "show", wifi_iface], capture_output=True, text=True, timeout=10
+        )
+        for line in ip_result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("inet "):
+                ip_addr = line.split()[1].split("/")[0]
+                if not ip_addr.startswith("169.254."):
+                    return {"connected": True, "ssid": None, "ip": ip_addr}
+        return {"connected": False, "ssid": None}
+
     def _handle_device_command(self, request_id: str, command: str, params: dict[str, Any]) -> None:
         def respond(success: bool, message: str = "", **extra: Any) -> None:
             self._send_command_response(request_id, success, message=message, **extra)
@@ -1778,6 +1887,39 @@ class EdgeAgent:
                 )
             except Exception as exc:
                 respond(False, error=f"Version check failed: {exc}")
+            return
+
+        if command == "set_wifi":
+            ssid = params.get("ssid", "")
+            password = params.get("password", "")
+            if not ssid:
+                respond(False, error="ssid is required")
+                return
+            if platform.system() != "Linux":
+                respond(False, error="WiFi configuration is only supported on Linux edge devices.")
+                return
+            self.send_log(f"[WiFi] Applying WiFi credentials for SSID: {ssid}")
+            try:
+                success, message = self._apply_wifi(ssid, str(password))
+                if success:
+                    self.send_log(f"[WiFi] Successfully connected to: {ssid}")
+                    respond(True, message=message)
+                else:
+                    self.send_log(f"[WiFi] Failed to connect to {ssid}: {message}")
+                    respond(False, error=message)
+            except Exception as exc:
+                respond(False, error=f"WiFi configuration failed: {exc}")
+            return
+
+        if command == "get_wifi_status":
+            if platform.system() != "Linux":
+                respond(True, connected=False, message="Not a Linux device")
+                return
+            try:
+                status = self._get_wifi_status()
+                respond(True, **status)
+            except Exception as exc:
+                respond(False, error=f"Could not get WiFi status: {exc}")
             return
 
         respond(False, error=f"Unknown device command: {command}")
