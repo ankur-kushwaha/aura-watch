@@ -16,7 +16,6 @@ import {
   X,
   Power,
   ScrollText,
-  Download,
   AlertTriangle,
   SlidersHorizontal,
   ExternalLink,
@@ -50,7 +49,7 @@ import type {
   LogEntry,
   VideoClip,
 } from './types';
-import { isEdgeUpdateAvailable } from './utils/clips';
+
 import {
   findLatestStreamError,
   getStreamErrorHint,
@@ -946,37 +945,7 @@ export default function DashboardApp() {
     }
   };
 
-  const handleUpdateService = async (deviceId: string, deviceName: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (
-      !confirm(
-        `Update "${deviceName}"?\n\nThis will force-pull the latest code, refresh dependencies and the systemd service, then restart the edge agent. Local changes on the device will be discarded.`
-      )
-    ) {
-      return;
-    }
 
-    setDeviceCommandPending(`${deviceId}:update`);
-    try {
-      const res = await apiFetch(`/devices/${deviceId}/command/update-service`, {
-        method: 'POST',
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        const detail = data.output ? `\n\n${data.output}` : '';
-        alert((data.error || 'Failed to update service') + detail);
-      } else {
-        const detail = data.output ? `\n\n${data.output}` : '';
-        alert((data.message || 'Update complete') + detail);
-        await refreshDevices();
-      }
-    } catch (err) {
-      console.error('Failed to update service', err);
-      alert('Failed to update service');
-    } finally {
-      setDeviceCommandPending(null);
-    }
-  };
 
   const openDeviceLogsModal = (deviceId: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1245,17 +1214,7 @@ export default function DashboardApp() {
                           <Power size={11} />
                           {deviceCommandPending === `${dev.deviceId}:reboot` ? 'Rebooting...' : 'Reboot'}
                         </button>
-                        {isEdgeUpdateAvailable(dev) && (
-                          <button
-                            onClick={(e) => handleUpdateService(dev.deviceId, dev.name, e)}
-                            disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:update`}
-                            className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
-                            title={`Update available (${dev.gitCommit?.slice(0, 8)} → ${dev.remoteGitCommit?.slice(0, 8)})`}
-                          >
-                            <Download size={11} />
-                            {deviceCommandPending === `${dev.deviceId}:update` ? 'Updating...' : 'Update'}
-                          </button>
-                        )}
+
                         <button
                           onClick={(e) => openDeviceLogsModal(dev.deviceId, dev.name, e)}
                           className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1"

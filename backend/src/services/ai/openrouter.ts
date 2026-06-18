@@ -10,9 +10,10 @@ import { formatClipContextSummary } from '../yoloSummary';
 
 const execAsync = promisify(exec);
 
-const DEFAULT_CHAT_MODEL = 'openrouter/free';
-const DEFAULT_VIDEO_MODEL = 'nvidia/nemotron-nano-12b-v2-vl:free';
-const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+const CHAT_MODEL = 'openrouter/free';
+const VIDEO_MODEL = 'google/gemma-4-26b-a4b-it';
+const EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+const USE_NATIVE_VIDEO = true;
 const MAX_FRAMES = 10;
 
 export class OpenRouterService implements AIService {
@@ -30,15 +31,15 @@ export class OpenRouterService implements AIService {
   }
 
   private getChatModel(): string {
-    return process.env.OPENROUTER_MODEL || DEFAULT_CHAT_MODEL;
+    return CHAT_MODEL;
   }
 
   private getVideoModel(): string {
-    return process.env.OPENROUTER_VIDEO_MODEL || DEFAULT_VIDEO_MODEL;
+    return VIDEO_MODEL;
   }
 
   private getEmbeddingModel(): string {
-    return process.env.OPENROUTER_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
+    return EMBEDDING_MODEL;
   }
 
   private getOpenRouterHeaders(): Record<string, string> {
@@ -184,7 +185,7 @@ export class OpenRouterService implements AIService {
   }
 
   private shouldUseNativeVideo(): boolean {
-    return process.env.OPENROUTER_USE_NATIVE_VIDEO !== 'false';
+    return USE_NATIVE_VIDEO;
   }
 
   private isVideoBalanceError(error: any): boolean {
