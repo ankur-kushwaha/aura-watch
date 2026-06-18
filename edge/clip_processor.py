@@ -122,6 +122,16 @@ def _append_reid_event(
     return True
 
 
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    a_arr = np.array(a, dtype=np.float64)
+    b_arr = np.array(b, dtype=np.float64)
+    norm_a = np.linalg.norm(a_arr)
+    norm_b = np.linalg.norm(b_arr)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a_arr, b_arr) / (norm_a * norm_b))
+
+
 def process_clip(
     clip_path: str,
     tracker: YoloByteTracker,
@@ -207,6 +217,46 @@ def process_clip(
             continue
         if _append_reid_event(detection, frame, offset_ms, embedder, track_events, reid_crops):
             reid_track_ids.add(track_id)
+
+    # Merge track IDs based on ReID embedding similarity to reduce duplicate object rows
+    threshold = 0.70
+    person_crops = [c for c in reid_crops if c.class_name == "person"]
+    vehicle_crops = [c for c in reid_crops if is_vehicle_class(c.class_name)]
+
+    merge_map: dict[int, int] = {}
+    lists_to_process = [person_crops, vehicle_crops]
+    for crop_list in lists_to_process:
+        processed_tids = set()
+        for i, crop_a in enumerate(crop_list):
+            tid_a = crop_a.track_id
+            if tid_a in processed_tids:
+                continue
+            processed_tids.add(tid_a)
+
+            for j in range(i + 1, len(crop_list)):
+                crop_b = crop_list[j]
+                tid_b = crop_b.track_id
+                if tid_b in processed_tids:
+                    continue
+
+                if crop_a.embedding and crop_b.embedding:
+                    sim = cosine_similarity(crop_a.embedding, crop_b.embedding)
+                    if sim >= threshold:
+                        merge_map[tid_b] = merge_map.get(tid_a, tid_a)
+                        processed_tids.add(tid_b)
+
+    if merge_map:
+        logger.info("Local same-clip track merging map: %s", merge_map)
+        # 1. Update trackIds in track_events
+        for event in track_events:
+            tid = event.get("trackId")
+            if tid in merge_map:
+                event["trackId"] = merge_map[tid]
+
+        # 2. Update track_ids in reid_crops
+        for crop in reid_crops:
+            if crop.track_id in merge_map:
+                crop.track_id = merge_map[crop.track_id]
 
     return ClipProcessResult(
         track_events=track_events,

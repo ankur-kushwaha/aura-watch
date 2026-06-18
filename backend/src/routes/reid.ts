@@ -167,7 +167,8 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
     className,
   });
 
-  if (className === 'person') {
+  const category = getReidObjectCategory(className);
+  if (category === 'person' || category === 'vehicle') {
     await linkDetectionToExistingIdentity(detection.id, streamId, trackId);
   }
 
@@ -181,6 +182,19 @@ export async function processReidDetectionFromCropFile(input: ReidDetectionInput
   }
 
   return fullDetection;
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom > 0 ? dot / denom : 0;
 }
 
 export async function processReidTrackEventsFromClip(
@@ -199,6 +213,82 @@ export async function processReidTrackEventsFromClip(
 }> {
   const reidEvents = selectReidTrackEvents(trackEvents);
   if (!reidEvents.length) return { succeeded: 0, failures: [], appearances: new Map() };
+
+  // Local pairwise similarity clustering of track events within this single clip
+  try {
+    const stream = await prisma.cameraStream.findUnique({
+      where: { streamId },
+      include: { device: { select: { deviceId: true, orgId: true } } },
+    });
+    const deviceConfig = stream?.device?.deviceId
+      ? await prisma.edgeDevice.findUnique({
+          where: { deviceId: stream.device.deviceId },
+          select: { config: true },
+        })
+      : null;
+    const threshold = deviceConfig?.config?.reidConfidenceThreshold ?? 0.70;
+
+    const persons = reidEvents.filter(e => getReidObjectCategory(e.className || 'person') === 'person');
+    const vehicles = reidEvents.filter(e => getReidObjectCategory(e.className || '') === 'vehicle');
+
+    const listsToProcess = [persons, vehicles];
+    for (const list of listsToProcess) {
+      const processedTracks = new Set<number>();
+      for (let i = 0; i < list.length; i++) {
+        const trackId = list[i].trackId;
+        if (processedTracks.has(trackId)) continue;
+
+        const group = [trackId];
+        processedTracks.add(trackId);
+
+        const normA = normalizeReidEmbedding(list[i].embedding);
+        if (!normA) continue;
+
+        for (let j = i + 1; j < list.length; j++) {
+          const otherTrackId = list[j].trackId;
+          if (processedTracks.has(otherTrackId)) continue;
+
+          const normB = normalizeReidEmbedding(list[j].embedding);
+          if (!normB) continue;
+
+          const sim = cosineSimilarity(normA, normB);
+          if (sim >= threshold) {
+            group.push(otherTrackId);
+            processedTracks.add(otherTrackId);
+          }
+        }
+
+        if (group.length > 1) {
+          console.log(`[ReID Router] Merging same-clip tracks: ${group.join(', ')} (threshold: ${threshold})`);
+          // Find any existing identity for this group
+          let resolvedIdentityId: string | null = null;
+          for (const tid of group) {
+            const existingId = await resolveIdentityFromStreamTrack(streamId, tid);
+            if (existingId) {
+              resolvedIdentityId = existingId;
+              break;
+            }
+          }
+
+          // If no existing identity, create one
+          if (!resolvedIdentityId) {
+            const orgId = stream?.device?.orgId ?? null;
+            const newIdentity = await prisma.reidIdentity.create({
+              data: orgId ? { orgId } : {},
+            });
+            resolvedIdentityId = newIdentity.id;
+          }
+
+          // Register stream track mapping for all tracks in the group
+          for (const tid of group) {
+            await registerStreamTrackMapping(streamId, tid, resolvedIdentityId);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error(`[ReID Router] Local clip clustering failed:`, err.message);
+  }
 
   const resolvedClipId = await resolveClipIdFromFilename(clipFilename);
   let succeeded = 0;
