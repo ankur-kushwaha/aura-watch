@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import os
+from dotenv import load_dotenv
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 import base64
 import json
-import os
 import platform
 import queue
 import shutil
@@ -22,7 +26,6 @@ from config import DeviceRuntimeConfig, default_stream_tracking_enabled, rtsp_lo
 
 import requests
 import websocket
-from dotenv import load_dotenv
 
 from agent_log import AgentLogger
 from camera import CameraCapture
@@ -39,9 +42,6 @@ from recorder import (
 from device_defaults import stream_config_defaults
 from reid_embedder import ReidEmbedder
 from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 _STREAM_DEFAULTS = stream_config_defaults()
 _DEFAULT_RUNTIME = DeviceRuntimeConfig()

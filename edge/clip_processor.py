@@ -9,7 +9,12 @@ from typing import Any, Optional
 import cv2
 import numpy as np
 
-from crop_appearance import analyze_crop_jpeg, analyze_vehicle_crop_jpeg, analyze_vehicle_from_frame, is_vehicle_class
+from crop_appearance import (
+    analyze_crop_appearance,
+    analyze_vehicle_from_frame,
+    analyze_vehicle_region,
+    is_vehicle_class,
+)
 from reid_embedder import ReidEmbedder
 from yolo_tracker import Detection, YoloByteTracker, is_reid_eligible_class
 
@@ -34,7 +39,7 @@ class ClipProcessResult:
     reid_crops: list[ReidCropUpload] = field(default_factory=list)
 
 
-def _clip_crop(frame: np.ndarray, bbox: tuple[int, int, int, int]) -> Optional[bytes]:
+def _clip_crop_bgr(frame: np.ndarray, bbox: tuple[int, int, int, int]) -> Optional[np.ndarray]:
     h_f, w_f = frame.shape[:2]
     x1 = max(0, min(bbox[0], w_f - 1))
     y1 = max(0, min(bbox[1], h_f - 1))
@@ -42,11 +47,8 @@ def _clip_crop(frame: np.ndarray, bbox: tuple[int, int, int, int]) -> Optional[b
     y2 = max(0, min(bbox[3], h_f))
     if x2 <= x1 or y2 <= y1:
         return None
-    crop = frame[y1:y2, x1:x2]
-    ok, jpeg_buf = cv2.imencode(".jpg", crop)
-    if not ok:
-        return None
-    return jpeg_buf.tobytes()
+    # We call .copy() here to decouple the crop from the full frame array
+    return frame[y1:y2, x1:x2].copy()
 
 
 def _detection_event(
@@ -83,21 +85,21 @@ def _append_reid_event(
     if detection.track_id is None or not is_reid_eligible_class(detection.class_name):
         return False
 
-    crop_jpeg = _clip_crop(frame, detection.bbox)
-    if not crop_jpeg:
+    crop_bgr = _clip_crop_bgr(frame, detection.bbox)
+    if crop_bgr is None:
         return False
 
     try:
-        embedding = embedder.generate_from_jpeg_bytes(crop_jpeg)
+        embedding = embedder.generate_from_bgr(crop_bgr)
     except Exception as exc:
         logger.warning("ReID embedding failed for track %s @ %sms: %s", detection.track_id, offset_ms, exc)
         return False
 
     appearance = None
     if is_vehicle_class(detection.class_name):
-        appearance = analyze_vehicle_crop_jpeg(crop_jpeg)
+        appearance = analyze_vehicle_region(crop_bgr)
     else:
-        appearance = analyze_crop_jpeg(crop_jpeg, detection.bbox)
+        appearance = analyze_crop_appearance(crop_bgr, detection.bbox)
 
     track_events.append(
         _detection_event(
@@ -110,7 +112,7 @@ def _append_reid_event(
     )
     reid_crops.append(
         ReidCropUpload(
-            crop_jpeg=crop_jpeg,
+            crop_jpeg=b"",
             track_id=detection.track_id,
             confidence=detection.confidence,
             bbox=detection.bbox,
@@ -194,20 +196,20 @@ def _build_merge_map(crops: list["ReidCropUpload"]) -> dict[int, int]:
     return merge_map
 
 
-def _append_reid_event_from_jpeg(
+def _append_reid_event_from_bgr(
     detection: Detection,
-    crop_jpeg: bytes,
+    crop_bgr: np.ndarray,
     offset_ms: int,
     embedder: ReidEmbedder,
     track_events: list[dict[str, Any]],
     reid_crops: list[ReidCropUpload],
 ) -> bool:
-    """Like _append_reid_event but accepts pre-cropped JPEG bytes (avoids re-encoding the frame)."""
+    """Like _append_reid_event but accepts pre-cropped BGR numpy arrays (avoids re-cropping the frame)."""
     if detection.track_id is None or not is_reid_eligible_class(detection.class_name):
         return False
 
     try:
-        embedding = embedder.generate_from_jpeg_bytes(crop_jpeg)
+        embedding = embedder.generate_from_bgr(crop_bgr)
     except Exception as exc:
         logger.warning(
             "ReID embedding failed for track %s @ %sms: %s", detection.track_id, offset_ms, exc
@@ -216,9 +218,9 @@ def _append_reid_event_from_jpeg(
 
     appearance = None
     if is_vehicle_class(detection.class_name):
-        appearance = analyze_vehicle_crop_jpeg(crop_jpeg)
+        appearance = analyze_vehicle_region(crop_bgr)
     else:
-        appearance = analyze_crop_jpeg(crop_jpeg, detection.bbox)
+        appearance = analyze_crop_appearance(crop_bgr, detection.bbox)
 
     track_events.append(
         _detection_event(
@@ -231,7 +233,7 @@ def _append_reid_event_from_jpeg(
     )
     reid_crops.append(
         ReidCropUpload(
-            crop_jpeg=crop_jpeg,
+            crop_jpeg=b"",
             track_id=detection.track_id,
             confidence=detection.confidence,
             bbox=detection.bbox,
@@ -267,9 +269,9 @@ def process_clip(
     seen_vehicle_tracks: set[int] = set()
     last_snapshot_at: dict[int, float] = {}
     reid_track_ids: set[int] = set()
-    # key → (detection, offset_ms, crop_jpeg_bytes)
-    # Stores only the cropped JPEG bytes (not the full frame) to minimise memory on Pi.
-    best_by_track: dict[int, tuple[Detection, int, bytes]] = {}
+    # key → (detection, offset_ms, crop_bgr_array)
+    # Stores only the cropped BGR region to minimise memory on Pi.
+    best_by_track: dict[int, tuple[Detection, int, np.ndarray]] = {}
     has_targets = False
 
     frame_index = 0
@@ -283,11 +285,13 @@ def process_clip(
         offset_ms = int(frame_time_sec * 1000)
         run_inference = frame_index % detect_interval == 0
 
+        # Pass draw_annotated=False to bypass frame copying and box drawing
         _annotated, detections, _new_detection, stabilized = tracker.process(
             frame,
             run_inference=run_inference,
             tracking_enabled=True,
             timeline_sec=frame_time_sec,
+            draw_annotated=False,
         )
 
         if detections:
@@ -300,10 +304,10 @@ def process_clip(
 
             existing_best = best_by_track.get(tid)
             if not existing_best or detection.confidence > existing_best[0].confidence:
-                # Only store the cropped region as JPEG bytes, not the full frame.
-                best_crop_jpeg = _clip_crop(frame, detection.bbox)
-                if best_crop_jpeg:
-                    best_by_track[tid] = (detection, offset_ms, best_crop_jpeg)
+                # Store the cropped region as BGR numpy array
+                best_crop_bgr = _clip_crop_bgr(frame, detection.bbox)
+                if best_crop_bgr is not None:
+                    best_by_track[tid] = (detection, offset_ms, best_crop_bgr)
 
             last_at = last_snapshot_at.get(tid, -1.0)
             if frame_time_sec - last_at < 0.5:
@@ -326,13 +330,13 @@ def process_clip(
 
     capture.release()
 
-    for track_id, (detection, offset_ms, best_crop_jpeg) in best_by_track.items():
+    for track_id, (detection, offset_ms, best_crop_bgr) in best_by_track.items():
         if track_id in reid_track_ids:
             continue
         if not is_reid_eligible_class(detection.class_name):
             continue
-        if _append_reid_event_from_jpeg(
-            detection, best_crop_jpeg, offset_ms, embedder, track_events, reid_crops
+        if _append_reid_event_from_bgr(
+            detection, best_crop_bgr, offset_ms, embedder, track_events, reid_crops
         ):
             reid_track_ids.add(track_id)
 

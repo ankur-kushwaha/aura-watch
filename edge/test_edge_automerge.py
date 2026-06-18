@@ -112,7 +112,7 @@ class TestProcessClipMerging(unittest.TestCase):
         ]
 
         mock_embedder = MagicMock()
-        mock_embedder.generate_from_jpeg_bytes.return_value = [1.0, 0.0, 0.0, 0.0]
+        mock_embedder.generate_from_bgr.return_value = [1.0, 0.0, 0.0, 0.0]
 
         result = process_clip("dummy.mp4", mock_tracker, mock_embedder, detect_interval=1)
 
@@ -155,7 +155,7 @@ class TestProcessClipMerging(unittest.TestCase):
 
         mock_embedder = MagicMock()
         # Orthogonal embeddings → cosine = 0.0 < 0.70
-        mock_embedder.generate_from_jpeg_bytes.side_effect = [
+        mock_embedder.generate_from_bgr.side_effect = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
         ]

@@ -194,6 +194,7 @@ class YoloByteTracker:
         run_inference: bool = True,
         tracking_enabled: bool = True,
         timeline_sec: Optional[float] = None,
+        draw_annotated: bool = False,
     ) -> tuple[np.ndarray, list[Detection], bool, list[Detection]]:
         """Run detection + tracking, return annotated frame, detections, new-detection flag, and newly stabilized ReID detections."""
         if not tracking_enabled:
@@ -201,7 +202,7 @@ class YoloByteTracker:
 
         if not run_inference and self._last_detections:
             detections = list(self._last_detections)
-            annotated = draw_detections(frame, detections)
+            annotated = draw_detections(frame, detections) if draw_annotated else frame
             new_detection = self._update_detection_state(detections)
             stabilized = self._update_track_states_and_get_stabilized(detections, timeline_sec)
             return annotated, detections, new_detection, stabilized
@@ -221,7 +222,7 @@ class YoloByteTracker:
         result = results[0]
         detections = self._parse_detections(result)
         self._last_detections = detections
-        annotated = draw_detections(frame, detections)
+        annotated = draw_detections(frame, detections) if draw_annotated else frame
         new_detection = self._update_detection_state(detections)
         stabilized = self._update_track_states_and_get_stabilized(detections, timeline_sec)
         return annotated, detections, new_detection, stabilized
