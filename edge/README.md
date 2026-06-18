@@ -204,7 +204,9 @@ Ensure the model exists at `edge/models/osnet_x1_0.onnx` (shipped in the repo). 
 
 ## Performance optimization
 
-PyTorch `.pt` models work for development but are slower on edge hardware. **Export once** to a platform-optimized format; the agent auto-loads it when the file exists.
+PyTorch `.pt` models work for development but are very CPU-heavy and slower on edge hardware. On a Raspberry Pi, running YOLOv8n directly from PyTorch CPU will peg all 4 cores at 100%, causing the system to throttle and starve the camera/WebSocket threads. 
+
+**Always export the model once to a platform-optimized format; the agent auto-loads it when the file exists.**
 
 | Hardware | Format | Export command | Typical FPS gain |
 |----------|--------|----------------|------------------|
@@ -215,21 +217,52 @@ PyTorch `.pt` models work for development but are slower on edge hardware. **Exp
 
 > **Note:** TensorRT and OpenVINO do not apply to Raspberry Pi. Use **ONNX** on Pi.
 
-The installer does **not** run model export automatically — do this once after install:
+### Step-by-Step Optimization for Raspberry Pi
+
+#### 1. Export YOLO to ONNX
+The installer does **not** run model export automatically. Do this once after install:
 
 ```bash
 cd ~/aura-watch-edge/edge   # or your edge directory
-.venv/bin/python scripts/export_model.py onnx   # Pi
-# .venv/bin/python scripts/export_model.py coreml   # Mac
+
+# IMPORTANT: Use the virtual environment's python to avoid ModuleNotFoundError
+.venv/bin/python scripts/export_model.py onnx
 ```
 
-**Quick `.env` tuning (no export needed):**
-
+If you prefer to run it using `python3`, you must activate the virtual environment first:
 ```bash
+source .venv/bin/activate
+python3 scripts/export_model.py onnx
+deactivate
+```
+
+#### 2. Prevent CPU Thread Starvation (High Priority)
+By default, PyTorch and ONNX Runtime spawn as many threads as there are CPU cores (usually 4). When background YOLO/ReID inference runs on a new clip, they will consume 100% CPU, starving the primary camera capture and cloud WebSocket threads. This causes `camera_stall` (no frame for 45s) and WebSocket connection drops.
+
+Limit the thread pools by adding the following lines to your `.env` file on the Pi:
+```env
+# Limit deep learning libraries to a single execution thread
+OMP_NUM_THREADS=1
+OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1
+VECLIB_MAXIMUM_THREADS=1
+NUMEXPR_NUM_THREADS=1
+```
+
+#### 3. Quick `.env` Tuning
+You can also adjust parameters directly in your `.env` file to lower the overall processing overhead:
+```env
+# Use low resolution/substream from camera to reduce FFmpeg resizing CPU overhead
 CAMERA_WIDTH=640
 CAMERA_HEIGHT=480
+
+# Use a smaller YOLO image size for faster inference (320 or 416)
 YOLO_IMGSZ=320
+
+# Run full YOLO detection every N frames; intermediate frames reuse last bounding boxes
 YOLO_DETECT_INTERVAL=3
+
+# Limit live preview frame rate
 FRAME_STREAM_FPS=8
 ```
 

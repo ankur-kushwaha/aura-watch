@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, ScrollText, X } from 'lucide-react';
+import { Activity, FileText, RefreshCw, ScrollText, Terminal, X } from 'lucide-react';
 import { apiFetch } from '../../../api';
 import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
 import type { DeviceEvent, LogEntry } from '../../types';
@@ -35,6 +35,7 @@ function DeviceLogsPanel({
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
   const [savedEvents, setSavedEvents] = useState<DeviceEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [activeTab, setActiveTab] = useState<'events' | 'journal' | 'live'>('events');
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
   const eventsContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -116,13 +117,13 @@ function DeviceLogsPanel({
     if (logsContainerRef.current) {
       logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
-  }, [liveLogs]);
+  }, [liveLogs, activeTab]);
 
   useEffect(() => {
     if (eventsContainerRef.current) {
       eventsContainerRef.current.scrollTop = 0;
     }
-  }, [savedEvents]);
+  }, [savedEvents, activeTab]);
 
   return (
     <>
@@ -158,71 +159,106 @@ function DeviceLogsPanel({
 
       <div className="h-px bg-[rgba(255,255,255,0.07)]" />
 
-      <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
-        <div>
-          <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">
-            Saved Device Events (90 days)
-          </h3>
-          <div
-            ref={eventsContainerRef}
-            className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] flex-1 min-h-[140px] max-h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+      <div className="flex flex-col gap-4 min-h-0 flex-1 overflow-hidden">
+        {/* Navigation Tabs */}
+        <div className="flex gap-2 bg-[rgba(255,255,255,0.02)] p-1 rounded-lg border border-border-glass w-fit overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('events')}
+            className={`py-1.5 px-3 rounded-md text-[0.8rem] font-semibold flex items-center gap-1.5 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${
+              activeTab === 'events'
+                ? 'bg-primary text-white shadow-[0_2px_8px_var(--color-primary-glow)]'
+                : 'text-text-secondary hover:text-text-primary bg-transparent cursor-pointer'
+            }`}
           >
-            {loadingEvents ? (
-              <span className="text-text-muted">Loading saved events...</span>
-            ) : savedEvents.length === 0 ? (
-              <span className="text-text-muted">
-                No saved events yet. Camera issues, software updates, and connectivity events are recorded here automatically.
-              </span>
-            ) : (
-              savedEvents.map((event) => (
-                <div key={event.id} className="mb-2 pb-2 border-b border-[rgba(255,255,255,0.04)] last:border-0">
-                  <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                    <span className="text-text-muted">
-                      [{new Date(event.createdAt).toLocaleString()}]
-                    </span>
-                    <span className={`uppercase text-[0.65rem] tracking-wide ${severityClass(event.severity)}`}>
-                      {event.severity}
-                    </span>
-                    <span className="text-[0.65rem] text-text-muted">{event.category}</span>
-                    <span className="text-[0.65rem] text-text-muted">{event.eventType}</span>
+            <Activity size={14} />
+            Saved Events
+          </button>
+          <button
+            onClick={() => setActiveTab('journal')}
+            className={`py-1.5 px-3 rounded-md text-[0.8rem] font-semibold flex items-center gap-1.5 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${
+              activeTab === 'journal'
+                ? 'bg-primary text-white shadow-[0_2px_8px_var(--color-primary-glow)]'
+                : 'text-text-secondary hover:text-text-primary bg-transparent cursor-pointer'
+            }`}
+          >
+            <FileText size={14} />
+            Service Journal
+          </button>
+          <button
+            onClick={() => setActiveTab('live')}
+            className={`py-1.5 px-3 rounded-md text-[0.8rem] font-semibold flex items-center gap-1.5 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${
+              activeTab === 'live'
+                ? 'bg-primary text-white shadow-[0_2px_8px_var(--color-primary-glow)]'
+                : 'text-text-secondary hover:text-text-primary bg-transparent cursor-pointer'
+            }`}
+          >
+            <Terminal size={14} />
+            Live Logs
+          </button>
+        </div>
+
+        {/* Tab content panel */}
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          {activeTab === 'events' && (
+            <div
+              ref={eventsContainerRef}
+              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] flex-1 overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+            >
+              {loadingEvents ? (
+                <span className="text-text-muted">Loading saved events...</span>
+              ) : savedEvents.length === 0 ? (
+                <span className="text-text-muted">
+                  No saved events yet. Camera issues, software updates, and connectivity events are recorded here automatically.
+                </span>
+              ) : (
+                savedEvents.map((event) => (
+                  <div key={event.id} className="mb-2 pb-2 border-b border-[rgba(255,255,255,0.04)] last:border-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                      <span className="text-text-muted">
+                        [{new Date(event.createdAt).toLocaleString()}]
+                      </span>
+                      <span className={`uppercase text-[0.65rem] tracking-wide ${severityClass(event.severity)}`}>
+                        {event.severity}
+                      </span>
+                      <span className="text-[0.65rem] text-text-muted">{event.category}</span>
+                      <span className="text-[0.65rem] text-text-muted">{event.eventType}</span>
+                    </div>
+                    <span className={severityClass(event.severity)}>{event.message}</span>
                   </div>
-                  <span className={severityClass(event.severity)}>{event.message}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+                ))
+              )}
+            </div>
+          )}
 
-        <div>
-          <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Service Journal + agent.log</h3>
-          <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] h-[140px] overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
-            {loadingJournal ? (
-              <span className="text-text-muted">Loading journal logs...</span>
-            ) : journalLogs ? (
-              journalLogs
-            ) : (
-              <span className="text-text-muted">No journal logs available.</span>
-            )}
-          </div>
-        </div>
+          {activeTab === 'journal' && (
+            <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] flex-1 overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
+              {loadingJournal ? (
+                <span className="text-text-muted">Loading journal logs...</span>
+              ) : journalLogs ? (
+                journalLogs
+              ) : (
+                <span className="text-text-muted">No journal logs available.</span>
+              )}
+            </div>
+          )}
 
-        <div className="min-h-0 flex flex-col">
-          <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Live Agent Logs</h3>
-          <div
-            ref={logsContainerRef}
-            className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#38bdf8] flex-1 min-h-[120px] max-h-[160px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
-          >
-            {liveLogs.length === 0 ? (
-              <span className="text-text-muted">Waiting for live log events from device...</span>
-            ) : (
-              liveLogs.map((log, index) => (
-                <div key={index} className="mb-1">
-                  <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                  <span>{log.message}</span>
-                </div>
-              ))
-            )}
-          </div>
+          {activeTab === 'live' && (
+            <div
+              ref={logsContainerRef}
+              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#38bdf8] flex-1 overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+            >
+              {liveLogs.length === 0 ? (
+                <span className="text-text-muted">Waiting for live log events from device...</span>
+              ) : (
+                liveLogs.map((log, index) => (
+                  <div key={index} className="mb-1">
+                    <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                    <span>{log.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       </div>
     </>
