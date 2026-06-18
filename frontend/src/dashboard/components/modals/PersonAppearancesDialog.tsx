@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Play,
   UserCircle,
+  Car,
   X,
 } from 'lucide-react';
 import { apiFetch } from '../../../api';
@@ -20,6 +21,7 @@ import { CropThumbnail } from '../CropThumbnail';
 import { IdsInfoIcon } from '../IdsInfoIcon';
 import { ReidTimeline } from '../ReidTimeline';
 import { TimelineClipPlaybackDialog } from './TimelineClipPlaybackDialog';
+import { isVehicleClass } from '../../utils';
 
 export interface PersonAppearancesDialogProps {
   detection: ClipObjectDetection | null;
@@ -78,6 +80,7 @@ function PersonAppearancesDialogBody({
   onCropPreview,
 }: PersonAppearancesDialogBodyProps) {
   const initialIdentity = getInitialIdentityState(detection);
+  const isVehicle = isVehicleClass(detection.className);
   const [clipPlayback, setClipPlayback] = useState<TimelineVideoPlayback | null>(null);
   const [identityId, setIdentityId] = useState<string | null>(initialIdentity.identityId);
   const [identitySuggestions, setIdentitySuggestions] = useState<ReidPersonMatch[]>([]);
@@ -393,7 +396,7 @@ function PersonAppearancesDialogBody({
                 type="text"
                 value={labelDraft}
                 onChange={(e) => setLabelDraft(e.target.value)}
-                placeholder={identityId ? 'Name this person' : 'Enter a name to create identity'}
+                placeholder={isVehicle ? (identityId ? 'Label this vehicle' : 'Enter a label to create identity') : (identityId ? 'Name this person' : 'Enter a name to create identity')}
                 className="flex-1 text-[0.8rem] py-1.5 px-2 rounded-md bg-[rgba(0,0,0,0.3)] border border-border-glass text-text-primary"
               />
               <button
@@ -408,7 +411,7 @@ function PersonAppearancesDialogBody({
             {suggestionsLoaded && identitySuggestions.length > 0 && shownSuggestions.length > 0 && (
               <div>
                 <p className="text-[0.7rem] font-bold text-text-secondary uppercase tracking-wider mb-2">
-                  Use existing person
+                  {isVehicle ? 'Use existing vehicle' : 'Use existing person'}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {shownSuggestions.map((suggestion) => (
@@ -425,6 +428,7 @@ function PersonAppearancesDialogBody({
                         onBroken={() => {
                           setBrokenCovers((prev) => new Set(prev).add(suggestion.id));
                         }}
+                        isVehicle={isVehicle}
                       />
                       <div className="min-w-0">
                         <span className="text-[0.75rem] font-semibold text-text-primary block truncate max-w-[140px]">
@@ -472,17 +476,23 @@ function IdentitySuggestionAvatar({
   suggestion,
   broken,
   onBroken,
+  isVehicle,
 }: {
   suggestion: ReidPersonMatch;
   broken: boolean;
   onBroken: () => void;
+  isVehicle?: boolean;
 }) {
   const { ref, shouldLoad } = useDeferredLoad(true);
 
   if (broken || !suggestion.coverFilename) {
     return (
       <div className="w-8 h-8 rounded-full overflow-hidden border border-border-glass shrink-0 bg-black flex items-center justify-center">
-        <UserCircle size={14} className="text-text-muted" />
+        {isVehicle ? (
+          <Car size={14} className="text-text-muted" />
+        ) : (
+          <UserCircle size={14} className="text-text-muted" />
+        )}
       </div>
     );
   }
@@ -501,7 +511,11 @@ function IdentitySuggestionAvatar({
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center bg-[#0a0f1a]">
-          <UserCircle size={14} className="text-text-muted/50" />
+          {isVehicle ? (
+            <Car size={14} className="text-text-muted/50" />
+          ) : (
+            <UserCircle size={14} className="text-text-muted/50" />
+          )}
         </div>
       )}
     </div>

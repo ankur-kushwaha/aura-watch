@@ -1,4 +1,4 @@
-import { Activity, Clock, Cpu, Fingerprint, Loader2, ScanSearch, ScrollText, Sparkles, UserCircle } from 'lucide-react';
+import { Activity, Clock, Cpu, Fingerprint, Loader2, ScanSearch, ScrollText, Sparkles, UserCircle, Car } from 'lucide-react';
 import { useState } from 'react';
 import type { OrgSettings } from '../../api';
 import type { ClipObjectDetection, ClipReidLog, CropClipPlayback, VideoClip } from '../types';
@@ -6,6 +6,7 @@ import { getClipDetectionCount } from '../utils/clips';
 import { formatClipDuration, formatClipOffsetMs, formatDate } from '../utils/format';
 import { mediaUrl } from '../utils/media';
 import { tryParseClipAiAnalysis } from '../utils/summary';
+import { isVehicleClass } from '../utils';
 import { CropThumbnail } from './CropThumbnail';
 import { IdsInfoIcon, InlineCopyIds } from './IdsInfoIcon';
 import { buildTimelineIdEntries } from './idEntries';
@@ -201,7 +202,8 @@ export function ClipPreviewPanel({
               <div className="flex flex-col gap-2 mb-2">
                 {clipDetections.map((obj) => {
                   const detectionOffsetLabel = formatClipOffsetMs(obj.clipOffsetMs);
-                  const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
+                  const isReidEligible = obj.className === 'person' || isVehicleClass(obj.className);
+                  const isClickable = isReidEligible && !!obj.detectionId;
                   const hasIdentity = !!obj.identityId;
                   const personIds = [
                     ...(obj.identityId ? [{ label: 'identity', value: obj.identityId }] : []),
@@ -210,17 +212,17 @@ export function ClipPreviewPanel({
                   return (
                     <div
                       key={obj.trackId}
-                      role={isClickablePerson ? 'button' : undefined}
-                      tabIndex={isClickablePerson ? 0 : undefined}
-                      onClick={isClickablePerson ? () => onOpenPersonRefs(obj) : undefined}
-                      onKeyDown={isClickablePerson ? (e) => {
+                      role={isClickable ? 'button' : undefined}
+                      tabIndex={isClickable ? 0 : undefined}
+                      onClick={isClickable ? () => onOpenPersonRefs(obj) : undefined}
+                      onKeyDown={isClickable ? (e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
                           onOpenPersonRefs(obj);
                         }
                       } : undefined}
                       className={`flex flex-col gap-1.5 text-left w-full rounded-lg px-2 py-2 -mx-1 border border-transparent ${
-                        isClickablePerson
+                        isClickable
                           ? 'hover:bg-[rgba(56,189,248,0.08)] hover:border-[rgba(56,189,248,0.15)] cursor-pointer'
                           : 'cursor-default'
                       }`}
@@ -264,22 +266,26 @@ export function ClipPreviewPanel({
                             {obj.vehicleColor}
                           </span>
                         )}
-                        {isClickablePerson && (
+                        {isClickable && (
                           <span className="text-[0.65rem] text-primary ml-auto">
                             {hasIdentity ? 'Timeline & matches →' : 'Identify & matches →'}
                           </span>
                         )}
                       </div>
-                      {obj.className === 'person' && (
+                      {isReidEligible && (
                         <div className="pl-12 flex flex-col gap-1">
                           {obj.labelStatus === 'confirmed' && obj.label && (
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <UserCircle size={12} className="text-green-400 shrink-0" />
+                              {isVehicleClass(obj.className) ? (
+                                <Car size={12} className="text-green-400 shrink-0" />
+                              ) : (
+                                <UserCircle size={12} className="text-green-400 shrink-0" />
+                              )}
                               <span className="text-[0.72rem] text-green-400 font-medium">{obj.label}</span>
                               <IdsInfoIcon ids={personIds} />
                             </div>
                           )}
-                          {(obj.labelStatus === 'none' || obj.labelStatus === 'suggested') && isClickablePerson && (
+                          {(obj.labelStatus === 'none' || obj.labelStatus === 'suggested') && isClickable && (
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="text-[0.72rem] text-amber-400">
                                 Unassigned — click to create a new identity or link to existing

@@ -243,7 +243,7 @@ export async function getClipObjectDetections(clipId: string, orgId?: string): P
 
   for (const object of objectSeeds) {
     const detection = pickBestDetectionForTrack(reidByTrack.get(object.trackId) ?? [], clip.id);
-    const identityInfo = object.className === 'person' && detection
+    const identityInfo = (object.className === 'person' || isVehicleClass(object.className)) && detection
       ? await resolveIdentityLabel(detection.id, detection.identityId, clip.camera, object.trackId, orgId)
       : { labelStatus: 'none' as const };
 

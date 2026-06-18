@@ -54,3 +54,9 @@ export function buildScoreBasedTimeline(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
   );
 }
+
+const VEHICLE_CLASSES = new Set(['bicycle', 'car', 'motorcycle', 'bus', 'truck']);
+
+export function isVehicleClass(className?: string): boolean {
+  return !!className && VEHICLE_CLASSES.has(className);
+}
