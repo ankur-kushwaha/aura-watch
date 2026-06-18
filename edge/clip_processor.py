@@ -132,6 +132,55 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return float(np.dot(a_arr, b_arr) / (norm_a * norm_b))
 
 
+def _append_reid_event_from_jpeg(
+    detection: Detection,
+    crop_jpeg: bytes,
+    offset_ms: int,
+    embedder: ReidEmbedder,
+    track_events: list[dict[str, Any]],
+    reid_crops: list[ReidCropUpload],
+) -> bool:
+    """Like _append_reid_event but accepts pre-cropped JPEG bytes (avoids re-encoding the frame)."""
+    if detection.track_id is None or not is_reid_eligible_class(detection.class_name):
+        return False
+
+    try:
+        embedding = embedder.generate_from_jpeg_bytes(crop_jpeg)
+    except Exception as exc:
+        logger.warning(
+            "ReID embedding failed for track %s @ %sms: %s", detection.track_id, offset_ms, exc
+        )
+        return False
+
+    appearance = None
+    if is_vehicle_class(detection.class_name):
+        appearance = analyze_vehicle_crop_jpeg(crop_jpeg)
+    else:
+        appearance = analyze_crop_jpeg(crop_jpeg, detection.bbox)
+
+    track_events.append(
+        _detection_event(
+            detection,
+            offset_ms,
+            kind="reid",
+            appearance=appearance,
+            embedding=embedding,
+        )
+    )
+    reid_crops.append(
+        ReidCropUpload(
+            crop_jpeg=crop_jpeg,
+            track_id=detection.track_id,
+            confidence=detection.confidence,
+            bbox=detection.bbox,
+            class_name=detection.class_name,
+            offset_ms=offset_ms,
+            embedding=embedding,
+        )
+    )
+    return True
+
+
 def process_clip(
     clip_path: str,
     tracker: YoloByteTracker,
@@ -156,7 +205,9 @@ def process_clip(
     seen_vehicle_tracks: set[int] = set()
     last_snapshot_at: dict[int, float] = {}
     reid_track_ids: set[int] = set()
-    best_by_track: dict[int, tuple[Detection, int, np.ndarray]] = {}
+    # key → (detection, offset_ms, crop_jpeg_bytes)
+    # Stores only the cropped JPEG bytes (not the full frame) to minimise memory on Pi.
+    best_by_track: dict[int, tuple[Detection, int, bytes]] = {}
     has_targets = False
 
     frame_index = 0
@@ -187,7 +238,10 @@ def process_clip(
 
             existing_best = best_by_track.get(tid)
             if not existing_best or detection.confidence > existing_best[0].confidence:
-                best_by_track[tid] = (detection, offset_ms, frame.copy())
+                # Only store the cropped region as JPEG bytes, not the full frame.
+                best_crop_jpeg = _clip_crop(frame, detection.bbox)
+                if best_crop_jpeg:
+                    best_by_track[tid] = (detection, offset_ms, best_crop_jpeg)
 
             last_at = last_snapshot_at.get(tid, -1.0)
             if frame_time_sec - last_at < 0.5:
@@ -210,12 +264,14 @@ def process_clip(
 
     capture.release()
 
-    for track_id, (detection, offset_ms, frame) in best_by_track.items():
+    for track_id, (detection, offset_ms, best_crop_jpeg) in best_by_track.items():
         if track_id in reid_track_ids:
             continue
         if not is_reid_eligible_class(detection.class_name):
             continue
-        if _append_reid_event(detection, frame, offset_ms, embedder, track_events, reid_crops):
+        if _append_reid_event_from_jpeg(
+            detection, best_crop_jpeg, offset_ms, embedder, track_events, reid_crops
+        ):
             reid_track_ids.add(track_id)
 
     # Merge track IDs based on ReID embedding similarity to reduce duplicate object rows

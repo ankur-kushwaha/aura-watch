@@ -10,7 +10,8 @@ import shutil
 import struct
 import sys
 import time
-from typing import Any, Callable, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -33,6 +34,12 @@ LOCAL_FAILED_DIR = os.path.join(BASE_DIR, "storage", "failed")
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
 WORKER_LOG_FILE = os.getenv("WORKER_LOG_FILE", os.path.join(BASE_DIR, "storage", "worker.log"))
 
+# Minimum free disk space (bytes) required before processing a clip.
+MIN_FREE_DISK_BYTES = int(os.getenv("MIN_FREE_DISK_MB", "200")) * 1024 * 1024
+
+# Age (seconds) after which an orphaned .mp4 in temp_clips (with no sidecar) is deleted.
+ORPHAN_MAX_AGE_SEC = int(os.getenv("ORPHAN_MAX_AGE_SEC", "300"))
+
 _worker_logger = AgentLogger(WORKER_LOG_FILE)
 
 
@@ -41,13 +48,60 @@ def wlog(message: str) -> None:
     _worker_logger.write(message, tag="Worker")
 
 
-
 def load_device_id() -> str:
     if os.path.exists(DEVICE_ID_FILE):
         with open(DEVICE_ID_FILE, "r", encoding="utf-8") as handle:
             return handle.read().strip()
     return "unknown_device"
 
+
+# ---------------------------------------------------------------------------
+# Disk-space guard
+# ---------------------------------------------------------------------------
+
+def _has_enough_disk(path: str) -> bool:
+    """Return True when free space at *path* is above MIN_FREE_DISK_BYTES."""
+    try:
+        return shutil.disk_usage(path).free >= MIN_FREE_DISK_BYTES
+    except OSError:
+        return True  # Can't check → assume OK
+
+
+# ---------------------------------------------------------------------------
+# Orphan cleanup
+# ---------------------------------------------------------------------------
+
+def _cleanup_orphan_temps() -> None:
+    """Delete .mp4 files in temp_clips/ that have no matching .json sidecar and are old enough."""
+    now = time.time()
+    try:
+        entries = os.listdir(LOCAL_VIDEO_DIR)
+    except OSError:
+        return
+
+    sidecars = {name[:-5] for name in entries if name.endswith(".json")}  # strip ".json"
+    for name in entries:
+        if not name.endswith(".mp4"):
+            continue
+        stem = name[:-4]  # strip ".mp4"
+        if stem in sidecars:
+            continue  # has a matching sidecar — not an orphan
+        mp4_path = os.path.join(LOCAL_VIDEO_DIR, name)
+        try:
+            age = now - os.path.getmtime(mp4_path)
+        except OSError:
+            continue
+        if age >= ORPHAN_MAX_AGE_SEC:
+            try:
+                os.unlink(mp4_path)
+                wlog(f"[Cleanup] Deleted orphan temp clip (age={age:.0f}s): {name}")
+            except OSError as exc:
+                wlog(f"[Cleanup Warning] Could not delete orphan {name}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# ReID crop upload (single, called in parallel)
+# ---------------------------------------------------------------------------
 
 def upload_reid_crop(
     device_id: str,
@@ -59,7 +113,8 @@ def upload_reid_crop(
     class_name: str,
     embedding: list[float],
     timestamp_ms: int,
-) -> None:
+) -> tuple[bool, str]:
+    """Upload one ReID crop to the cloud. Returns (success, local_crop_path)."""
     url = f"{CLOUD_URL}/api/devices/{device_id}/reid/crop"
     bbox_str = ",".join(map(str, bbox))
     filename = f"crop_{timestamp_ms}_{device_id}_{track_id}.jpg"
@@ -76,7 +131,7 @@ def upload_reid_crop(
             f"[ReID Error] Skipping crop upload for track {track_id}: "
             f"expected 512-dim embedding, got {len(embedding)}"
         )
-        return
+        return False, local_path
 
     encoded_embedding = base64.b64encode(struct.pack(f"{len(embedding)}f", *embedding)).decode("ascii")
     try:
@@ -94,15 +149,106 @@ def upload_reid_crop(
             },
             timeout=30,
         )
-        if response.status_code >= 200 and response.status_code < 300:
+        if 200 <= response.status_code < 300:
             wlog(f"Successfully uploaded ReID crop for track {track_id} on stream {stream_id}")
+            return True, local_path
         else:
             wlog(f"[ReID Error] Upload failed ({response.status_code}): {response.text}")
+            return False, local_path
     except Exception as exc:
         wlog(f"[ReID Error] Upload exception: {exc}")
+        return False, local_path
 
 
-def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -> None:
+def _upload_reid_crops_parallel(
+    device_id: str,
+    stream_id: str,
+    reid_crops: list,
+    clip_start_ms: int,
+) -> int:
+    """Upload all ReID crops concurrently. Returns number of successful uploads."""
+    if not reid_crops:
+        return 0
+
+    max_workers = min(len(reid_crops), 4)  # cap concurrency; Pi has limited bandwidth
+    uploaded = 0
+    local_paths_to_delete: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="reid-upload") as pool:
+        futures = {
+            pool.submit(
+                upload_reid_crop,
+                device_id=device_id,
+                stream_id=stream_id,
+                crop_jpeg=crop.crop_jpeg,
+                track_id=crop.track_id,
+                confidence=crop.confidence,
+                bbox=crop.bbox,
+                class_name=crop.class_name,
+                embedding=crop.embedding,
+                timestamp_ms=clip_start_ms + crop.offset_ms,
+            ): crop.track_id
+            for crop in reid_crops
+        }
+
+        for future in as_completed(futures):
+            track_id = futures[future]
+            try:
+                success, local_path = future.result()
+                if success:
+                    uploaded += 1
+                    local_paths_to_delete.append(local_path)
+            except Exception as exc:
+                wlog(f"[ReID Error] Unexpected error uploading crop for track {track_id}: {exc}")
+
+    # Clean up local crop files whose cloud upload succeeded
+    for path in local_paths_to_delete:
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+        except OSError:
+            pass  # Non-fatal — crops/ cleanup is best-effort
+
+    return uploaded
+
+
+# ---------------------------------------------------------------------------
+# Single job processor
+# ---------------------------------------------------------------------------
+
+def _build_tracker(job: dict) -> YoloByteTracker:
+    """Construct a fresh YoloByteTracker from job config."""
+    return YoloByteTracker(
+        confidence=float(job.get("yolo_confidence", 0.35)),
+        device=job.get("yolo_device", "cpu"),
+        class_names=job.get("detection_classes", ["person", "vehicle"]),
+        imgsz=int(job.get("yolo_imgsz", 320)),
+        reid_confidence_threshold=float(job.get("reid_confidence_threshold", 0.70)),
+        reid_min_bbox_size=int(job.get("reid_min_bbox_size", 50)),
+        reid_visible_sec=float(job.get("reid_visible_sec", 4.0)),
+    )
+
+
+def _tracker_config_key(job: dict) -> tuple:
+    """Return a hashable key representing the tracker config in this job.
+    If the key changes between jobs we rebuild the tracker."""
+    return (
+        float(job.get("yolo_confidence", 0.35)),
+        job.get("yolo_device", "cpu"),
+        tuple(sorted(job.get("detection_classes", ["person", "vehicle"]))),
+        int(job.get("yolo_imgsz", 320)),
+        float(job.get("reid_confidence_threshold", 0.70)),
+        int(job.get("reid_min_bbox_size", 50)),
+        float(job.get("reid_visible_sec", 4.0)),
+    )
+
+
+def process_single_job(
+    json_path: str,
+    embedder: ReidEmbedder,
+    device_id: str,
+    tracker_state: dict,  # mutable dict: {"tracker": ..., "config_key": ...}
+) -> None:
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             job = json.load(f)
@@ -155,18 +301,31 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
             pass
         return
 
+    # Disk-space guard — skip processing if storage is critically low
+    if not _has_enough_disk(LOCAL_VIDEO_DIR):
+        free_mb = shutil.disk_usage(LOCAL_VIDEO_DIR).free // (1024 * 1024)
+        wlog(
+            f"[Worker Warning] Low disk space ({free_mb} MB free < "
+            f"{MIN_FREE_DISK_BYTES // (1024*1024)} MB threshold). "
+            f"Discarding clip {filename} to free space."
+        )
+        try:
+            os.unlink(mp4_path)
+            os.unlink(json_path)
+        except OSError:
+            pass
+        return
+
+    # Reuse tracker if config is unchanged; rebuild only when necessary
+    cfg_key = _tracker_config_key(job)
+    if tracker_state.get("config_key") != cfg_key or tracker_state.get("tracker") is None:
+        wlog(f"[Worker] Building YoloByteTracker (config changed or first job)...")
+        tracker_state["tracker"] = _build_tracker(job)
+        tracker_state["config_key"] = cfg_key
+    tracker: YoloByteTracker = tracker_state["tracker"]
+
     wlog(f"[{stream_id}] Running YOLO + ByteTrack on clip {filename} (attempt {job['attempts']})...")
     try:
-        tracker = YoloByteTracker(
-            confidence=float(job.get("yolo_confidence", 0.35)),
-            device=job.get("yolo_device", "cpu"),
-            class_names=job.get("detection_classes", ["person", "vehicle"]),
-            imgsz=int(job.get("yolo_imgsz", 320)),
-            reid_confidence_threshold=float(job.get("reid_confidence_threshold", 0.70)),
-            reid_min_bbox_size=int(job.get("reid_min_bbox_size", 50)),
-            reid_visible_sec=float(job.get("reid_visible_sec", 4.0)),
-        )
-
         clip_result = process_clip(
             mp4_path,
             tracker,
@@ -175,7 +334,6 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
         )
     except Exception as exc:
         wlog(f"[{stream_id}] Clip analysis failed for {filename}: {exc}")
-        # We don't delete on error yet, let retry mechanism handle it or delete if exceeded
         return
 
     if not clip_result.has_targets:
@@ -204,25 +362,8 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
     )
     clip_start_ms = job["timestamp_ms"] - preroll_ms
 
-    # Upload ReID crops
-    reid_uploaded = 0
-    for crop in clip_result.reid_crops:
-        detection_ms = clip_start_ms + crop.offset_ms
-        try:
-            upload_reid_crop(
-                device_id=device_id,
-                stream_id=stream_id,
-                crop_jpeg=crop.crop_jpeg,
-                track_id=crop.track_id,
-                confidence=crop.confidence,
-                bbox=crop.bbox,
-                class_name=crop.class_name,
-                embedding=crop.embedding,
-                timestamp_ms=detection_ms,
-            )
-            reid_uploaded += 1
-        except Exception as exc:
-            wlog(f"[ReID Error] Failed to upload crop for track {crop.track_id}: {exc}")
+    # Upload ReID crops in parallel
+    reid_uploaded = _upload_reid_crops_parallel(device_id, stream_id, clip_result.reid_crops, clip_start_ms)
 
     reid_event_count = sum(1 for event in track_events if event.get("kind") == "reid")
     wlog(
@@ -259,7 +400,7 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
         )
         wlog(f"[{stream_id}] Successfully uploaded clip to Cloud: {filename}")
 
-        # Successfully uploaded and saved locally, now we can remove sidecar
+        # Successfully uploaded — remove sidecar
         try:
             os.unlink(json_path)
         except OSError:
@@ -273,6 +414,10 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
             except Exception:
                 pass
 
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     wlog("[Worker] Starting edge clip processing worker process...")
@@ -290,9 +435,22 @@ def main() -> None:
     else:
         wlog(f"[Worker] OSNet ready at {embedder.model_path}")
 
+    # Mutable state for tracker reuse across jobs
+    tracker_state: dict = {"tracker": None, "config_key": None}
+
+    # Orphan cleanup counter — run every N iterations
+    _orphan_check_counter = 0
+    ORPHAN_CHECK_EVERY = 20  # check roughly every 30 s when idle
+
     while True:
         try:
-            # Find and sort JSON files in temp_clips
+            # Periodic orphan cleanup
+            _orphan_check_counter += 1
+            if _orphan_check_counter >= ORPHAN_CHECK_EVERY:
+                _orphan_check_counter = 0
+                _cleanup_orphan_temps()
+
+            # Find and sort JSON sidecars in temp_clips
             files = []
             for name in os.listdir(LOCAL_VIDEO_DIR):
                 if name.endswith(".json"):
@@ -304,14 +462,14 @@ def main() -> None:
                         pass
 
             if not files:
-                time.sleep(1.5)
+                time.sleep(1.5)  # Idle — sleep longer to save CPU
                 continue
 
             # Process oldest first (FIFO)
             files.sort()
             _, oldest_json = files[0]
-            process_single_job(oldest_json, embedder, device_id)
-            time.sleep(0.1)
+            process_single_job(oldest_json, embedder, device_id, tracker_state)
+            time.sleep(0.1)  # Active — minimal sleep between jobs
 
         except KeyboardInterrupt:
             wlog("[Worker] Stopping worker process on SIGINT")
