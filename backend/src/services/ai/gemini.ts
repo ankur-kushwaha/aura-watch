@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import * as fs from 'fs';
 import { bindAIServiceMethods } from './bindService';
-import { AIService } from './types';
+import { AIService, Tool, ToolExecutionResult } from './types';
 import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
 
@@ -373,6 +373,146 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
       throw error;
     }
   }
+
+  /**
+   * Answers a user query by calling the provided tools in a loop until the model
+   * decides no further tools are needed.
+   */
+  async chatWithTools(
+    question: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    tools: Tool[],
+    systemPrompt: string
+  ): Promise<{ answer: string; toolResults: ToolExecutionResult[] }> {
+    const systemInstruction = systemPrompt;
+
+    const contents: any[] = [
+      ...history.map(h => ({
+        role: h.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: h.content }]
+      })),
+      { role: 'user', parts: [{ text: question }] }
+    ];
+
+    const normalizeSchema = (schema: any): any => {
+      if (!schema || typeof schema !== 'object') return schema;
+      const normalized: any = Array.isArray(schema) ? [] : {};
+      for (const key of Object.keys(schema)) {
+        if (key === 'type' && typeof schema[key] === 'string') {
+          normalized[key] = schema[key].toUpperCase();
+        } else {
+          normalized[key] = normalizeSchema(schema[key]);
+        }
+      }
+      return normalized;
+    };
+
+    const functionDeclarations = tools.map(t => ({
+      name: t.name,
+      description: t.description,
+      parameters: normalizeSchema(t.parameters)
+    }));
+
+    let loop = true;
+    let toolResults: ToolExecutionResult[] = [];
+    let finalAnswer = '';
+    let iterations = 0;
+    const maxIterations = 10;
+
+    try {
+      while (loop && iterations < maxIterations) {
+        iterations++;
+        console.log('[Gemini] Calling generateContent in tool loop...');
+        const response = await this.ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: contents,
+          config: {
+            systemInstruction,
+            tools: tools.length > 0 ? [{ functionDeclarations }] : undefined
+          }
+        });
+
+        const candidate = response.candidates?.[0];
+        const allParts = candidate?.content?.parts || [];
+        const toolCallParts = allParts.filter((p: any) => p?.functionCall);
+
+        // Append the model's turn to contents
+        contents.push({
+          role: 'model',
+          parts: allParts
+        });
+
+        if (toolCallParts.length > 0) {
+          const toolResponseParts: any[] = [];
+
+          for (const toolPart of toolCallParts) {
+            const call = toolPart.functionCall;
+            if (!call) continue;
+
+            const tool = tools.find(t => t.name === call.name);
+            if (!tool) {
+              console.error(`[Gemini] Tool ${call.name} not found in tools list`);
+              toolResponseParts.push({
+                functionResponse: {
+                  name: call.name,
+                  response: { error: `Tool ${call.name} not found.` }
+                }
+              });
+              continue;
+            }
+
+            const args = call.args || {};
+            console.log(`[Gemini Tool Loop] Executing tool ${tool.name} with args:`, args);
+
+            try {
+              const { resultForModel, rawData } = await tool.execute(args);
+              toolResults.push({ toolName: tool.name, rawData });
+              toolResponseParts.push({
+                functionResponse: {
+                  name: tool.name,
+                  response: { result: resultForModel }
+                }
+              });
+            } catch (err: any) {
+              console.error(`[Gemini Tool Loop] Error executing tool ${tool.name}:`, err);
+              toolResponseParts.push({
+                functionResponse: {
+                  name: tool.name,
+                  response: { error: err.message || String(err) }
+                }
+              });
+            }
+          }
+
+          // Append tool execution responses to contents
+          contents.push({
+            role: 'tool',
+            parts: toolResponseParts
+          });
+        } else {
+          finalAnswer = response.text || 'Could not formulate an answer.';
+          loop = false;
+        }
+      }
+
+      if (iterations >= maxIterations && loop) {
+        console.warn(`[Gemini] Reached maximum tool loop iterations (${maxIterations}). Terminating.`);
+        const finalResponse = await this.ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: contents,
+          config: {
+            systemInstruction
+          }
+        });
+        finalAnswer = finalResponse.text || 'Could not formulate an answer.';
+      }
+
+      return { answer: finalAnswer, toolResults };
+    } catch (error) {
+      console.error('[Gemini] Error in chatWithTools loop:', error);
+      throw error;
+    }
+  }
 }
 
 const {
@@ -381,6 +521,8 @@ const {
   generateTextEmbedding,
   answerQuestionWithContext,
   answerWithTools,
+  chatWithTools,
 } = bindAIServiceMethods(new GeminiService());
 
-export { service as geminiService, service, summarizeVideo, generateTextEmbedding, answerQuestionWithContext, answerWithTools };
+export { service as geminiService, service, summarizeVideo, generateTextEmbedding, answerQuestionWithContext, answerWithTools, chatWithTools };
+

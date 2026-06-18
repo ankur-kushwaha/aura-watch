@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
-import { generateTextEmbedding, answerWithTools } from '../services/ai';
+import { generateTextEmbedding, chatWithTools } from '../services/ai';
+import { Tool } from '../services/ai/types';
 import { searchClipVectors, fallbackSearchClips } from '../services/qdrant';
 import prisma from '../services/db';
 import { getOrgOnlineDeviceIds } from '../services/orgScope';
 import { getOrgSettings } from '../services/orgSettings';
-import { buildClipSearchText } from '../services/yoloSummary';
+import { buildClipSearchText, formatClipContextSummary } from '../services/yoloSummary';
 
 const router = Router();
 
@@ -14,7 +15,7 @@ const router = Router();
  * Also supports REID detection queries via a second tool available to the AI.
  */
 router.post('/query', async (req: Request, res: Response) => {
-  const { question, history = [], startTime, endTime, deviceId, streamId } = req.body;
+  const { question, history = [], startTime, endTime, deviceId, streamId, systemPrompt } = req.body;
 
   if (!req.auth) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -38,89 +39,97 @@ router.post('/query', async (req: Request, res: Response) => {
       !!detDeviceId && onlineDeviceIds.has(detDeviceId);
 
     // Call AI service with tools
-    const { answer, clips, reidDetections } = await answerWithTools(
-      question,
-      history,
-      async (queryText: string, toolStartTime?: string, toolEndTime?: string) => {
-        // Prioritize UI-provided filter over LLM-parsed filter
-        const finalStartTime = startTime || toolStartTime;
-        const finalEndTime = endTime || toolEndTime;
+    const tools: Tool[] = [
+      {
+        name: 'searchQdrant',
+        description: 'Search the vector database or MongoDB fallback for video surveillance summaries matching the query.',
+        parameters: {
+          type: 'object',
+          properties: {
+            queryText: {
+              type: 'string',
+              description: 'The search query/description of the video clip/event to search for.'
+            },
+            startTime: {
+              type: 'string',
+              description: 'ISO-8601 string representing the start of the time range query filter (optional). Always resolve relative queries relative to current system time.'
+            },
+            endTime: {
+              type: 'string',
+              description: 'ISO-8601 string representing the end of the time range query filter (optional). Always resolve relative queries relative to current system time.'
+            }
+          },
+          required: ['queryText']
+        },
+        execute: async (args: any) => {
+          const queryText = args.queryText;
+          const toolStartTime = args.startTime;
+          const toolEndTime = args.endTime;
 
-        console.log(`[RAG Router callback] Executing Qdrant search tool for: "${queryText}"`, {
-          finalStartTime,
-          finalEndTime,
-          deviceId,
-          streamId
-        });
+          const finalStartTime = startTime || toolStartTime;
+          const finalEndTime = endTime || toolEndTime;
 
-        const queryEmbedding = await generateTextEmbedding(queryText);
-        let searchResults = await searchClipVectors(queryEmbedding, 5, { 
-          startTime: finalStartTime, 
-          endTime: finalEndTime, 
-          deviceId,
-          streamId,
-          orgDeviceIds: deviceId ? undefined : onlineDeviceIdList,
-        });
+          console.log(`[RAG Router callback] Executing Qdrant search tool for: "${queryText}"`, {
+            finalStartTime,
+            finalEndTime,
+            deviceId,
+            streamId
+          });
 
-        if (searchResults.length === 0) {
-          console.log('[RAG Router callback] Qdrant returned no results. Attempting MongoDB fallback keyword search...');
-          searchResults = await fallbackSearchClips(queryText, 5, { 
+          const queryEmbedding = await generateTextEmbedding(queryText);
+          let searchResults = await searchClipVectors(queryEmbedding, 5, { 
             startTime: finalStartTime, 
             endTime: finalEndTime, 
             deviceId,
             streamId,
             orgDeviceIds: deviceId ? undefined : onlineDeviceIdList,
           });
+
+          if (searchResults.length === 0) {
+            console.log('[RAG Router callback] Qdrant returned no results. Attempting MongoDB fallback keyword search...');
+            searchResults = await fallbackSearchClips(queryText, 5, { 
+              startTime: finalStartTime, 
+              endTime: finalEndTime, 
+              deviceId,
+              streamId,
+              orgDeviceIds: deviceId ? undefined : onlineDeviceIdList,
+            });
+          }
+
+          const contexts = searchResults.map((result: any, i: number) => {
+            const payload = result.payload;
+            return `[Clip ${i + 1}]: Time: ${payload.timestamp}, Camera: ${payload.camera}, Summary: ${formatClipContextSummary(payload)}`;
+          });
+          const contextText = contexts.length > 0 ? contexts.join('\n\n') : 'No matching clips found in database.';
+
+          return {
+            resultForModel: contextText,
+            rawData: searchResults
+          };
         }
-
-        return searchResults;
-      },
-      async (cameraName?: string, className?: string, toolStartTime?: string, toolEndTime?: string) => {
-        // Prioritize UI-provided time filter over LLM-parsed filter
-        const finalStartTime = startTime || toolStartTime;
-        const finalEndTime = endTime || toolEndTime;
-
-        console.log(`[RAG Router callback] Executing REID detection search`, {
-          cameraName,
-          className,
-          finalStartTime,
-          finalEndTime,
-          streamId
-        });
-
-        const where: any = {};
-
-        if (cameraName) {
-          where.cameraName = { contains: cameraName, mode: 'insensitive' };
-        }
-
-        if (className) {
-          where.className = className;
-        }
-
-        if (streamId) {
-          where.streamId = streamId;
-        }
-
-        if (finalStartTime || finalEndTime) {
-          where.timestamp = {};
-          if (finalStartTime) where.timestamp.gte = new Date(finalStartTime);
-          if (finalEndTime) where.timestamp.lte = new Date(finalEndTime);
-        }
-
-        const detections = await prisma.reidDetection.findMany({
-          where: {
-            ...where,
-            deviceId: { in: Array.from(onlineDeviceIds) },
-          },
-          orderBy: { timestamp: 'desc' },
-          take: 200, // cap to avoid huge context
-        });
-
-        console.log(`[RAG REID callback] Found ${detections.length} REID detections`);
-        return detections;
       }
-    );
+    ];
+
+    const currentLocalTime = new Date().toISOString();
+    const defaultPrompt = `You are an AI video surveillance analyst dashboard.
+The user is asking a question about the security camera recordings.
+The current system time is ${currentLocalTime}. Use this reference to resolve relative timestamps like "yesterday", "today", "last 2 hours", "8:00 AM", etc. into absolute ISO-8601 strings.
+You have access to a tool:
+1. 'searchQdrant' — searches the video clip summaries database for events and activity descriptions. Use this when the user asks about what happened, what activity was recorded, or asks for specific scene descriptions.
+If the query implies a time filter, resolve it to absolute ISO-8601 strings.
+Answer the user's question accurately and objectively using only the retrieved data.
+If the search returns no results, state that clearly.
+Cite the relevant sources (e.g. "[Clip 1]") in your response where appropriate. Keep the answer concise and helpful.`;
+
+    const finalSystemPrompt = systemPrompt || defaultPrompt;
+
+    const { answer, toolResults } = await chatWithTools(question, history, tools, finalSystemPrompt);
+
+    const clips = toolResults
+      .filter(tr => tr.toolName === 'searchQdrant')
+      .flatMap(tr => tr.rawData || []);
+
+    const reidDetections: any[] = [];
 
     // Construct list of cited video clips for the frontend
     const citedClips = clips
@@ -141,19 +150,7 @@ router.post('/query', async (req: Request, res: Response) => {
       };
     });
 
-    // Construct list of cited REID detections for the frontend
-    const citedReid = reidDetections
-      .filter((det: any) => isFromOnlineDevice(det.deviceId))
-      .map((det: any) => ({
-      id: det.id,
-      cameraName: det.cameraName,
-      trackId: det.trackId,
-      timestamp: det.timestamp instanceof Date ? det.timestamp.toISOString() : det.timestamp,
-      filename: det.filename,
-      className: det.className,
-      deviceId: det.deviceId ?? null,
-      bbox: det.bbox,
-    }));
+    const citedReid: any[] = [];
 
     // Return response
     res.json({

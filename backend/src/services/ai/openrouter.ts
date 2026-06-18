@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import OpenAI from 'openai';
 import { bindAIServiceMethods } from './bindService';
-import { AIService } from './types';
+import { AIService, Tool, ToolExecutionResult } from './types';
 import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
 
@@ -490,6 +490,118 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
       throw error;
     }
   }
+
+  /**
+   * Answers a user query by calling the provided tools in a loop until the model
+   * decides no further tools are needed.
+   */
+  async chatWithTools(
+    question: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    tools: Tool[],
+    systemPrompt: string
+  ): Promise<{ answer: string; toolResults: ToolExecutionResult[] }> {
+    const systemMessage = {
+      role: 'system',
+      content: systemPrompt
+    };
+
+    const messages: any[] = [
+      systemMessage,
+      ...history.map(h => ({
+        role: h.role === 'assistant' ? 'assistant' : 'user',
+        content: h.content,
+      })),
+      { role: 'user', content: question },
+    ];
+
+    const model = this.getChatModel();
+
+    console.log('[OpenRouter] Requesting chat completion with looping tools...');
+
+    let loop = true;
+    let toolResults: ToolExecutionResult[] = [];
+    let finalAnswer = '';
+    let iterations = 0;
+    const maxIterations = 10;
+
+    try {
+      while (loop && iterations < maxIterations) {
+        iterations++;
+        const response = await this.client.chat.completions.create({
+          model,
+          messages,
+          tools: tools.length > 0 ? tools.map(t => ({
+            type: 'function',
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: t.parameters,
+            }
+          })) : undefined
+        });
+
+        const choice = response.choices[0];
+        const message = choice.message;
+
+        // Push the assistant message (which might have tool_calls) to messages
+        messages.push(message);
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          for (const toolCall of message.tool_calls as any[]) {
+            if (!toolCall.function) continue;
+            const tool = tools.find(t => t.name === toolCall.function.name);
+            if (!tool) {
+              console.error(`[OpenRouter] Tool ${toolCall.function.name} not found in tools list`);
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: `Error: Tool ${toolCall.function.name} not found.`
+              });
+              continue;
+            }
+
+            const args = JSON.parse(toolCall.function.arguments || '{}');
+            console.log(`[OpenRouter Tool Loop] Executing tool ${tool.name} with args:`, args);
+
+            try {
+              const { resultForModel, rawData } = await tool.execute(args);
+              toolResults.push({ toolName: tool.name, rawData });
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: resultForModel,
+              });
+            } catch (err: any) {
+              console.error(`[OpenRouter Tool Loop] Error executing tool ${tool.name}:`, err);
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: `Error executing tool: ${err.message || err}`,
+              });
+            }
+          }
+        } else {
+          finalAnswer = message.content || 'Could not formulate an answer.';
+          loop = false;
+        }
+      }
+
+      if (iterations >= maxIterations && loop) {
+        console.warn(`[OpenRouter] Reached maximum tool loop iterations (${maxIterations}). Terminating.`);
+        const finalResponse = await this.client.chat.completions.create({
+          model,
+          messages,
+        });
+        finalAnswer = finalResponse.choices[0].message?.content || 'Could not formulate an answer.';
+      }
+
+      return { answer: finalAnswer, toolResults };
+    } catch (error) {
+      console.error('[OpenRouter] Error in chatWithTools loop:', error);
+      throw error;
+    }
+  }
 }
 
 const {
@@ -498,6 +610,8 @@ const {
   generateTextEmbedding,
   answerQuestionWithContext,
   answerWithTools,
+  chatWithTools,
 } = bindAIServiceMethods(new OpenRouterService());
 
-export { service as openrouterService, service, summarizeVideo, generateTextEmbedding, answerQuestionWithContext, answerWithTools };
+export { service as openrouterService, service, summarizeVideo, generateTextEmbedding, answerQuestionWithContext, answerWithTools, chatWithTools };
+

@@ -7,5 +7,6 @@ export function bindAIServiceMethods<T extends AIService>(service: T) {
     generateTextEmbedding: service.generateTextEmbedding.bind(service),
     answerQuestionWithContext: service.answerQuestionWithContext.bind(service),
     answerWithTools: service.answerWithTools.bind(service),
+    chatWithTools: service.chatWithTools.bind(service),
   };
 }

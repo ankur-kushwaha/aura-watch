@@ -38,3 +38,5 @@ export const summarizeVideo = videoModule.summarizeVideo;
 export const generateTextEmbedding = embeddingModule.generateTextEmbedding;
 export const answerQuestionWithContext = chatModule.answerQuestionWithContext;
 export const answerWithTools = chatModule.answerWithTools;
+export const chatWithTools = chatModule.chatWithTools;
+

@@ -35,4 +35,32 @@ export interface AIService {
     searchQdrantFn: (queryText: string, startTime?: string, endTime?: string) => Promise<any[]>,
     searchReidFn: (cameraName?: string, className?: string, startTime?: string, endTime?: string) => Promise<any[]>
   ): Promise<{ answer: string; clips: any[]; reidDetections: any[] }>;
+
+  /**
+   * Answers a user query by calling the provided tools in a loop until the model
+   * decides no further tools are needed.
+   * @param question The user's current question.
+   * @param history The conversation history.
+   * @param tools List of tools the LLM can call.
+   * @param systemPrompt Custom system prompt/instructions for the model.
+   */
+  chatWithTools(
+    question: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    tools: Tool[],
+    systemPrompt: string
+  ): Promise<{ answer: string; toolResults: ToolExecutionResult[] }>;
 }
+
+export interface Tool {
+  name: string;
+  description: string;
+  parameters: any;
+  execute: (args: any) => Promise<{ resultForModel: string; rawData?: any }>;
+}
+
+export interface ToolExecutionResult {
+  toolName: string;
+  rawData?: any;
+}
+
