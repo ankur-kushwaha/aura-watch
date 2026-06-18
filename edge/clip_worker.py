@@ -19,6 +19,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
+from agent_log import AgentLogger
 from clip_processor import process_clip
 from recorder import clip_meets_upload_threshold, upload_clip
 from reid_embedder import ReidEmbedder
@@ -30,6 +31,15 @@ LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage",
 LOCAL_CLIPS_DIR = os.path.join(BASE_DIR, "storage", "clips")
 LOCAL_FAILED_DIR = os.path.join(BASE_DIR, "storage", "failed")
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
+WORKER_LOG_FILE = os.getenv("WORKER_LOG_FILE", os.path.join(BASE_DIR, "storage", "worker.log"))
+
+_worker_logger = AgentLogger(WORKER_LOG_FILE)
+
+
+def wlog(message: str) -> None:
+    """Write to worker.log and flush to stdout (captured by agent pipe)."""
+    _worker_logger.write(message, tag="Worker")
+
 
 
 def load_device_id() -> str:
@@ -59,13 +69,12 @@ def upload_reid_crop(
         with open(local_path, "wb") as handle:
             handle.write(crop_jpeg)
     except Exception as exc:
-        print(f"[ReID Error] Failed to save local crop {filename}: {exc}", flush=True)
+        wlog(f"[ReID Error] Failed to save local crop {filename}: {exc}")
 
     if len(embedding) != 512:
-        print(
+        wlog(
             f"[ReID Error] Skipping crop upload for track {track_id}: "
-            f"expected 512-dim embedding, got {len(embedding)}",
-            flush=True,
+            f"expected 512-dim embedding, got {len(embedding)}"
         )
         return
 
@@ -86,11 +95,11 @@ def upload_reid_crop(
             timeout=30,
         )
         if response.status_code >= 200 and response.status_code < 300:
-            print(f"Successfully uploaded ReID crop for track {track_id} on stream {stream_id}", flush=True)
+            wlog(f"Successfully uploaded ReID crop for track {track_id} on stream {stream_id}")
         else:
-            print(f"[ReID Error] Upload failed ({response.status_code}): {response.text}", flush=True)
+            wlog(f"[ReID Error] Upload failed ({response.status_code}): {response.text}")
     except Exception as exc:
-        print(f"[ReID Error] Upload exception: {exc}", flush=True)
+        wlog(f"[ReID Error] Upload exception: {exc}")
 
 
 def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -> None:
@@ -98,7 +107,7 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
         with open(json_path, "r", encoding="utf-8") as f:
             job = json.load(f)
     except Exception as exc:
-        print(f"[Worker Error] Failed to read sidecar {os.path.basename(json_path)}: {exc}", flush=True)
+        wlog(f"[Worker Error] Failed to read sidecar {os.path.basename(json_path)}: {exc}")
         try:
             os.unlink(json_path)
         except OSError:
@@ -113,7 +122,7 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
 
     # Check attempt limit (Poison Pill mitigation)
     if job["attempts"] > 3:
-        print(f"[Worker Warning] Clip {filename} exceeded attempt limit (attempts={job['attempts']}). Discarding.", flush=True)
+        wlog(f"[Worker Warning] Clip {filename} exceeded attempt limit (attempts={job['attempts']}). Discarding.")
         try:
             os.unlink(json_path)
         except OSError:
@@ -122,9 +131,9 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
             os.makedirs(LOCAL_FAILED_DIR, exist_ok=True)
             try:
                 shutil.move(mp4_path, os.path.join(LOCAL_FAILED_DIR, filename))
-                print(f"[Worker] Moved poisoned clip {filename} to {LOCAL_FAILED_DIR}", flush=True)
+                wlog(f"[Worker] Moved poisoned clip {filename} to {LOCAL_FAILED_DIR}")
             except Exception as e:
-                print(f"[Worker Error] Failed to move poisoned clip: {e}", flush=True)
+                wlog(f"[Worker Error] Failed to move poisoned clip: {e}")
                 try:
                     os.unlink(mp4_path)
                 except OSError:
@@ -136,17 +145,17 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(job, f, indent=2)
     except Exception as exc:
-        print(f"[Worker Warning] Failed to update attempts in sidecar: {exc}", flush=True)
+        wlog(f"[Worker Warning] Failed to update attempts in sidecar: {exc}")
 
     if not os.path.exists(mp4_path):
-        print(f"[Worker Warning] Video file {filename} not found for sidecar. Discarding sidecar.", flush=True)
+        wlog(f"[Worker Warning] Video file {filename} not found for sidecar. Discarding sidecar.")
         try:
             os.unlink(json_path)
         except OSError:
             pass
         return
 
-    print(f"[{stream_id}] Running YOLO + ByteTrack on clip {filename} (attempt {job['attempts']})...", flush=True)
+    wlog(f"[{stream_id}] Running YOLO + ByteTrack on clip {filename} (attempt {job['attempts']})...")
     try:
         tracker = YoloByteTracker(
             confidence=float(job.get("yolo_confidence", 0.35)),
@@ -165,12 +174,12 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
             detect_interval=int(job.get("yolo_detect_interval", 1)),
         )
     except Exception as exc:
-        print(f"[{stream_id}] Clip analysis failed for {filename}: {exc}", flush=True)
+        wlog(f"[{stream_id}] Clip analysis failed for {filename}: {exc}")
         # We don't delete on error yet, let retry mechanism handle it or delete if exceeded
         return
 
     if not clip_result.has_targets:
-        print(f"[{stream_id}] No person/vehicle in {filename} — discarding locally.", flush=True)
+        wlog(f"[{stream_id}] No person/vehicle in {filename} — discarding locally.")
         try:
             os.unlink(mp4_path)
         except OSError:
@@ -182,10 +191,9 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
         return
 
     if not clip_result.reid_crops:
-        print(
+        wlog(
             f"[{stream_id}] WARNING: YOLO found objects but no ReID profiles were created. "
-            f"Check OSNet model ({embedder.model_path}) and edge logs.",
-            flush=True,
+            f"Check OSNet model ({embedder.model_path}) and edge logs."
         )
 
     track_events = clip_result.track_events
@@ -214,13 +222,12 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
             )
             reid_uploaded += 1
         except Exception as exc:
-            print(f"[ReID Error] Failed to upload crop for track {crop.track_id}: {exc}", flush=True)
+            wlog(f"[ReID Error] Failed to upload crop for track {crop.track_id}: {exc}")
 
     reid_event_count = sum(1 for event in track_events if event.get("kind") == "reid")
-    print(
+    wlog(
         f"[{stream_id}] Clip analysis: {reid_event_count} ReID profile(s), "
-        f"{len(track_events)} total track event(s), {reid_uploaded} crop(s) uploaded.",
-        flush=True,
+        f"{len(track_events)} total track event(s), {reid_uploaded} crop(s) uploaded."
     )
 
     # Move clip to persistent LOCAL_CLIPS_DIR before uploading
@@ -228,15 +235,14 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
     target_mp4_path = os.path.join(LOCAL_CLIPS_DIR, filename)
     try:
         shutil.move(mp4_path, target_mp4_path)
-        print(f"[{stream_id}] Moved clip {filename} to persistent storage: {target_mp4_path}", flush=True)
+        wlog(f"[{stream_id}] Moved clip {filename} to persistent storage: {target_mp4_path}")
     except Exception as exc:
-        print(f"[{stream_id}] Failed to move clip to persistent storage: {exc}. Keeping temp path.", flush=True)
+        wlog(f"[{stream_id}] Failed to move clip to persistent storage: {exc}. Keeping temp path.")
         target_mp4_path = mp4_path
 
-    print(
+    wlog(
         f"[{stream_id}] Uploading clip to Cloud: {filename} "
-        f"({len(track_events)} track event(s))...",
-        flush=True,
+        f"({len(track_events)} track event(s))..."
     )
     try:
         upload_clip(
@@ -251,7 +257,7 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
             frame_height=job.get("height"),
             clip_start_ms=clip_start_ms,
         )
-        print(f"[{stream_id}] Successfully uploaded clip to Cloud: {filename}", flush=True)
+        wlog(f"[{stream_id}] Successfully uploaded clip to Cloud: {filename}")
 
         # Successfully uploaded and saved locally, now we can remove sidecar
         try:
@@ -259,7 +265,7 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
         except OSError:
             pass
     except Exception as exc:
-        print(f"[{stream_id}] Clip upload failed for {filename}: {exc}", flush=True)
+        wlog(f"[{stream_id}] Clip upload failed for {filename}: {exc}")
         # Move back to temp so it can be retried if it was moved
         if target_mp4_path != mp4_path and os.path.exists(target_mp4_path):
             try:
@@ -269,20 +275,20 @@ def process_single_job(json_path: str, embedder: ReidEmbedder, device_id: str) -
 
 
 def main() -> None:
-    print("[Worker] Starting edge clip processing worker process...", flush=True)
+    wlog("[Worker] Starting edge clip processing worker process...")
     os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
     os.makedirs(LOCAL_CROPS_DIR, exist_ok=True)
     os.makedirs(LOCAL_CLIPS_DIR, exist_ok=True)
 
     device_id = load_device_id()
-    print(f"[Worker] Device ID: {device_id}", flush=True)
+    wlog(f"[Worker] Device ID: {device_id}")
 
     embedder = ReidEmbedder()
     reid_error = embedder.validate()
     if reid_error:
-        print(f"[Worker] WARNING: ReidEmbedder failed to initialize: {reid_error}", flush=True)
+        wlog(f"[Worker] WARNING: ReidEmbedder failed to initialize: {reid_error}")
     else:
-        print(f"[Worker] OSNet ready at {embedder.model_path}", flush=True)
+        wlog(f"[Worker] OSNet ready at {embedder.model_path}")
 
     while True:
         try:
@@ -308,10 +314,10 @@ def main() -> None:
             time.sleep(0.1)
 
         except KeyboardInterrupt:
-            print("[Worker] Stopping worker process on SIGINT", flush=True)
+            wlog("[Worker] Stopping worker process on SIGINT")
             break
         except Exception as exc:
-            print(f"[Worker Loop Error] {exc}", flush=True)
+            wlog(f"[Worker Loop Error] {exc}")
             time.sleep(2.0)
 
 

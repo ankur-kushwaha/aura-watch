@@ -65,6 +65,7 @@ LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage",
 LOCAL_CLIPS_DIR = os.path.join(BASE_DIR, "storage", "clips")
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
 AGENT_LOG_FILE = os.path.join(BASE_DIR, "storage", "agent.log")
+WORKER_LOG_FILE = os.path.join(BASE_DIR, "storage", "worker.log")
 HEALTH_HEARTBEAT_SEC = max(60, int(os.getenv("HEALTH_HEARTBEAT_SEC", "300")))
 DEBUG_LOGS = _DEFAULT_RUNTIME.debug_logs
 PREVIEW_STALL_TIMEOUT_SEC = _DEFAULT_RUNTIME.preview_stall_timeout_sec
@@ -422,6 +423,8 @@ class EdgeAgent:
             while not self.shutdown_event.is_set():
                 self.send_log("Starting background clip processing worker...")
                 try:
+                    worker_env = os.environ.copy()
+                    worker_env["WORKER_LOG_FILE"] = WORKER_LOG_FILE
                     self.worker_proc = subprocess.Popen(
                         [sys.executable, "-u", worker_script],
                         cwd=BASE_DIR,
@@ -429,6 +432,7 @@ class EdgeAgent:
                         stderr=subprocess.STDOUT,
                         text=True,
                         bufsize=1,
+                        env=worker_env,
                     )
                     
                     # Read stdout line by line
@@ -1326,6 +1330,12 @@ class EdgeAgent:
                 self._restore_stream_status(stream_id)
             except Exception as e:
                 self.send_log(f"[{name}] Failed to save sidecar metadata: {e}")
+                # Clean up the temp file so it doesn't accumulate as a 0-byte orphan
+                try:
+                    if os.path.exists(temp_json_path):
+                        os.unlink(temp_json_path)
+                except OSError:
+                    pass
         except Exception as exc:
             self.send_log(f"[{name}] Clip generation failed: {exc}")
             kill_ffmpeg_for_path(output_path)
@@ -2191,8 +2201,23 @@ class EdgeAgent:
 
         print("[Edge] Cleanup complete.", flush=True)
 
+    def _sweep_stale_tmp_files(self) -> None:
+        """Remove any leftover .json.tmp files from a previous crash."""
+        try:
+            for name_entry in os.listdir(LOCAL_VIDEO_DIR):
+                if name_entry.endswith(".json.tmp"):
+                    stale_path = os.path.join(LOCAL_VIDEO_DIR, name_entry)
+                    try:
+                        os.unlink(stale_path)
+                        print(f"[Edge] Removed stale sidecar temp file: {name_entry}", flush=True)
+                    except OSError as exc:
+                        print(f"[Edge] Could not remove stale temp file {name_entry}: {exc}", flush=True)
+        except Exception as exc:
+            print(f"[Edge] Stale tmp sweep failed: {exc}", flush=True)
+
     def bootstrap(self):
         try:
+            self._sweep_stale_tmp_files()
             last_line = self.agent_logger.last_line()
             if last_line:
                 self.send_log(f"Agent starting (pid={os.getpid()}). Last persisted log: {last_line}")
