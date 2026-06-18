@@ -132,6 +132,68 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return float(np.dot(a_arr, b_arr) / (norm_a * norm_b))
 
 
+# Cosine similarity threshold for merging tracks that belong to the same object.
+REID_MERGE_THRESHOLD = 0.70
+
+
+def _build_merge_map(crops: list["ReidCropUpload"]) -> dict[int, int]:
+    """Return {tid → canonical_tid} using union-find over all pairs that exceed
+    REID_MERGE_THRESHOLD.  Handles transitive chains (A~B, B~C ⟹ A,B,C unified).
+    The lowest numeric track ID becomes the canonical representative.
+    """
+    # Deduplicate: keep the highest-confidence crop per track so each track ID
+    # contributes exactly one embedding to the pairwise comparison.
+    best: dict[int, ReidCropUpload] = {}
+    for c in crops:
+        if c.track_id not in best or c.confidence > best[c.track_id].confidence:
+            best[c.track_id] = c
+    unique = list(best.values())
+
+    if len(unique) < 2:
+        return {}
+
+    # ── Union-Find ───────────────────────────────────────────────────────────
+    parent: dict[int, int] = {c.track_id: c.track_id for c in unique}
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]  # path-halving compression
+            x = parent[x]
+        return x
+
+    def _union(a: int, b: int) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            # Canonical = lower numeric ID for stable, deterministic output.
+            if ra < rb:
+                parent[rb] = ra
+            else:
+                parent[ra] = rb
+
+    # Compare every pair; each detected merge is logged individually.
+    for i in range(len(unique)):
+        for j in range(i + 1, len(unique)):
+            ca, cb = unique[i], unique[j]
+            if not ca.embedding or not cb.embedding:
+                continue
+            sim = cosine_similarity(ca.embedding, cb.embedding)
+            if sim >= REID_MERGE_THRESHOLD:
+                logger.info(
+                    "[ReID merge] track %d ↔ track %d  cosine=%.4f  class=%s/%s",
+                    ca.track_id, cb.track_id, sim, ca.class_name, cb.class_name,
+                )
+                _union(ca.track_id, cb.track_id)
+
+    # Build flat map: only tracks that differ from their canonical root.
+    merge_map: dict[int, int] = {}
+    for c in unique:
+        tid = c.track_id
+        root = _find(tid)
+        if root != tid:
+            merge_map[tid] = root
+    return merge_map
+
+
 def _append_reid_event_from_jpeg(
     detection: Detection,
     crop_jpeg: bytes,
@@ -274,45 +336,43 @@ def process_clip(
         ):
             reid_track_ids.add(track_id)
 
-    # Merge track IDs based on ReID embedding similarity to reduce duplicate object rows
-    threshold = 0.70
+    # ── Same-clip track merge via cosine embedding similarity ────────────────
+    # Run separately for persons and vehicles so class boundaries are respected.
     person_crops = [c for c in reid_crops if c.class_name == "person"]
     vehicle_crops = [c for c in reid_crops if is_vehicle_class(c.class_name)]
 
     merge_map: dict[int, int] = {}
-    lists_to_process = [person_crops, vehicle_crops]
-    for crop_list in lists_to_process:
-        processed_tids = set()
-        for i, crop_a in enumerate(crop_list):
-            tid_a = crop_a.track_id
-            if tid_a in processed_tids:
-                continue
-            processed_tids.add(tid_a)
-
-            for j in range(i + 1, len(crop_list)):
-                crop_b = crop_list[j]
-                tid_b = crop_b.track_id
-                if tid_b in processed_tids:
-                    continue
-
-                if crop_a.embedding and crop_b.embedding:
-                    sim = cosine_similarity(crop_a.embedding, crop_b.embedding)
-                    if sim >= threshold:
-                        merge_map[tid_b] = merge_map.get(tid_a, tid_a)
-                        processed_tids.add(tid_b)
+    for crop_list in (person_crops, vehicle_crops):
+        merge_map.update(_build_merge_map(crop_list))
 
     if merge_map:
-        logger.info("Local same-clip track merging map: %s", merge_map)
-        # 1. Update trackIds in track_events
+        logger.info("[ReID merge] same-clip merge map: %s", merge_map)
+
+        # 1. Annotate and remap trackIds in track_events.
         for event in track_events:
             tid = event.get("trackId")
             if tid in merge_map:
+                event["mergedFrom"] = tid          # preserve original for debugging
                 event["trackId"] = merge_map[tid]
 
-        # 2. Update track_ids in reid_crops
+        # 2. Remap track_ids in reid_crops.
         for crop in reid_crops:
             if crop.track_id in merge_map:
                 crop.track_id = merge_map[crop.track_id]
+
+        # 3. Deduplicate reid_crops: keep only the highest-confidence crop per
+        #    merged identity to avoid uploading redundant embeddings.
+        best_crop: dict[int, ReidCropUpload] = {}
+        for crop in reid_crops:
+            tid = crop.track_id
+            if tid not in best_crop or crop.confidence > best_crop[tid].confidence:
+                best_crop[tid] = crop
+        reid_crops = list(best_crop.values())
+        logger.info(
+            "[ReID merge] reid_crops after dedup: %d (was %d)",
+            len(reid_crops),
+            len(merge_map) + len(reid_crops),
+        )
 
     return ClipProcessResult(
         track_events=track_events,
