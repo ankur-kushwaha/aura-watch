@@ -17,7 +17,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from config import DeviceRuntimeConfig, default_stream_tracking_enabled, rtsp_local_addr_value, rtsp_transport_value
 
@@ -712,11 +712,15 @@ class EdgeAgent:
             stream_states.append("/".join(parts))
 
         ws_ok = bool(self.ws)
+        cpu_usage = _cpu_usage_percent(interval=0.1)
+        cpu_str = f"cpu={cpu_usage}%" if cpu_usage is not None else "cpu=N/A"
+        q_len = self._clip_job_queue.qsize()
         self.send_log(
             "[Health] "
             f"pid={os.getpid()} "
             f"ws={'up' if ws_ok else 'down'} "
             f"streams={len(self.pipelines)} "
+            f"{cpu_str} queue_len={q_len} "
             f"[{'; '.join(stream_states) or 'none'}]"
         )
 
@@ -856,7 +860,7 @@ class EdgeAgent:
                 if p_data and p_data.get("stream_frames", False):
                     self._send_preview_frame(stream_id, frame, settings.jpeg_quality)
 
-            def on_motion_start(ratio: float, preroll_frames: list):
+            def on_motion_start(ratio: float, get_preroll_frames: Callable[[], list]):
                 p_data = self.pipelines.get(stream_id)
                 if not p_data:
                     return
@@ -865,7 +869,7 @@ class EdgeAgent:
                     return
                 with p_data["motion_lock"]:
                     p_data["last_motion_at"] = time.monotonic()
-                if not self._try_start_clip_recording(stream_id, ratio, preroll_frames):
+                if not self._try_start_clip_recording(stream_id, ratio, get_preroll_frames):
                     return
 
             def on_motion_active():
@@ -1074,27 +1078,45 @@ class EdgeAgent:
         self,
         stream_id: str,
         motion_ratio: float,
-        preroll_frames: list,
+        get_preroll_frames: Callable[[], list],
     ) -> bool:
         p_data = self.pipelines.get(stream_id)
         if not p_data:
             return False
 
+        config = self.streams_config.get(stream_id)
+        name = config.name if config else stream_id
+
         with p_data["recording_lock"]:
             if p_data["is_recording"]:
                 return False
             if p_data["recording_thread"] and p_data["recording_thread"].is_alive():
+                last_log = p_data.get("last_skip_log_time", 0.0)
+                now = time.monotonic()
+                if now - last_log > 5.0:
+                    p_data["last_skip_log_time"] = now
+                    self.send_log(
+                        f"[{name}] Cannot start clip recording: previous recording thread is still alive (finishing/cleaning up)."
+                    )
                 return False
-            if time.monotonic() < p_data["recording_cooldown_until"]:
+            cooldown_left = p_data["recording_cooldown_until"] - time.monotonic()
+            if cooldown_left > 0:
+                last_log = p_data.get("last_skip_log_time", 0.0)
+                now = time.monotonic()
+                if now - last_log > 5.0:
+                    p_data["last_skip_log_time"] = now
+                    self.send_log(
+                        f"[{name}] Cannot start clip recording: in cooldown for another {cooldown_left:.1f}s."
+                    )
                 return False
+
+            preroll_frames = get_preroll_frames()
             p_data["is_recording"] = True
             p_data["last_motion_at"] = time.monotonic()
             p_data["recording_started_at_mono"] = time.monotonic()
             p_data["recording_started_at_ms"] = int(time.time() * 1000)
             p_data["preroll_frames"] = list(preroll_frames)
 
-        config = self.streams_config.get(stream_id)
-        name = config.name if config else stream_id
         self.send_log(
             f"[{name}] Motion detected ({motion_ratio * 100:.1f}% change). "
             f"Starting clip with {len(preroll_frames)} pre-roll frame(s)..."

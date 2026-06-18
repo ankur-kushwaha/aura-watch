@@ -34,7 +34,7 @@ class PipelineSettings:
 
 
 FrameCallback = Callable[[np.ndarray], None]
-MotionStartCallback = Callable[[float, list[np.ndarray]], None]
+MotionStartCallback = Callable[[float, Callable[[], list[np.ndarray]]], None]
 MotionActiveCallback = Callable[[], None]
 ClipEncoderGetter = Callable[[], Optional[ClipEncoder]]
 
@@ -140,11 +140,16 @@ class VisionPipeline:
 
             if self.settings.tracking_enabled:
                 motion_detected, ratio = self._motion.detect(frame)
+                is_recording = False
+                if self.get_clip_encoder:
+                    encoder = self.get_clip_encoder()
+                    is_recording = encoder is not None and encoder.is_running()
+
                 if motion_detected:
-                    if not self._motion_active:
+                    if not self._motion_active or not is_recording:
                         self._motion_active = True
                         if self.on_motion_start:
-                            self.on_motion_start(ratio, self._preroll.snapshot())
+                            self.on_motion_start(ratio, self._preroll.snapshot)
                     elif self.on_motion_active:
                         self.on_motion_active()
                 else:
