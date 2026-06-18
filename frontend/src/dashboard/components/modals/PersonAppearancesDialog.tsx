@@ -165,7 +165,10 @@ function PersonAppearancesDialogBody({
 
   useEffect(() => {
     if (!detection.detectionId) return;
-    void loadIdentitySuggestions(identityId ?? detection.identityId ?? null, detection.detectionId);
+    const timer = window.setTimeout(() => {
+      void loadIdentitySuggestions(identityId ?? detection.identityId ?? null, detection.detectionId);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [detection.detectionId, detection.identityId, identityId, loadIdentitySuggestions]);
 
   const bumpTimeline = () => setTimelineKey((k) => k + 1);
