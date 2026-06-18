@@ -50,6 +50,19 @@ export function formatClipDuration(seconds: number) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
+/** Offset from clip start, e.g. "5.2s" or "1:05". */
+export function formatClipOffsetMs(offsetMs?: number | null) {
+  if (offsetMs == null || !Number.isFinite(offsetMs) || offsetMs < 0) return null;
+  const totalSeconds = offsetMs / 1000;
+  if (totalSeconds < 60) {
+    const label = totalSeconds < 10 ? totalSeconds.toFixed(1) : String(Math.round(totalSeconds));
+    return `${label}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const secs = Math.round(totalSeconds % 60);
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
+}
+
 export function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleString();
 }

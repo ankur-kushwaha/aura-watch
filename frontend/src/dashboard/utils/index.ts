@@ -3,6 +3,7 @@ export {
   formatBytes,
   formatClipDuration,
   formatClipListDateTime,
+  formatClipOffsetMs,
   formatDate,
   formatPercent,
   formatUptime,

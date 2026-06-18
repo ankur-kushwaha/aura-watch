@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { OrgSettings } from '../../api';
 import type { ClipObjectDetection, ClipReidLog, CropClipPlayback, VideoClip } from '../types';
 import { getClipDetectionCount } from '../utils/clips';
-import { formatClipDuration, formatDate } from '../utils/format';
+import { formatClipDuration, formatClipOffsetMs, formatDate } from '../utils/format';
 import { mediaUrl } from '../utils/media';
 import { tryParseClipAiAnalysis } from '../utils/summary';
 import { CropThumbnail } from './CropThumbnail';
@@ -200,6 +200,7 @@ export function ClipPreviewPanel({
             ) : (
               <div className="flex flex-col gap-2 mb-2">
                 {clipDetections.map((obj) => {
+                  const detectionOffsetLabel = formatClipOffsetMs(obj.clipOffsetMs);
                   const isClickablePerson = obj.className === 'person' && !!obj.detectionId;
                   const hasIdentity = !!obj.identityId;
                   const personIds = [
@@ -246,6 +247,12 @@ export function ClipPreviewPanel({
                         </span>
                         {obj.trackId > 0 && (
                           <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
+                        )}
+                        {detectionOffsetLabel && (
+                          <span className="text-[0.68rem] text-text-muted flex items-center gap-0.5">
+                            <Clock size={10} />
+                            {detectionOffsetLabel}
+                          </span>
                         )}
                         {obj.className === 'person' && (obj.upperColor || obj.lowerColor) && (
                           <span className="text-[0.68rem] text-text-muted capitalize">
