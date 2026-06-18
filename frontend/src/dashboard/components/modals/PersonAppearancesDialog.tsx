@@ -164,9 +164,10 @@ function PersonAppearancesDialogBody({
   }, []);
 
   useEffect(() => {
-    if (!detection.detectionId) return;
+    const detId = detection.detectionId;
+    if (!detId) return;
     const timer = window.setTimeout(() => {
-      void loadIdentitySuggestions(identityId ?? detection.identityId ?? null, detection.detectionId);
+      void loadIdentitySuggestions(identityId ?? detection.identityId ?? null, detId);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [detection.detectionId, detection.identityId, identityId, loadIdentitySuggestions]);
