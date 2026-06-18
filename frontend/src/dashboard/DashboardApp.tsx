@@ -683,20 +683,20 @@ export default function DashboardApp() {
     setStreamInitTimedOut(false);
   }, []);
 
-  const handleOpenInVlc = useCallback(async () => {
-    const url = selectedStream?.streamUrl;
-    if (!url || vlcLaunchInFlightRef.current) return;
+  const handleOpenInVlc = useCallback(async (url?: string) => {
+    const targetUrl = url || selectedStream?.streamUrl;
+    if (!targetUrl || vlcLaunchInFlightRef.current) return;
 
     vlcLaunchInFlightRef.current = true;
     setVlcLaunchHint('idle');
 
-    const result = await openRtspInVlc(url);
+    const result = await openRtspInVlc(targetUrl);
     if (result === 'likely-opened') {
       setVlcLaunchHint('opened');
       appendLog('[Dashboard] Opened RTSP stream in VLC');
     } else {
       setVlcLaunchHint('failed');
-      const copied = await copyRtspUrl(url);
+      const copied = await copyRtspUrl(targetUrl);
       appendLog(
         copied
           ? '[Dashboard] vlc:// handler not found — RTSP URL copied. In VLC: Media → Open Network Stream → paste (Cmd+V).'
@@ -709,10 +709,10 @@ export default function DashboardApp() {
     }, 1500);
   }, [appendLog, selectedStream?.streamUrl]);
 
-  const handleCopyMacVlcCommand = useCallback(async () => {
-    const url = selectedStream?.streamUrl;
-    if (!url) return;
-    const copied = await copyMacVlcTerminalCommand(url);
+  const handleCopyMacVlcCommand = useCallback(async (url?: string) => {
+    const targetUrl = url || selectedStream?.streamUrl;
+    if (!targetUrl) return;
+    const copied = await copyMacVlcTerminalCommand(targetUrl);
     appendLog(
       copied
         ? '[Dashboard] macOS command copied — paste in Terminal: open -a VLC "rtsp://..."'
@@ -720,14 +720,14 @@ export default function DashboardApp() {
     );
   }, [appendLog, selectedStream?.streamUrl]);
 
-  const handleCopyRtspUrl = useCallback(async () => {
-    const url = selectedStream?.streamUrl;
-    if (!url) return;
-    const copied = await copyRtspUrl(url);
+  const handleCopyRtspUrl = useCallback(async (url?: string) => {
+    const targetUrl = url || selectedStream?.streamUrl;
+    if (!targetUrl) return;
+    const copied = await copyRtspUrl(targetUrl);
     appendLog(
       copied
         ? '[Dashboard] RTSP URL copied to clipboard'
-        : '[Dashboard] Could not copy RTSP URL — copy it manually from the panel',
+        : '[Dashboard] Could not copy RTSP URL',
     );
   }, [appendLog, selectedStream?.streamUrl]);
 
@@ -1266,90 +1266,180 @@ export default function DashboardApp() {
                             return (
                               <div
                                 key={stream.streamId}
-                                onClick={() => openStreamFeed(stream)}
-                                className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${isSelected
-                                  ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
-                                  : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
-                                  }`}
+                                className="flex flex-col gap-1.5"
                               >
-                                <div className="flex items-center gap-2 min-w-0 flex-1">
-                                  <span
-                                    className="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
-                                    style={{
-                                      background: streamStatusColor,
-                                      boxShadow:
-                                        isStreamOnline && stream.status !== 'Idle'
-                                          ? `0 0 6px ${streamStatusColor}`
-                                          : 'none',
-                                    }}
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    <div className="text-[0.8rem] font-semibold text-text-primary truncate">
-                                      {stream.name}
+                                <div
+                                  onClick={() => {
+                                    if (stream.cameraType === 'rtsp') {
+                                      setSelectedStreamId((prev) => (prev === stream.streamId ? '' : stream.streamId));
+                                      setSelectedDeviceId(stream.deviceId);
+                                      setLiveFeedOpen(false);
+                                      setVlcLaunchHint('idle');
+                                    } else {
+                                      openStreamFeed(stream);
+                                    }
+                                  }}
+                                  className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${
+                                    isSelected
+                                      ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
+                                      : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <span
+                                      className="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
+                                      style={{
+                                        background: streamStatusColor,
+                                        boxShadow:
+                                          isStreamOnline && stream.status !== 'Idle'
+                                            ? `0 0 6px ${streamStatusColor}`
+                                            : 'none',
+                                      }}
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-[0.8rem] font-semibold text-text-primary truncate">
+                                        {stream.name}
+                                      </div>
+                                      <div className="text-[0.65rem] text-text-secondary truncate mt-0.5">
+                                        {stream.status === 'Error'
+                                          ? 'Camera connection error'
+                                          : stream.cameraType === 'webcam'
+                                            ? 'Webcam'
+                                            : `RTSP: ${stream.streamUrl}`}
+                                      </div>
                                     </div>
-                                    <div className="text-[0.65rem] text-text-secondary truncate mt-0.5">
-                                      {stream.status === 'Error'
-                                        ? 'Camera connection error'
-                                        : stream.cameraType === 'webcam'
-                                          ? 'Webcam'
-                                          : `RTSP: ${stream.streamUrl}`}
-                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    {/* Toggle Monitoring Button */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleToggleStreamMonitoring(
+                                          stream.streamId,
+                                          stream.trackingEnabled
+                                        );
+                                      }}
+                                      className={`btn ${
+                                        stream.trackingEnabled && isStreamOnline
+                                          ? 'btn-primary'
+                                          : 'btn-secondary'
+                                      } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
+                                      disabled={!isStreamOnline}
+                                    >
+                                      {stream.trackingEnabled && isStreamOnline ? (
+                                        <>
+                                          <Activity size={10} /> Disable Tracking
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Camera size={10} /> Enable Tracking
+                                        </>
+                                      )}
+                                    </button>
+
+                                    {/* Settings Button */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedStreamId(stream.streamId);
+                                        setSelectedDeviceId(dev.deviceId);
+                                        setShowConfigDialog(true);
+                                      }}
+                                      className="btn p-1 bg-transparent text-text-muted hover:text-primary border-none shrink-0 transition-colors duration-200"
+                                      title="Configure Stream"
+                                    >
+                                      <Settings size={12} />
+                                    </button>
+
+                                    {/* Delete Button */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteStream(stream.streamId, e);
+                                      }}
+                                      className="btn p-1 bg-transparent text-text-muted hover:text-danger border-none shrink-0"
+                                      title="Delete Stream"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-1">
-                                  {/* Toggle Monitoring Button */}
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleToggleStreamMonitoring(
-                                        stream.streamId,
-                                        stream.trackingEnabled
-                                      );
-                                    }}
-                                    className={`btn ${stream.trackingEnabled && isStreamOnline
-                                      ? 'btn-primary'
-                                      : 'btn-secondary'
-                                      } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
-                                    disabled={!isStreamOnline}
-                                  >
-                                    {stream.trackingEnabled && isStreamOnline ? (
-                                      <>
-                                        <Activity size={10} /> Disable Tracking
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Camera size={10} /> Enable Tracking
-                                      </>
+                                {/* Inline RTSP Operations */}
+                                {stream.cameraType === 'rtsp' && isSelected && (
+                                  <div className="flex flex-col gap-2.5 p-3 rounded-lg border border-border-glass bg-[rgba(124,58,237,0.03)] ml-2 mb-1.5">
+                                    <div
+                                      className="text-[0.7rem] text-text-secondary truncate font-mono bg-[rgba(0,0,0,0.20)] px-2 py-1 rounded border border-[rgba(255,255,255,0.04)] select-all cursor-pointer"
+                                      title="Double click to select all"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {stream.streamUrl}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleOpenInVlc(stream.streamUrl);
+                                        }}
+                                        className="btn btn-primary py-1 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1 font-semibold cursor-pointer"
+                                      >
+                                        <ExternalLink size={11} /> Open in VLC
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleCopyRtspUrl(stream.streamUrl);
+                                        }}
+                                        className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1 cursor-pointer"
+                                      >
+                                        <Copy size={11} /> Copy URL
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleCopyMacVlcCommand(stream.streamUrl);
+                                        }}
+                                        className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1 col-span-2 cursor-pointer"
+                                      >
+                                        <Terminal size={11} /> Copy macOS Terminal Command
+                                      </button>
+                                    </div>
+
+                                    {vlcLaunchHint === 'opened' && (
+                                      <p className="text-[0.7rem] text-emerald-400 font-medium leading-normal">
+                                        VLC should be opening. If not, copy the RTSP URL or terminal command.
+                                      </p>
                                     )}
-                                  </button>
 
-                                  {/* Settings Button */}
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedStreamId(stream.streamId);
-                                      setSelectedDeviceId(dev.deviceId);
-                                      setShowConfigDialog(true);
-                                    }}
-                                    className="btn p-1 bg-transparent text-text-muted hover:text-primary border-none shrink-0 transition-colors duration-200"
-                                    title="Configure Stream"
-                                  >
-                                    <Settings size={12} />
-                                  </button>
+                                    {vlcLaunchHint === 'failed' && (
+                                      <div className="text-left bg-[rgba(245,158,11,0.1)] border border-[rgba(245,158,11,0.35)] rounded p-2.5">
+                                        <p className="text-[0.75rem] font-semibold text-amber-300">
+                                          Browser could not open vlc://
+                                        </p>
+                                        <p className="text-[0.68rem] text-text-muted mt-1 leading-relaxed">
+                                          Install VLC from{' '}
+                                          <a
+                                            href="https://www.videolan.org/vlc/"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[#a78bfa] hover:underline"
+                                          >
+                                            videolan.org
+                                          </a>
+                                          , open it once, or in VLC: Media → Open Network Stream and paste the RTSP URL.
+                                        </p>
+                                      </div>
+                                    )}
 
-                                  {/* Delete Button */}
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteStream(stream.streamId, e);
-                                    }}
-                                    className="btn p-1 bg-transparent text-text-muted hover:text-danger border-none shrink-0"
-                                    title="Delete Stream"
-                                  >
-                                    <Trash2 size={12} />
-                                  </button>
-                                </div>
+                                    <p className="text-[0.65rem] text-text-muted leading-relaxed">
+                                      Live preview is not supported in-browser for RTSP. Open in VLC to watch live.
+                                    </p>
+                                  </div>
+                                )}
                               </div>
                             );
                           })
@@ -1363,12 +1453,12 @@ export default function DashboardApp() {
           </div>
 
           {/* CAMERA FEED */}
-          {(liveFeedOpen || selectedStreamId) && (
+          {(liveFeedOpen || selectedStreamId) && !usesRtspExternal && (
           <div className="glass-panel p-5 relative">
             <div className={`flex justify-between items-center gap-2 flex-wrap ${liveFeedOpen ? 'mb-4' : ''}`}>
               <h2 className="text-[1.1rem] flex items-center gap-2">
                 <Video size={18} color="var(--color-secondary)" />
-                {usesWebPreview ? 'Live Camera Feed' : usesRtspExternal ? 'RTSP Stream' : 'Camera Stream'}
+                {usesWebPreview ? 'Live Camera Feed' : 'Camera Stream'}
               </h2>
               <div className="flex items-center gap-2 flex-wrap">
                 {liveFeedOpen && status === 'Error' && (
@@ -1412,8 +1502,8 @@ export default function DashboardApp() {
                     disabled={!selectedStream}
                     className="btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5"
                   >
-                    {usesWebPreview ? <Play size={12} /> : <ExternalLink size={12} />}
-                    {usesWebPreview ? 'Open Feed' : usesRtspExternal ? 'Open in VLC' : 'Open Panel'}
+                    <Play size={12} />
+                    Open Feed
                   </button>
                 )}
               </div>
@@ -1423,99 +1513,7 @@ export default function DashboardApp() {
             <div className={`bg-[#090d16] rounded-xl w-full relative border border-[rgba(255,255,255,0.05)] ${activeStreamError && !liveFrame && usesWebPreview ? 'min-h-0' : 'min-h-[200px] overflow-hidden'}`}>
 
               {selectedStreamId && status !== 'Offline' ? (
-                usesRtspExternal ? (
-                  <div className="w-full p-4 sm:p-6 min-h-[200px] flex flex-col items-center justify-center text-center">
-                    <div className="bg-[rgba(124,58,237,0.12)] p-3 rounded-xl mb-4">
-                      <ExternalLink size={28} className="text-[#a78bfa]" />
-                    </div>
-                    <p className="text-[0.95rem] font-semibold text-text-primary">
-                      Watch live in VLC
-                    </p>
-                    <p className="text-[0.78rem] text-text-muted mt-2 max-w-md leading-relaxed">
-                      Click Open in VLC once. If your browser cannot launch VLC, copy the URL or use
-                      the macOS Terminal command below.
-                    </p>
-                    {vlcLaunchHint === 'opened' && (
-                      <p className="text-[0.75rem] text-emerald-400 mt-3">
-                        VLC should be opening. If not, use Copy RTSP URL or the Terminal command.
-                      </p>
-                    )}
-                    {vlcLaunchHint === 'failed' && (
-                      <div className="w-full mt-3 text-left bg-[rgba(245,158,11,0.1)] border border-[rgba(245,158,11,0.35)] rounded-xl p-3 max-w-lg">
-                        <p className="text-[0.8rem] font-semibold text-amber-300">
-                          Browser could not open vlc://
-                        </p>
-                        <p className="text-[0.75rem] text-text-muted mt-1 leading-relaxed">
-                          Install VLC from{' '}
-                          <a
-                            href="https://www.videolan.org/vlc/"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[#a78bfa] hover:underline"
-                          >
-                            videolan.org
-                          </a>
-                          , open the app once, then retry. Or in VLC:{' '}
-                          <span className="text-text-primary">Media → Open Network Stream</span> and paste
-                          the RTSP URL (already copied if you clicked Open in VLC).
-                        </p>
-                      </div>
-                    )}
-                    {selectedStream?.streamUrl && (
-                      <p className="text-[0.7rem] text-text-muted mt-3 break-all max-w-lg font-mono bg-[rgba(0,0,0,0.35)] rounded-lg px-3 py-2 border border-[rgba(255,255,255,0.06)]">
-                        {selectedStream.streamUrl}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
-                      <button
-                        type="button"
-                        onClick={() => void handleOpenInVlc()}
-                        className="btn btn-primary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                      >
-                        <ExternalLink size={12} />
-                        Open in VLC
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyRtspUrl()}
-                        className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                      >
-                        <Copy size={12} />
-                        Copy RTSP URL
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyMacVlcCommand()}
-                        className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                      >
-                        <Terminal size={12} />
-                        Copy macOS command
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowConfigDialog(true)}
-                        className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                      >
-                        <Settings size={12} />
-                        Stream Settings
-                      </button>
-                    </div>
-                    {activeStreamError && (
-                      <div className="w-full mt-5 text-left bg-[rgba(244,63,94,0.08)] border border-[rgba(244,63,94,0.35)] rounded-xl p-4">
-                        <p className="text-[0.85rem] font-semibold text-danger">
-                          {getStreamErrorTitle(activeStreamError.errorType)}
-                        </p>
-                        <p className="text-[0.78rem] text-text-muted mt-2 leading-relaxed">
-                          {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
-                        </p>
-                      </div>
-                    )}
-                    <p className="text-[0.72rem] text-text-muted mt-4 max-w-md">
-                      Motion detection and clip recording still run on the edge device. This panel only
-                      replaces the in-browser preview.
-                    </p>
-                  </div>
-                ) : usesExternalView ? (
+                usesExternalView ? (
                   <div className="w-full p-4 sm:p-6 min-h-[200px] flex flex-col items-center justify-center text-center">
                     <div className="bg-[rgba(124,58,237,0.12)] p-3 rounded-xl mb-4">
                       <Activity size={28} className="text-[#a78bfa]" />
