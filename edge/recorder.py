@@ -288,6 +288,7 @@ def upload_clip(
     frame_width: Optional[int] = None,
     frame_height: Optional[int] = None,
     clip_start_ms: Optional[int] = None,
+    reid_profiles: Optional[list] = None,
 ):
     url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/upload"
     metadata: dict = {"filename": filename}
@@ -303,6 +304,8 @@ def upload_clip(
         metadata["frameHeight"] = frame_height
     if clip_start_ms is not None:
         metadata["clipStartMs"] = clip_start_ms
+    if reid_profiles:
+        metadata["reidProfiles"] = reid_profiles
 
     with open(filepath, "rb") as handle:
         response = requests.post(

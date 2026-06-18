@@ -35,6 +35,8 @@ import { extractYoloPreviewCrops } from './services/yoloCropExtract';
 import { analyzeVehicleAppearancesFromClip, mergeAppearanceMaps } from './services/cropAppearance';
 import { backfillDetectionClipLinks, linkDetectionsToClip } from './services/clipLink';
 import { resolveCropImageBuffer } from './services/cropResolve';
+import { resolveClipForDetection } from './services/reidClipResolve';
+import { extractCropFromClip } from './services/reidClipExtract';
 import { registerEdgeFileFetcher } from './services/edgeFileFetch';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import prisma from './services/db';
@@ -305,8 +307,8 @@ async function pushDeviceConfigure(deviceId: string) {
 registerOnStreamsUpdated(pushDeviceConfigure);
 registerOnDeviceConfigUpdated(pushDeviceConfigure);
 
-registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight) => {
-  await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight);
+registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight, reidProfiles) => {
+  await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight, reidProfiles);
 });
 
 registerOnClipDeleted((deviceId, filename) => {
@@ -419,6 +421,41 @@ app.get('/api/crops/:filename', async (req, res) => {
         res.setHeader('Content-Type', 'image/jpeg');
         return res.sendFile(localPath);
       }
+      
+      // Parse crop filename: crop_{timestampMs}_{deviceId}_{trackId}.jpg
+      const match = filename.match(/^crop_(\d+)_([^_]+)_(\d+)\.jpg$/);
+      if (match) {
+        const timestampMs = parseInt(match[1], 10);
+        const deviceId = match[2];
+        const trackId = parseInt(match[3], 10);
+        
+        try {
+          const resolved = await resolveClipForDetection(undefined, new Date(timestampMs), filename, deviceId);
+          if (resolved) {
+            const clip = await prisma.videoClip.findFirst({ where: { filename: resolved.clipFilename } });
+            if (clip) {
+              const detectedObjects = (clip.detectedObjects || []) as any[];
+              const obj = detectedObjects.find((o) => o.trackId === trackId);
+              if (obj && obj.bbox) {
+                await extractCropFromClip(
+                  clip.filepath,
+                  resolved.clipOffsetMs,
+                  obj.bbox,
+                  localPath,
+                  undefined,
+                  undefined
+                );
+                if (fs.existsSync(localPath)) {
+                  res.setHeader('Content-Type', 'image/jpeg');
+                  return res.sendFile(localPath);
+                }
+              }
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[Crop Fallback] Failed lazy crop extraction for ${filename}:`, err.message);
+        }
+      }
       return res.status(404).json({ error: `Crop metadata not found for ${filename}` });
     }
 
@@ -449,7 +486,23 @@ async function processVideoClipInBackground(
   trackEvents: ReidTrackEvent[] = [],
   frameWidth?: number,
   frameHeight?: number,
+  reidProfiles?: any[],
 ) {
+  // Merge ReID profiles/embeddings into trackEvents
+  if (Array.isArray(reidProfiles) && reidProfiles.length > 0) {
+    const profileByTrackId = new Map<number, any>();
+    for (const p of reidProfiles) {
+      if (p && typeof p.trackId === 'number') {
+        profileByTrackId.set(p.trackId, p);
+      }
+    }
+    for (const event of trackEvents) {
+      const p = profileByTrackId.get(event.trackId);
+      if (p && Array.isArray(p.embedding)) {
+        event.embedding = p.embedding;
+      }
+    }
+  }
   const stream = await prisma.cameraStream.findUnique({
     where: { streamId }
   });

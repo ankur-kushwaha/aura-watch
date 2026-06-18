@@ -3,7 +3,7 @@ import Busboy from 'busboy';
 import prisma from '../services/db';
 import * as fs from 'fs';
 import * as path from 'path';
-import { handleCropUpload, ReidTrackEvent } from './reid';
+import { ReidTrackEvent } from './reid';
 import { sendDeviceCommand } from '../services/deviceCommands';
 import { getEffectiveDeviceStatus } from '../services/deviceStatus';
 import { assertDeviceInOrg } from '../services/orgScope';
@@ -47,6 +47,7 @@ interface ClipUploadMeta {
   frameHeight?: number;
   clipStartMs?: number;
   trackEvents?: ReidTrackEvent[];
+  reidProfiles?: any[];
 }
 
 function finishClipUpload(
@@ -75,6 +76,7 @@ function finishClipUpload(
       trackEvents,
       meta.frameWidth,
       meta.frameHeight,
+      meta.reidProfiles,
     ).catch((err) => console.error(`[Cloud Hub] Error processing uploaded clip ${filename}:`, err));
   }
 }
@@ -223,6 +225,7 @@ export type ClipUploadCallback = (
   trackEvents: ReidTrackEvent[],
   frameWidth?: number,
   frameHeight?: number,
+  reidProfiles?: any[],
 ) => Promise<void>;
 
 let onClipUploadedCallback: ClipUploadCallback | null = null;
@@ -613,11 +616,7 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
   }
 });
 
-/**
- * POST /api/devices/:deviceId/reid/crop
- * Edge device uploads a cropped person JPEG frame
- */
-router.post('/:deviceId/reid/crop', handleCropUpload);
+
 
 /**
  * POST /api/devices/:deviceId/command/reboot

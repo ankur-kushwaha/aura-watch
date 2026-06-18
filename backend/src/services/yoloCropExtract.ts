@@ -50,25 +50,6 @@ export async function extractYoloPreviewCrops(
     const cropFilename = yoloCropFilename(clipStartMs, deviceId, trackId, event.offsetMs);
     const cropPath = path.join(CROPS_DIR, cropFilename);
 
-    if (!cropExistsLocally(cropFilename)) {
-      try {
-        await extractCropFromClip(
-          clipPath,
-          event.offsetMs,
-          event.bbox,
-          cropPath,
-          frameWidth,
-          frameHeight,
-        );
-      } catch (err: any) {
-        console.warn(
-          `[YoloCrop] Failed to extract preview crop for track ${trackId} @ ${event.offsetMs}ms:`,
-          err.message,
-        );
-        continue;
-      }
-    }
-
     result.set(trackId, {
       cropFilename,
       clipOffsetMs: event.offsetMs,

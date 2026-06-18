@@ -14,16 +14,14 @@ function generateEdgeEmbedding(imagePath: string): number[] {
       ? path.join(edgeDir, '.venv/bin/python')
       : 'python3');
 
-  const script = `
-import json, sys
-sys.path.insert(0, ${JSON.stringify(edgeDir)})
-from reid_embedder import ReidEmbedder
-embedding = ReidEmbedder().generate_from_path(${JSON.stringify(imagePath)})
-print(json.dumps(embedding))
-`;
+  const script = `import json, sys; sys.path.insert(0, ${JSON.stringify(edgeDir)}); from reid_embedder import ReidEmbedder; print("EMB_START" + json.dumps(ReidEmbedder().generate_from_path(${JSON.stringify(imagePath)})) + "EMB_END")`;
 
   const output = execSync(`${edgePython} -c ${JSON.stringify(script)}`, { encoding: 'utf8' }).trim();
-  const embedding = JSON.parse(output);
+  const match = output.match(/EMB_START([\s\S]*?)EMB_END/);
+  if (!match) {
+    throw new Error(`Could not find embedding in python output: ${output}`);
+  }
+  const embedding = JSON.parse(match[1]);
   if (!Array.isArray(embedding) || embedding.length !== 512) {
     throw new Error(`Edge embedder returned invalid embedding: ${output.slice(0, 120)}`);
   }

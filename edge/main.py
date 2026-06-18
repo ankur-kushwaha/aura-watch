@@ -10,7 +10,6 @@ import platform
 import queue
 import shutil
 import signal
-import struct
 import subprocess
 import sys
 import threading
@@ -248,7 +247,6 @@ class EdgeAgent:
             )
 
         os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
-        os.makedirs(LOCAL_CROPS_DIR, exist_ok=True)
         os.makedirs(LOCAL_CLIPS_DIR, exist_ok=True)
         os.makedirs(os.path.join(BASE_DIR, "storage"), exist_ok=True)
 
@@ -1009,69 +1007,6 @@ class EdgeAgent:
             elif p_data.get("preview_stalled"):
                 p_data["preview_stalled"] = False
                 self._ws_send({"type": "preview_resumed", "streamId": stream_id})
-
-    def _encode_reid_embedding(self, embedding: list[float]) -> str:
-        return base64.b64encode(struct.pack(f"{len(embedding)}f", *embedding)).decode("ascii")
-
-    def _upload_reid_crop(
-        self,
-        stream_id: str,
-        crop_jpeg: bytes,
-        track_id: int,
-        confidence: float,
-        bbox: tuple[int, int, int, int],
-        class_name: str = "person",
-        embedding: list[float] | None = None,
-        *,
-        timestamp_ms: int | None = None,
-    ):
-        url = f"{CLOUD_URL.rstrip('/')}/api/devices/{self.device_id}/reid/crop"
-        bbox_str = ",".join(map(str, bbox))
-        timestamp_ms = timestamp_ms if timestamp_ms is not None else int(time.time() * 1000)
-        filename = f"crop_{timestamp_ms}_{self.device_id}_{track_id}.jpg"
-        local_path = os.path.join(LOCAL_CROPS_DIR, filename)
-        try:
-            with open(local_path, "wb") as handle:
-                handle.write(crop_jpeg)
-        except Exception as exc:
-            self.send_log(f"[ReID Error] Failed to save local crop {filename}: {exc}")
-
-        if embedding is None:
-            try:
-                embedding = self.reid_embedder.generate_from_jpeg_bytes(crop_jpeg)
-            except Exception as exc:
-                self.send_log(f"[ReID Error] Skipping crop upload for track {track_id}: {exc}")
-                return
-
-        if len(embedding) != 512:
-            self.send_log(
-                f"[ReID Error] Skipping crop upload for track {track_id}: "
-                f"expected 512-dim embedding, got {len(embedding)}"
-            )
-            return
-
-        encoded_embedding = self._encode_reid_embedding(embedding)
-        try:
-            response = requests.post(
-                url,
-                files={"image": (filename, crop_jpeg, "image/jpeg")},
-                data={
-                    "embedding": encoded_embedding,
-                    "trackId": str(track_id),
-                    "confidence": f"{confidence:.4f}",
-                    "bbox": bbox_str,
-                    "timestamp": str(timestamp_ms),
-                    "className": class_name,
-                    "streamId": stream_id,
-                },
-                timeout=30,
-            )
-            if response.status_code >= 200 and response.status_code < 300:
-                self.send_log(f"Successfully uploaded ReID crop for track {track_id} on stream {stream_id}")
-            else:
-                self.send_log(f"[ReID Error] Upload failed ({response.status_code}): {response.text}")
-        except Exception as exc:
-            self.send_log(f"[ReID Error] Upload exception: {exc}")
 
     def _get_stream_tracker(self, stream_id: str) -> YoloByteTracker:
         p_data = self.pipelines.get(stream_id)

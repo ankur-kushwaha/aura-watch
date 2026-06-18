@@ -223,31 +223,13 @@ export async function processReidTrackEventsFromClip(
             frameHeight: frameHeight ?? existingDetection.frameHeight,
           },
         });
-        if (fs.existsSync(cropPath)) {
-          appearances.set(
-            event.trackId,
-            await analyzeTrackAppearance(event.className || 'person', event.bbox, cropPath),
-          );
-        }
+        const appearance = event.appearance || (fs.existsSync(cropPath) ? await analyzeTrackAppearance(event.className || 'person', event.bbox, cropPath) : await analyzeTrackAppearance(event.className || 'person', event.bbox, undefined));
+        appearances.set(event.trackId, appearance);
         succeeded++;
         console.log(
           `[ReID Router] Linked edge-uploaded crop to clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
         );
         continue;
-      }
-
-      if (!fs.existsSync(cropPath)) {
-        await extractCropFromClip(
-          clipPath,
-          event.offsetMs,
-          event.bbox,
-          cropPath,
-          frameWidth,
-          frameHeight,
-        );
-        console.log(
-          `[ReID Router] Extracted ReID crop from clip for device ${deviceId}, track ${event.trackId} @ ${event.offsetMs}ms`,
-        );
       }
 
       const embedding = normalizeReidEmbedding(event.embedding);
@@ -273,10 +255,8 @@ export async function processReidTrackEventsFromClip(
         frameWidth,
         frameHeight,
       });
-      appearances.set(
-        event.trackId,
-        await analyzeTrackAppearance(event.className || 'person', event.bbox, cropPath),
-      );
+      const appearance = event.appearance || await analyzeTrackAppearance(event.className || 'person', event.bbox, undefined);
+      appearances.set(event.trackId, appearance);
       succeeded++;
     } catch (err: any) {
       failures.push({ trackId: event.trackId, error: err.message });
@@ -460,7 +440,6 @@ export async function handleCropUpload(req: Request, res: Response) {
   });
 }
 
-router.post('/devices/:deviceId/crop', handleCropUpload);
 
 /**
  * GET /api/reid/detections

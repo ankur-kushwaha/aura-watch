@@ -3,14 +3,11 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import shutil
-import struct
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
 import requests
@@ -28,7 +25,6 @@ from yolo_tracker import YoloByteTracker
 
 CLOUD_URL = os.getenv("CLOUD_URL", "https://aura-watch.adboardtools.com").rstrip("/")
 LOCAL_VIDEO_DIR = os.getenv("LOCAL_VIDEO_DIR", os.path.join(BASE_DIR, "storage", "temp_clips"))
-LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage", "crops"))
 LOCAL_CLIPS_DIR = os.path.join(BASE_DIR, "storage", "clips")
 LOCAL_FAILED_DIR = os.path.join(BASE_DIR, "storage", "failed")
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
@@ -100,116 +96,32 @@ def _cleanup_orphan_temps() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ReID crop upload (single, called in parallel)
+# ReID profile builder — embedding-only, no JPEG, bundled into clip upload
 # ---------------------------------------------------------------------------
 
-def upload_reid_crop(
-    device_id: str,
-    stream_id: str,
-    crop_jpeg: bytes,
-    track_id: int,
-    confidence: float,
-    bbox: tuple[int, int, int, int],
-    class_name: str,
-    embedding: list[float],
-    timestamp_ms: int,
-) -> tuple[bool, str]:
-    """Upload one ReID crop to the cloud. Returns (success, local_crop_path)."""
-    url = f"{CLOUD_URL}/api/devices/{device_id}/reid/crop"
-    bbox_str = ",".join(map(str, bbox))
-    filename = f"crop_{timestamp_ms}_{device_id}_{track_id}.jpg"
-    local_path = os.path.join(LOCAL_CROPS_DIR, filename)
-
-    try:
-        with open(local_path, "wb") as handle:
-            handle.write(crop_jpeg)
-    except Exception as exc:
-        wlog(f"[ReID Error] Failed to save local crop {filename}: {exc}")
-
-    if len(embedding) != 512:
-        wlog(
-            f"[ReID Error] Skipping crop upload for track {track_id}: "
-            f"expected 512-dim embedding, got {len(embedding)}"
-        )
-        return False, local_path
-
-    encoded_embedding = base64.b64encode(struct.pack(f"{len(embedding)}f", *embedding)).decode("ascii")
-    try:
-        response = requests.post(
-            url,
-            files={"image": (filename, crop_jpeg, "image/jpeg")},
-            data={
-                "embedding": encoded_embedding,
-                "trackId": str(track_id),
-                "confidence": f"{confidence:.4f}",
-                "bbox": bbox_str,
-                "timestamp": str(timestamp_ms),
-                "className": class_name,
-                "streamId": stream_id,
-            },
-            timeout=30,
-        )
-        if 200 <= response.status_code < 300:
-            wlog(f"Successfully uploaded ReID crop for track {track_id} on stream {stream_id}")
-            return True, local_path
-        else:
-            wlog(f"[ReID Error] Upload failed ({response.status_code}): {response.text}")
-            return False, local_path
-    except Exception as exc:
-        wlog(f"[ReID Error] Upload exception: {exc}")
-        return False, local_path
-
-
-def _upload_reid_crops_parallel(
-    device_id: str,
-    stream_id: str,
-    reid_crops: list,
-    clip_start_ms: int,
-) -> int:
-    """Upload all ReID crops concurrently. Returns number of successful uploads."""
-    if not reid_crops:
-        return 0
-
-    max_workers = min(len(reid_crops), 4)  # cap concurrency; Pi has limited bandwidth
-    uploaded = 0
-    local_paths_to_delete: list[str] = []
-
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="reid-upload") as pool:
-        futures = {
-            pool.submit(
-                upload_reid_crop,
-                device_id=device_id,
-                stream_id=stream_id,
-                crop_jpeg=crop.crop_jpeg,
-                track_id=crop.track_id,
-                confidence=crop.confidence,
-                bbox=crop.bbox,
-                class_name=crop.class_name,
-                embedding=crop.embedding,
-                timestamp_ms=clip_start_ms + crop.offset_ms,
-            ): crop.track_id
-            for crop in reid_crops
+def _build_reid_profiles(reid_crops: list, clip_start_ms: int) -> list[dict]:
+    """Convert ReidCropUpload list → plain dicts suitable for JSON metadata.
+    Only the 512-dim embedding and associated metadata are sent; the JPEG crop
+    bytes are discarded so no separate /reid/crop upload is needed.
+    """
+    profiles = []
+    for crop in reid_crops:
+        if len(crop.embedding) != 512:
+            wlog(
+                f"[ReID Warning] Skipping track {crop.track_id}: "
+                f"expected 512-dim embedding, got {len(crop.embedding)}"
+            )
+            continue
+        profile: dict = {
+            "trackId":    crop.track_id,
+            "className":  crop.class_name,
+            "confidence": round(crop.confidence, 4),
+            "bbox":       ",".join(map(str, crop.bbox)),
+            "timestamp":  clip_start_ms + crop.offset_ms,
+            "embedding":  crop.embedding,   # plain list[float] — ~2 KB per identity
         }
-
-        for future in as_completed(futures):
-            track_id = futures[future]
-            try:
-                success, local_path = future.result()
-                if success:
-                    uploaded += 1
-                    local_paths_to_delete.append(local_path)
-            except Exception as exc:
-                wlog(f"[ReID Error] Unexpected error uploading crop for track {track_id}: {exc}")
-
-    # Clean up local crop files whose cloud upload succeeded
-    for path in local_paths_to_delete:
-        try:
-            if os.path.exists(path):
-                os.unlink(path)
-        except OSError:
-            pass  # Non-fatal — crops/ cleanup is best-effort
-
-    return uploaded
+        profiles.append(profile)
+    return profiles
 
 
 # ---------------------------------------------------------------------------
@@ -362,13 +274,13 @@ def process_single_job(
     )
     clip_start_ms = job["timestamp_ms"] - preroll_ms
 
-    # Upload ReID crops in parallel
-    reid_uploaded = _upload_reid_crops_parallel(device_id, stream_id, clip_result.reid_crops, clip_start_ms)
+    # Build lightweight reid profiles (embedding + metadata only, no JPEG)
+    reid_profiles = _build_reid_profiles(clip_result.reid_crops, clip_start_ms)
 
     reid_event_count = sum(1 for event in track_events if event.get("kind") == "reid")
     wlog(
-        f"[{stream_id}] Clip analysis: {reid_event_count} ReID profile(s), "
-        f"{len(track_events)} total track event(s), {reid_uploaded} crop(s) uploaded."
+        f"[{stream_id}] Clip analysis: {reid_event_count} ReID profile(s) bundled, "
+        f"{len(track_events)} total track event(s)."
     )
 
     # Move clip to persistent LOCAL_CLIPS_DIR before uploading
@@ -397,6 +309,7 @@ def process_single_job(
             frame_width=job.get("width"),
             frame_height=job.get("height"),
             clip_start_ms=clip_start_ms,
+            reid_profiles=reid_profiles,
         )
         wlog(f"[{stream_id}] Successfully uploaded clip to Cloud: {filename}")
 
@@ -422,7 +335,6 @@ def process_single_job(
 def main() -> None:
     wlog("[Worker] Starting edge clip processing worker process...")
     os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
-    os.makedirs(LOCAL_CROPS_DIR, exist_ok=True)
     os.makedirs(LOCAL_CLIPS_DIR, exist_ok=True)
 
     device_id = load_device_id()
