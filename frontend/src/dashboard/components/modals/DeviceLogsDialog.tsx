@@ -17,7 +17,19 @@ function severityClass(severity: string): string {
   return 'text-emerald-300';
 }
 
-export function DeviceLogsDialog({ device, onClose, registerLiveLogSink, registerLiveEventSink }: DeviceLogsDialogProps) {
+interface DeviceLogsPanelProps {
+  device: { deviceId: string; name: string };
+  onClose: () => void;
+  registerLiveLogSink?: (sink: ((entry: LogEntry) => void) | null) => void;
+  registerLiveEventSink?: (sink: ((event: DeviceEvent) => void) | null) => void;
+}
+
+function DeviceLogsPanel({
+  device,
+  onClose,
+  registerLiveLogSink,
+  registerLiveEventSink,
+}: DeviceLogsPanelProps) {
   const [journalLogs, setJournalLogs] = useState('');
   const [loadingJournal, setLoadingJournal] = useState(false);
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
@@ -67,18 +79,14 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink, registe
   }, [fetchJournalLogs, fetchSavedEvents]);
 
   useEffect(() => {
-    if (!device) {
-      setJournalLogs('');
-      setLiveLogs([]);
-      setSavedEvents([]);
-      registerLiveLogSink?.(null);
-      registerLiveEventSink?.(null);
-      return;
-    }
+    const deviceId = device.deviceId;
+    const timer = window.setTimeout(() => {
+      void refreshAll(deviceId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [device.deviceId, refreshAll]);
 
-    setLiveLogs([]);
-    void refreshAll(device.deviceId);
-
+  useEffect(() => {
     registerLiveLogSink?.((entry) => {
       setLiveLogs((prev) => {
         const last = prev[prev.length - 1];
@@ -102,7 +110,7 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink, registe
       registerLiveLogSink?.(null);
       registerLiveEventSink?.(null);
     };
-  }, [device, refreshAll, registerLiveLogSink, registerLiveEventSink]);
+  }, [device.deviceId, registerLiveLogSink, registerLiveEventSink]);
 
   useEffect(() => {
     if (logsContainerRef.current) {
@@ -117,107 +125,123 @@ export function DeviceLogsDialog({ device, onClose, registerLiveLogSink, registe
   }, [savedEvents]);
 
   return (
+    <>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
+            <ScrollText size={18} color="var(--color-primary)" />
+          </div>
+          <div>
+            <DialogTitle>Device Logs — {device.name}</DialogTitle>
+            <p className="text-[0.72rem] text-text-muted mt-0.5">{device.deviceId}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void refreshAll(device.deviceId)}
+            disabled={loadingJournal || loadingEvents}
+            className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
+          >
+            <RefreshCw size={12} className={loadingJournal || loadingEvents ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="h-px bg-[rgba(255,255,255,0.07)]" />
+
+      <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
+        <div>
+          <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">
+            Saved Device Events (90 days)
+          </h3>
+          <div
+            ref={eventsContainerRef}
+            className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] flex-1 min-h-[140px] max-h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+          >
+            {loadingEvents ? (
+              <span className="text-text-muted">Loading saved events...</span>
+            ) : savedEvents.length === 0 ? (
+              <span className="text-text-muted">
+                No saved events yet. Camera issues, software updates, and connectivity events are recorded here automatically.
+              </span>
+            ) : (
+              savedEvents.map((event) => (
+                <div key={event.id} className="mb-2 pb-2 border-b border-[rgba(255,255,255,0.04)] last:border-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                    <span className="text-text-muted">
+                      [{new Date(event.createdAt).toLocaleString()}]
+                    </span>
+                    <span className={`uppercase text-[0.65rem] tracking-wide ${severityClass(event.severity)}`}>
+                      {event.severity}
+                    </span>
+                    <span className="text-[0.65rem] text-text-muted">{event.category}</span>
+                    <span className="text-[0.65rem] text-text-muted">{event.eventType}</span>
+                  </div>
+                  <span className={severityClass(event.severity)}>{event.message}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Service Journal + agent.log</h3>
+          <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] h-[140px] overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
+            {loadingJournal ? (
+              <span className="text-text-muted">Loading journal logs...</span>
+            ) : journalLogs ? (
+              journalLogs
+            ) : (
+              <span className="text-text-muted">No journal logs available.</span>
+            )}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex flex-col">
+          <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Live Agent Logs</h3>
+          <div
+            ref={logsContainerRef}
+            className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#38bdf8] flex-1 min-h-[120px] max-h-[160px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
+          >
+            {liveLogs.length === 0 ? (
+              <span className="text-text-muted">Waiting for live log events from device...</span>
+            ) : (
+              liveLogs.map((log, index) => (
+                <div key={index} className="mb-1">
+                  <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                  <span>{log.message}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+export function DeviceLogsDialog({ device, onClose, registerLiveLogSink, registerLiveEventSink }: DeviceLogsDialogProps) {
+  return (
     <Dialog open={!!device} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-[720px] p-6 flex flex-col gap-4 max-h-[85vh]">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
-              <ScrollText size={18} color="var(--color-primary)" />
-            </div>
-            <div>
-              <DialogTitle>Device Logs — {device?.name}</DialogTitle>
-              <p className="text-[0.72rem] text-text-muted mt-0.5">{device?.deviceId}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => device && void refreshAll(device.deviceId)}
-              disabled={loadingJournal || loadingEvents}
-              className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
-            >
-              <RefreshCw size={12} className={loadingJournal || loadingEvents ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn p-1.5 bg-transparent text-text-muted hover:text-text-primary border-none rounded-lg hover:bg-[rgba(255,255,255,0.06)]"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-
-        <div className="h-px bg-[rgba(255,255,255,0.07)]" />
-
-        <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
-          <div>
-            <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">
-              Saved Device Events (90 days)
-            </h3>
-            <div
-              ref={eventsContainerRef}
-              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] flex-1 min-h-[140px] max-h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
-            >
-              {loadingEvents ? (
-                <span className="text-text-muted">Loading saved events...</span>
-              ) : savedEvents.length === 0 ? (
-                <span className="text-text-muted">
-                  No saved events yet. Camera issues, software updates, and connectivity events are recorded here automatically.
-                </span>
-              ) : (
-                savedEvents.map((event) => (
-                  <div key={event.id} className="mb-2 pb-2 border-b border-[rgba(255,255,255,0.04)] last:border-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                      <span className="text-text-muted">
-                        [{new Date(event.createdAt).toLocaleString()}]
-                      </span>
-                      <span className={`uppercase text-[0.65rem] tracking-wide ${severityClass(event.severity)}`}>
-                        {event.severity}
-                      </span>
-                      <span className="text-[0.65rem] text-text-muted">{event.category}</span>
-                      <span className="text-[0.65rem] text-text-muted">{event.eventType}</span>
-                    </div>
-                    <span className={severityClass(event.severity)}>{event.message}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Service Journal + agent.log</h3>
-            <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] h-[140px] overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
-              {loadingJournal ? (
-                <span className="text-text-muted">Loading journal logs...</span>
-              ) : journalLogs ? (
-                journalLogs
-              ) : (
-                <span className="text-text-muted">No journal logs available.</span>
-              )}
-            </div>
-          </div>
-
-          <div className="min-h-0 flex flex-col">
-            <h3 className="text-[0.8rem] font-semibold text-text-secondary mb-2">Live Agent Logs</h3>
-            <div
-              ref={logsContainerRef}
-              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#38bdf8] flex-1 min-h-[120px] max-h-[160px] overflow-y-auto border border-[rgba(255,255,255,0.05)]"
-            >
-              {liveLogs.length === 0 ? (
-                <span className="text-text-muted">Waiting for live log events from device...</span>
-              ) : (
-                liveLogs.map((log, index) => (
-                  <div key={index} className="mb-1">
-                    <span className="text-text-muted mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                    <span>{log.message}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
+        {device ? (
+          <DeviceLogsPanel
+            key={device.deviceId}
+            device={device}
+            onClose={onClose}
+            registerLiveLogSink={registerLiveLogSink}
+            registerLiveEventSink={registerLiveEventSink}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );

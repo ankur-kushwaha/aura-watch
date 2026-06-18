@@ -139,6 +139,14 @@ export default function DashboardApp() {
   const deviceLogSinkRef = useRef<((entry: LogEntry) => void) | null>(null);
   const deviceEventSinkRef = useRef<((event: DeviceEvent) => void) | null>(null);
 
+  const registerDeviceLogSink = useCallback((sink: ((entry: LogEntry) => void) | null) => {
+    deviceLogSinkRef.current = sink;
+  }, []);
+
+  const registerDeviceEventSink = useCallback((sink: ((event: DeviceEvent) => void) | null) => {
+    deviceEventSinkRef.current = sink;
+  }, []);
+
   useEffect(() => {
     deviceLogsDeviceRef.current = deviceLogsDevice;
   }, [deviceLogsDevice]);
@@ -1779,8 +1787,8 @@ export default function DashboardApp() {
       <DeviceLogsDialog
         device={deviceLogsDevice}
         onClose={closeDeviceLogsModal}
-        registerLiveLogSink={(sink) => { deviceLogSinkRef.current = sink; }}
-        registerLiveEventSink={(sink) => { deviceEventSinkRef.current = sink; }}
+        registerLiveLogSink={registerDeviceLogSink}
+        registerLiveEventSink={registerDeviceEventSink}
       />
 
       <DeviceMetricsDialog
