@@ -16,66 +16,10 @@ import {
   Network,
   Search,
   Shield,
-  Sparkles,
   Zap,
 } from 'lucide-react';
 
-const SCREENSHOTS = [
-  {
-    src: '/screenshots/dashboard-archive.png',
-    alt: 'Aura Watch AI dashboard with live feed, event archive, video playback, and Ask Camera AI',
-    label: 'Monitor & investigate',
-    title: 'Live feeds and AI search in one place',
-    description:
-      'Watch cameras in real time, browse motion clips with AI summaries, and ask questions about your footage—all without leaving the dashboard.',
-  },
-  
-];
 
-const CORE_VALUES = [
-  {
-    id: 'monitoring',
-    icon: LayoutGrid,
-    tag: 'Active monitoring using AI',
-    title: 'Watch every camera, live',
-    description:
-      'All your feeds—webcams, RTSP, Pi, Jetson—in one dashboard. Real-time streams, device status, and motion-triggered recordings. Built on a live event pipeline ready for proactive alerts when something matters.',
-    highlights: [
-      'Multi-camera live view with status overlays',
-      'Motion-triggered clips—not 24/7 waste',
-      'Proactive alert rules on a real-time pipeline',
-    ],
-    accent: 'primary' as const,
-  },
-  {
-    id: 'tracking',
-    icon: Fingerprint,
-    tag: 'Multi-Camera Tracking',
-    title: 'Trace paths & know whereabouts',
-    description:
-      'Identify and track people seamlessly across your camera network. Connect feeds to build a unified movement timeline, detect suspicious loitering, and locate specific individuals instantly across different rooms or zones.',
-    highlights: [
-      'Multi-camera person re-identification (Re-ID)',
-      'Chronological path mapping and timelines',
-      'Real-time alerts for suspicious whereabouts',
-    ],
-    accent: 'primary' as const,
-  },
-  {
-    id: 'ask-ai',
-    icon: MessageSquare,
-    tag: 'Ask Camera AI',
-    title: 'Ask your cameras what happened',
-    description:
-      'Every clip gets an AI summary and is searchable by meaning. Skip the scrubbing—type a question in plain English and get cited footage back with proof.',
-    highlights: [
-      'Natural language search across all events',
-      'AI-written summaries for every clip',
-      'Cited video answers—not guesses',
-    ],
-    accent: 'secondary' as const,
-  },
-];
 
 const ASK_AI_EXAMPLES = [
   'Did anyone walk by carrying a box between 2 PM and 4 PM?',
@@ -265,418 +209,344 @@ function SectionHeader({ label, title, description }: { label: string; title: st
 export default function Landing() {
   useEffect(() => injectStructuredData(landingStructuredData()), []);
 
-  const featuredUseCases = USE_CASES.filter((u) => u.featured);
-  const otherUseCases = USE_CASES.filter((u) => !u.featured);
 
   return (
     <div className="relative">
       {/* Nav */}
       <Header />
 
-      <main>
-      {/* Hero */}
-      <section className="pt-32 pb-16 px-6" aria-labelledby="hero-heading">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/10 bg-white/4 text-[0.8rem] text-text-secondary mb-8 landing-fade-in">
-            <Sparkles size={14} className="text-secondary" />
-            Live Monitoring · Cross-Camera Tracking · Ask Camera AI
-          </div>
+      <main className="relative">
+        {/* Hero Background Image - Full height of browser/viewport, half width on desktop */}
+        <div className="absolute right-0 top-0 h-screen w-full lg:w-1/2 z-0 pointer-events-none select-none overflow-hidden">
+          {/* Ambient Background Glow Spheres */}
+          <div className="absolute top-1/2 left-2/3 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[80%] bg-[radial-gradient(circle,rgba(6,182,212,0.22),transparent_70%)] blur-3xl pointer-events-none z-10" />
+          <div className="absolute top-1/2 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[80%] bg-[radial-gradient(circle,rgba(124,58,237,0.18),transparent_70%)] blur-3xl pointer-events-none z-10" />
 
-          <p className="text-secondary text-[1.125rem] md:text-[1.35rem] font-medium mb-4 landing-fade-in landing-delay-1">
-            Trace whereabouts, watch live, and search with AI.
-          </p>
+          {/* Left-to-right fade gradient for desktop, top-to-bottom for mobile */}
+          <div className="absolute inset-0 bg-gradient-to-b from-bg-dark/10 via-transparent to-bg-dark/30 lg:bg-gradient-to-r lg:from-bg-dark lg:via-bg-dark/10 lg:to-transparent z-20" />
 
-          <h1
-            id="hero-heading"
-            className="text-[2.75rem] md:text-[4rem] font-extrabold leading-[1.08] tracking-tight mb-6 landing-fade-in landing-delay-2"
-          >
-            <span className="text-gradient">Track people across all cameras.</span>
-            <br />
-            <span className="text-gradient-purple">Monitor live and ask Camera AI.</span>
-          </h1>
-
-          <p className="text-text-secondary text-[1.05rem] md:text-[1.15rem] max-w-2xl mx-auto leading-relaxed mb-10 landing-fade-in landing-delay-3">
-            Aura Watch AI gives you three security superpowers: trace a person&apos;s exact whereabouts across disjoint feeds,
-            monitor all cameras live in a single glassmorphism dashboard, and query your footage in plain English.
-          </p>
-
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 landing-fade-in landing-delay-4">
-            <a href="#tracking" className="btn btn-primary text-[1rem] px-7 py-3">
-              Multi-Camera Tracking
-              <Fingerprint size={18} />
-            </a>
-            <a href="#monitoring" className="btn btn-secondary text-[1rem] px-7 py-3">
-              Live Monitoring
-              <Activity size={18} />
-            </a>
-            <a href="#ask-ai" className="btn btn-secondary text-[1rem] px-7 py-3">
-              Ask Camera AI
-              <MessageSquare size={18} />
-            </a>
-          </div>
-        </div>
-      </section>
-
-      {/* Core values */}
-      <section className="px-6 pb-20">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {CORE_VALUES.map((value) => (
-            <div
-              key={value.id}
-              className={`glass-panel interactive p-8 flex flex-col gap-5 ${value.accent === 'primary' ? 'active' : ''}`}
-            >
-              <div className="flex items-center gap-3">
-                <AccentIcon icon={value.icon} accent={value.accent} size="lg" />
-                <span className="text-[0.7rem] uppercase tracking-widest text-text-muted font-bold">{value.tag}</span>
-              </div>
-              <h3 className="text-[1.35rem] font-semibold">{value.title}</h3>
-              <p className="text-text-secondary text-[0.9rem] leading-relaxed">{value.description}</p>
-              <ul className="flex flex-col gap-2.5 mt-auto">
-                {value.highlights.map((h) => (
-                  <li
-                    key={h}
-                    className="text-[0.85rem] text-text-muted flex items-center gap-2.5 before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-secondary before:shrink-0"
-                  >
-                    {h}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Product screenshots */}
-      <section id="product" className="px-6 py-20 scroll-mt-20 bg-white/[0.015]">
-        <div className="max-w-6xl mx-auto">
-          <SectionHeader
-            label="Product"
-            title="Monitor and investigate from one screen"
-            description="Live feeds on the left, event archive and Ask Camera AI below—everything you need whether you're watching now or catching up later."
+          <img
+            src="/screenshots/hero-right-graphic.png"
+            alt=""
+            className="w-full h-full object-cover object-center lg:object-right opacity-95 mix-blend-screen scale-100"
           />
-
-          <div className="flex flex-col gap-10">
-            {SCREENSHOTS.map((shot, i) => (
-              <div key={shot.title} className="glass-panel p-4 md:p-5 overflow-hidden">
-                <div className="mb-4 px-1">
-                  <span className="text-[0.7rem] uppercase tracking-widest text-secondary font-bold">{shot.label}</span>
-                  <h3 className="text-[1.2rem] font-semibold mt-1">{shot.title}</h3>
-                  <p className="text-text-secondary text-[0.9rem] mt-1 max-w-2xl">{shot.description}</p>
-                </div>
-                <div className="rounded-xl overflow-hidden border border-white/10 shadow-[0_0_40px_rgba(124,58,237,0.12)]">
-                  <img
-                    src={shot.src}
-                    alt={shot.alt}
-                    className="w-full h-auto block"
-                    loading={i === 0 ? 'eager' : 'lazy'}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
-      </section>
 
-      {/* Deep dives */}
-      <section className="px-6 py-20">
-        <div className="max-w-6xl mx-auto flex flex-col gap-8">
-          {/* Multi-camera tracking deep dive */}
-          <div id="tracking" className="glass-panel active p-8 md:p-12 scroll-mt-24">
-            <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
-              <div>
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[0.75rem] font-semibold uppercase tracking-wider mb-6">
-                  <Fingerprint size={13} />
-                  Multi-Camera Person Tracking
-                </div>
-                <h2 className="text-[2rem] md:text-[2.5rem] font-bold leading-tight mb-5">
-                  Trace whereabouts.
-                  <br />
-                  <span className="text-gradient-purple">Know suspicious paths.</span>
-                </h2>
-                <p className="text-text-secondary text-[1.05rem] leading-relaxed mb-6">
-                  Instantly track a person&apos;s movement across disjoint camera feeds. Using advanced person
-                  re-identification (Re-ID), Aura Watch matches visual features to compile a unified, chronological
-                  timeline of where individuals go—helping you spot suspicious behavior and unauthorized area access.
-                </p>
-                <Link to="/login" className="btn btn-primary text-[0.95rem] px-6 py-2.5">
-                  Explore Re-ID Dashboard
-                  <ArrowRight size={16} />
-                </Link>
+        {/* Hero Content Section */}
+        <section className="relative pt-32 pb-20 px-6 max-w-[1400px] mx-auto min-h-[85vh] flex items-center z-10" aria-labelledby="hero-heading">
+          <div className="relative z-10 w-full grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
+            {/* Left Column: Hero Content */}
+            <div className="lg:col-span-7 flex flex-col items-start text-left relative z-10">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-secondary/25 bg-secondary/5 text-[0.725rem] font-bold text-secondary mb-6 tracking-wider uppercase landing-fade-in">
+                <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
+                AI Powered. Always Watching.
               </div>
 
-              {/* Simulated timeline mockup */}
-              <div className="glass-panel p-6 border-white/6 bg-white/[0.02] flex flex-col gap-4">
-                <div className="flex items-center justify-between border-b border-white/6 pb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-danger animate-pulse" />
-                    <span className="text-[0.8rem] font-bold tracking-wider text-text-primary uppercase">Identity Trace: #104</span>
+              <h1
+                id="hero-heading"
+                className="text-[2.25rem] md:text-[3.25rem] font-extrabold leading-[1.1] tracking-tight mb-5 landing-fade-in landing-delay-1"
+              >
+                <span className="text-white">AI Surveillance Agent </span>
+                <br />
+                <span className="text-gradient">that Watches. Detects. </span>
+                <br />
+                <span className="text-gradient-purple">Alerts. Answers.</span>
+              </h1>
+
+              <p className="text-text-secondary text-[0.95rem] md:text-[1rem] leading-relaxed max-w-xl mb-8 landing-fade-in landing-delay-2">
+                Aura-Watch uses powerful AI agents to monitor your cameras, detect suspicious activity, and provide real-time answers—so your team can act faster and smarter.
+              </p>
+
+              <div className="flex flex-row items-center gap-4 mb-14 landing-fade-in landing-delay-3">
+                <Link to="/contact" className="btn btn-primary text-[0.875rem] px-6 py-2.5 font-semibold">
+                  Request a Demo
+                </Link>
+                <a href="#capabilities" className="btn btn-secondary text-[0.875rem] px-6 py-2.5 font-semibold">
+                  Explore Features
+                </a>
+              </div>
+
+              {/* Left Column Bottom Feature List */}
+              <div className="grid grid-cols-2 gap-y-6 gap-x-4 w-full pt-6 border-t border-white/6 landing-fade-in landing-delay-4">
+                {[
+                  {
+                    title: '24/7 AI Monitoring',
+                    desc: 'Across all your cameras',
+                    icon: Camera,
+                  },
+                  {
+                    title: 'Detect & Track',
+                    desc: 'Suspicious activity in real-time',
+                    icon: Fingerprint,
+                  },
+                  {
+                    title: 'Instant Alerts',
+                    desc: 'Stay informed, act faster',
+                    icon: BellRing,
+                  },
+                  {
+                    title: 'Ask. Get Answers.',
+                    desc: 'AI agent answers in seconds',
+                    icon: MessageSquare,
+                  },
+                ].map((feat, idx) => (
+                  <div key={idx} className="flex gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 mt-0.5 shadow-[0_0_10px_rgba(124,58,237,0.1)]">
+                      <feat.icon size={16} />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[0.85rem] font-bold text-white leading-tight">{feat.title}</span>
+                      <span className="text-[0.725rem] text-text-muted mt-1 leading-normal">{feat.desc}</span>
+                    </div>
                   </div>
-                  <span className="text-[0.7rem] bg-primary/20 text-primary border border-primary/30 px-2 py-0.5 rounded-full font-medium">Active Match Profile</span>
+                ))}
+              </div>
+            </div>
+
+            {/* Right Column: Empty to allow the background image to show */}
+            <div className="hidden lg:block lg:col-span-5" />
+          </div>
+        </section>
+        {/* Deep dives */}
+        <section className="px-6 py-20">
+          <div className="max-w-6xl mx-auto flex flex-col gap-8">
+            {/* Multi-camera tracking deep dive */}
+            <div id="tracking" className="glass-panel active p-8 md:p-12 scroll-mt-24">
+              <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[0.75rem] font-semibold uppercase tracking-wider mb-6">
+                    <Fingerprint size={13} />
+                    Multi-Camera Person Tracking
+                  </div>
+                  <h2 className="text-[2rem] md:text-[2.5rem] font-bold leading-tight mb-5">
+                    Trace whereabouts.
+                    <br />
+                    <span className="text-gradient-purple">Know suspicious paths.</span>
+                  </h2>
+                  <p className="text-text-secondary text-[1.05rem] leading-relaxed mb-6">
+                    Instantly track a person&apos;s movement across disjoint camera feeds. Using advanced person
+                    re-identification (Re-ID), Aura Watch matches visual features to compile a unified, chronological
+                    timeline of where individuals go—helping you spot suspicious behavior and unauthorized area access.
+                  </p>
+                  <Link to="/login" className="btn btn-primary text-[0.95rem] px-6 py-2.5">
+                    Explore Re-ID Dashboard
+                    <ArrowRight size={16} />
+                  </Link>
                 </div>
 
-                <div className="relative flex flex-col gap-6 pl-4 border-l border-dashed border-white/12">
-                  {TRACKING_TIMELINE_EXAMPLES.map((step, idx) => (
-                    <div key={idx} className="relative group/step">
-                      {/* Timeline Dot */}
-                      <div className={`absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full border-2 border-bg-dark transition-all ${
-                        step.status === 'entry' ? 'bg-success' : step.status === 'transit' ? 'bg-secondary' : 'bg-danger shadow-[0_0_8px_var(--color-danger)]'
-                      }`} />
-                      
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[0.85rem] font-semibold text-text-primary">{step.camera}</span>
-                          <span className="text-[0.75rem] text-text-muted">{step.time}</span>
-                        </div>
-                        <p className="text-[0.8rem] text-text-secondary">{step.event}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[0.7rem] font-medium text-secondary">{step.confidence}</span>
-                          {step.status === 'alert' && (
-                            <span className="text-[0.65rem] bg-danger/10 text-danger border border-danger/25 px-1.5 py-0.5 rounded uppercase font-bold tracking-wider">
-                              Suspicious Activity
-                            </span>
-                          )}
+                {/* Simulated timeline mockup */}
+                <div className="glass-panel p-6 border-white/6 bg-white/[0.02] flex flex-col gap-4">
+                  <div className="flex items-center justify-between border-b border-white/6 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-2.5 h-2.5 rounded-full bg-danger animate-pulse" />
+                      <span className="text-[0.8rem] font-bold tracking-wider text-text-primary uppercase">Identity Trace: #104</span>
+                    </div>
+                    <span className="text-[0.7rem] bg-primary/20 text-primary border border-primary/30 px-2 py-0.5 rounded-full font-medium">Active Match Profile</span>
+                  </div>
+
+                  <div className="relative flex flex-col gap-6 pl-4 border-l border-dashed border-white/12">
+                    {TRACKING_TIMELINE_EXAMPLES.map((step, idx) => (
+                      <div key={idx} className="relative group/step">
+                        {/* Timeline Dot */}
+                        <div className={`absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full border-2 border-bg-dark transition-all ${step.status === 'entry' ? 'bg-success' : step.status === 'transit' ? 'bg-secondary' : 'bg-danger shadow-[0_0_8px_var(--color-danger)]'
+                          }`} />
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[0.85rem] font-semibold text-text-primary">{step.camera}</span>
+                            <span className="text-[0.75rem] text-text-muted">{step.time}</span>
+                          </div>
+                          <p className="text-[0.8rem] text-text-secondary">{step.event}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[0.7rem] font-medium text-secondary">{step.confidence}</span>
+                            {step.status === 'alert' && (
+                              <span className="text-[0.65rem] bg-danger/10 text-danger border border-danger/25 px-1.5 py-0.5 rounded uppercase font-bold tracking-wider">
+                                Suspicious Activity
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Active monitoring using AI */}
-          <div id="monitoring" className="glass-panel p-8 md:p-12 scroll-mt-24">
-            <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
-              <div>
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[0.75rem] font-semibold uppercase tracking-wider mb-6">
-                  <Activity size={13} />
-                  Active monitoring using AI
-                </div>
-                <h2 className="text-[2rem] md:text-[2.5rem] font-bold leading-tight mb-5">
-                  Every feed.
-                  <br />
-                  <span className="text-gradient-purple">One command center.</span>
-                </h2>
-                <p className="text-text-secondary text-[1.05rem] leading-relaxed">
-                  Stop jumping between apps and missing events on another angle. Watch all your cameras live,
-                  see what&apos;s recording, and layer proactive alerts on top—get notified the moment something
-                  matters instead of staring at screens all day.
-                </p>
-              </div>
-              <div className="flex flex-col gap-3">
-                <p className="text-[0.75rem] uppercase tracking-widest text-text-muted font-semibold mb-1">
-                  Example alert rules
-                </p>
-                {ALERT_EXAMPLES.map((rule) => (
-                  <div
-                    key={rule}
-                    className="flex items-center gap-3 p-4 rounded-xl border border-white/8 bg-white/3"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
-                      <BellRing size={15} className="text-primary" />
-                    </div>
-                    <span className="text-[0.9rem] text-text-secondary">{rule}</span>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Ask Camera AI */}
-          <div id="ask-ai" className="glass-panel active p-8 md:p-12 scroll-mt-24">
-            <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
-              <div>
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-secondary/10 border border-secondary/20 text-secondary text-[0.75rem] font-semibold uppercase tracking-wider mb-6">
-                  <MessageSquare size={13} />
-                  Ask Camera AI
-                </div>
-                <h2 className="text-[2rem] md:text-[2.5rem] font-bold leading-tight mb-5">
-                  Skip the scrubbing.
-                  <br />
-                  <span className="text-gradient-purple">Just ask.</span>
-                </h2>
-                <p className="text-text-secondary text-[1.05rem] leading-relaxed mb-6">
-                  Weren&apos;t watching? Need to find something from hours ago? Ask Camera AI searches your
-                  entire event archive in plain English and returns cited clips—so you get answers with proof,
-                  not guesswork.
-                </p>
-                <Link to="/login" className="btn btn-primary text-[0.95rem] px-6 py-2.5">
-                  Try Ask Camera AI
-                  <ArrowRight size={16} />
-                </Link>
-              </div>
-              <div className="flex flex-col gap-3">
-                <p className="text-[0.75rem] uppercase tracking-widest text-text-muted font-semibold mb-1">
-                  Questions you can ask
-                </p>
-                {ASK_AI_EXAMPLES.map((q) => (
-                  <div
-                    key={q}
-                    className="flex items-start gap-3 p-4 rounded-xl border border-white/8 bg-white/3 hover:border-secondary/25 hover:bg-secondary/5 transition-all"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-secondary/15 flex items-center justify-center shrink-0 mt-0.5">
-                      <Search size={15} className="text-secondary" />
-                    </div>
-                    <span className="text-[0.9rem] text-text-secondary">&ldquo;{q}&rdquo;</span>
+            {/* Active monitoring using AI */}
+            <div id="monitoring" className="glass-panel p-8 md:p-12 scroll-mt-24">
+              <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[0.75rem] font-semibold uppercase tracking-wider mb-6">
+                    <Activity size={13} />
+                    Active monitoring using AI
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Capabilities */}
-      <section id="capabilities" className="px-6 py-20 scroll-mt-20 bg-white/[0.015]">
-        <div className="max-w-6xl mx-auto">
-          <SectionHeader
-            label="Capabilities"
-            title="The full stack behind both modes"
-            description="Whether you're watching live or searching the past, every layer works together—detection, summaries, search, and tracking."
-          />
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {CAPABILITIES.map((cap) => (
-              <div key={cap.title} className="glass-panel p-6 flex flex-col gap-3">
-                <AccentIcon icon={cap.icon} accent="primary" />
-                <h3 className="text-[1.05rem] font-semibold">{cap.title}</h3>
-                <p className="text-text-secondary text-[0.875rem] leading-relaxed">{cap.description}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Use cases */}
-      <section id="use-cases" className="px-6 py-20 scroll-mt-20">
-        <div className="max-w-6xl mx-auto">
-          <SectionHeader
-            label="Use cases"
-            title="Two ways to use Aura Watch"
-            description="Watch actively when you're on duty—or ask AI when you need to catch up, investigate, or find something fast."
-          />
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
-            {featuredUseCases.map((useCase) => (
-              <div
-                key={useCase.title}
-                className={`glass-panel p-8 flex flex-col gap-4 ${useCase.mode === 'tracking' ? 'active' : ''}`}
-              >
-                <div className="flex items-center gap-4">
-                  <AccentIcon
-                    icon={useCase.icon}
-                    accent={useCase.mode === 'ask' ? 'secondary' : 'primary'}
-                    size="lg"
-                  />
-                  <span className="text-[0.7rem] uppercase tracking-widest text-text-muted font-bold">
-                    {useCase.mode === 'monitor' ? 'Watch live' : useCase.mode === 'tracking' ? 'Track path' : 'Ask AI'}
-                  </span>
+                  <h2 className="text-[2rem] md:text-[2.5rem] font-bold leading-tight mb-5">
+                    Every feed.
+                    <br />
+                    <span className="text-gradient-purple">One command center.</span>
+                  </h2>
+                  <p className="text-text-secondary text-[1.05rem] leading-relaxed">
+                    Stop jumping between apps and missing events on another angle. Watch all your cameras live,
+                    see what&apos;s recording, and layer proactive alerts on top—get notified the moment something
+                    matters instead of staring at screens all day.
+                  </p>
                 </div>
-                <h3 className="text-[1.2rem] font-semibold">{useCase.title}</h3>
-                <p className="text-text-secondary text-[0.9rem] leading-relaxed">{useCase.description}</p>
-                <div className="flex flex-col gap-2 mt-auto">
-                  {useCase.examples.map((ex) => (
+                <div className="flex flex-col gap-3">
+                  <p className="text-[0.75rem] uppercase tracking-widest text-text-muted font-semibold mb-1">
+                    Example alert rules
+                  </p>
+                  {ALERT_EXAMPLES.map((rule) => (
                     <div
-                      key={ex}
-                      className="text-[0.85rem] text-text-muted flex items-center gap-2 before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-secondary before:shrink-0"
+                      key={rule}
+                      className="flex items-center gap-3 p-4 rounded-xl border border-white/8 bg-white/3"
                     >
-                      {ex}
+                      <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+                        <BellRing size={15} className="text-primary" />
+                      </div>
+                      <span className="text-[0.9rem] text-text-secondary">{rule}</span>
                     </div>
                   ))}
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
 
-          <div className="grid md:grid-cols-3 gap-5">
-            {otherUseCases.map((useCase) => (
-              <div key={useCase.title} className="glass-panel p-6 flex flex-col gap-3">
-                <AccentIcon icon={useCase.icon} accent="primary" />
-                <h3 className="text-[1.05rem] font-semibold">{useCase.title}</h3>
-                <p className="text-text-secondary text-[0.85rem] leading-relaxed">{useCase.description}</p>
-                <div className="flex flex-col gap-1.5 mt-auto">
-                  {useCase.examples.map((ex) => (
-                    <div key={ex} className="text-[0.8rem] text-text-muted">
-                      {ex}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section id="how-it-works" className="px-6 py-20 scroll-mt-20 bg-white/[0.015]">
-        <div className="max-w-6xl mx-auto">
-          <SectionHeader
-            label="How it works"
-            title="Monitor now. Ask later."
-            description="Connect cameras, detect what matters, watch live with alerts—and when you need answers, just ask."
-          />
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
-            {STEPS.map((step) => (
-              <div key={step.step} className="glass-panel p-6 relative overflow-hidden">
-                <span className="text-[2.5rem] font-extrabold text-white/4 absolute top-3 right-4 select-none">
-                  {step.step}
-                </span>
-                <div className="text-secondary text-[0.7rem] font-bold uppercase tracking-widest mb-3">
-                  Step {step.step}
-                </div>
-                <h3 className="text-[1.05rem] font-semibold mb-2">{step.title}</h3>
-                <p className="text-text-secondary text-[0.85rem] leading-relaxed">{step.description}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="glass-panel p-8 md:p-10">
-            <div className="flex flex-col md:flex-row items-center justify-center gap-6 md:gap-8">
-              {[
-                { label: 'Your cameras', sub: 'Detect & record', icon: Camera },
-                { label: 'Person tracking', sub: 'Trace whereabouts', icon: Fingerprint },
-                { label: 'Live monitoring', sub: 'Watch & Alert', icon: Activity },
-                { label: 'Ask Camera AI', sub: 'Search & cited clips', icon: MessageSquare },
-              ].map((node, i) => (
-                <React.Fragment key={node.label}>
-                  <div className="flex flex-col items-center text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-2">
-                      <node.icon size={22} className="text-primary" />
-                    </div>
-                    <div className="font-semibold text-[0.9rem]">{node.label}</div>
-                    <div className="text-[0.75rem] text-text-muted mt-0.5">{node.sub}</div>
+            {/* Ask Camera AI */}
+            <div id="ask-ai" className="glass-panel active p-8 md:p-12 scroll-mt-24">
+              <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-secondary/10 border border-secondary/20 text-secondary text-[0.75rem] font-semibold uppercase tracking-wider mb-6">
+                    <MessageSquare size={13} />
+                    Ask Camera AI
                   </div>
-                  {i < 3 && (
-                    <div className="hidden md:flex items-center text-text-muted/30">
-                      <ArrowRight size={14} />
+                  <h2 className="text-[2rem] md:text-[2.5rem] font-bold leading-tight mb-5">
+                    Skip the scrubbing.
+                    <br />
+                    <span className="text-gradient-purple">Just ask.</span>
+                  </h2>
+                  <p className="text-text-secondary text-[1.05rem] leading-relaxed mb-6">
+                    Weren&apos;t watching? Need to find something from hours ago? Ask Camera AI searches your
+                    entire event archive in plain English and returns cited clips—so you get answers with proof,
+                    not guesswork.
+                  </p>
+                  <Link to="/login" className="btn btn-primary text-[0.95rem] px-6 py-2.5">
+                    Try Ask Camera AI
+                    <ArrowRight size={16} />
+                  </Link>
+                </div>
+                <div className="flex flex-col gap-3">
+                  <p className="text-[0.75rem] uppercase tracking-widest text-text-muted font-semibold mb-1">
+                    Questions you can ask
+                  </p>
+                  {ASK_AI_EXAMPLES.map((q) => (
+                    <div
+                      key={q}
+                      className="flex items-start gap-3 p-4 rounded-xl border border-white/8 bg-white/3 hover:border-secondary/25 hover:bg-secondary/5 transition-all"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-secondary/15 flex items-center justify-center shrink-0 mt-0.5">
+                        <Search size={15} className="text-secondary" />
+                      </div>
+                      <span className="text-[0.9rem] text-text-secondary">&ldquo;{q}&rdquo;</span>
                     </div>
-                  )}
-                </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Showcase Infographic Section */}
+        <section className="px-6 py-20 bg-white/[0.01]">
+          <div className="max-w-6xl mx-auto text-center">
+            <SectionHeader
+              label="System Overview"
+              title="How Aura-Watch connects your premises"
+              description="A complete visual overview of the live camera streams, edge detection AI, real-time alert timeline, and the monitoring interface."
+            />
+
+            <div className="glass-panel p-4 md:p-6 rounded-3xl overflow-hidden border border-white/10 shadow-[0_0_50px_rgba(124,58,237,0.15)] bg-white/[0.01] mx-auto mt-8">
+              <img
+                src="/screenshots/hero-right2.png"
+                alt="Aura-Watch AI Surveillance Agent Infographic"
+                className="w-full h-auto rounded-2xl block border border-white/5 shadow-2xl"
+              />
+            </div>
+          </div>
+        </section>
+
+
+
+
+        {/* How it works */}
+        <section id="how-it-works" className="px-6 py-20 scroll-mt-20 bg-white/[0.015]">
+          <div className="max-w-6xl mx-auto">
+            <SectionHeader
+              label="How it works"
+              title="Monitor now. Ask later."
+              description="Connect cameras, detect what matters, watch live with alerts—and when you need answers, just ask."
+            />
+
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
+              {STEPS.map((step) => (
+                <div key={step.step} className="glass-panel p-6 relative overflow-hidden">
+                  <span className="text-[2.5rem] font-extrabold text-white/4 absolute top-3 right-4 select-none">
+                    {step.step}
+                  </span>
+                  <div className="text-secondary text-[0.7rem] font-bold uppercase tracking-widest mb-3">
+                    Step {step.step}
+                  </div>
+                  <h3 className="text-[1.05rem] font-semibold mb-2">{step.title}</h3>
+                  <p className="text-text-secondary text-[0.85rem] leading-relaxed">{step.description}</p>
+                </div>
               ))}
             </div>
-          </div>
-        </div>
-      </section>
 
-      {/* CTA */}
-      <section className="px-6 py-20">
-        <div className="max-w-3xl mx-auto glass-panel active p-10 md:p-14 text-center">
-          <h2 className="text-[1.75rem] md:text-[2.25rem] font-bold mb-4">
-            Watch live when you&apos;re on duty.
-            <br />
-            <span className="text-gradient-purple">Ask AI when you need answers.</span>
-          </h2>
-          <p className="text-text-secondary text-[1.05rem] mb-8 max-w-lg mx-auto">
-            Sign in to monitor every feed, get proactive alerts, and query your footage in plain English—all
-            from one dashboard.
-          </p>
-          <Link to="/login" className="btn btn-primary text-[1rem] px-8 py-3">
-            Access Dashboard
-            <ArrowRight size={18} />
-          </Link>
-        </div>
-      </section>
+            <div className="glass-panel p-8 md:p-10">
+              <div className="flex flex-col md:flex-row items-center justify-center gap-6 md:gap-8">
+                {[
+                  { label: 'Your cameras', sub: 'Detect & record', icon: Camera },
+                  { label: 'Person tracking', sub: 'Trace whereabouts', icon: Fingerprint },
+                  { label: 'Live monitoring', sub: 'Watch & Alert', icon: Activity },
+                  { label: 'Ask Camera AI', sub: 'Search & cited clips', icon: MessageSquare },
+                ].map((node, i) => (
+                  <React.Fragment key={node.label}>
+                    <div className="flex flex-col items-center text-center">
+                      <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-2">
+                        <node.icon size={22} className="text-primary" />
+                      </div>
+                      <div className="font-semibold text-[0.9rem]">{node.label}</div>
+                      <div className="text-[0.75rem] text-text-muted mt-0.5">{node.sub}</div>
+                    </div>
+                    {i < 3 && (
+                      <div className="hidden md:flex items-center text-text-muted/30">
+                        <ArrowRight size={14} />
+                      </div>
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* CTA */}
+        <section className="px-6 py-20">
+          <div className="max-w-3xl mx-auto glass-panel active p-10 md:p-14 text-center">
+            <h2 className="text-[1.75rem] md:text-[2.25rem] font-bold mb-4">
+              Watch live when you&apos;re on duty.
+              <br />
+              <span className="text-gradient-purple">Ask AI when you need answers.</span>
+            </h2>
+            <p className="text-text-secondary text-[1.05rem] mb-8 max-w-lg mx-auto">
+              Sign in to monitor every feed, get proactive alerts, and query your footage in plain English—all
+              from one dashboard.
+            </p>
+            <Link to="/login" className="btn btn-primary text-[1rem] px-8 py-3">
+              Access Dashboard
+              <ArrowRight size={18} />
+            </Link>
+          </div>
+        </section>
       </main>
 
       {/* Footer */}

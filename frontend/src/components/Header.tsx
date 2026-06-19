@@ -1,43 +1,42 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Cpu, ArrowRight } from 'lucide-react';
+import { Shield } from 'lucide-react';
 
 export default function Header() {
   const location = useLocation();
-  const isBlogActive = location.pathname.startsWith('/blog');
   const isAboutActive = location.pathname === '/about';
   const isContactActive = location.pathname === '/contact';
 
   return (
     <header className="fixed top-0 inset-x-0 z-50 border-b border-white/6 bg-[rgba(10,14,26,0.72)] backdrop-blur-xl">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-3 hover:opacity-90 transition-opacity">
-          <div className="bg-primary p-2 rounded-lg shadow-[0_0_15px_rgba(124,58,237,0.25)]">
-            <Cpu size={20} color="white" />
+        <Link to="/" className="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
+          <div className="bg-primary/10 border border-primary/30 p-1.5 rounded-lg text-primary shadow-[0_0_15px_rgba(124,58,237,0.15)]">
+            <Shield size={18} className="fill-primary/10" />
           </div>
-          <span className="font-heading font-bold text-[1.05rem] tracking-tight">AURA WATCH AI</span>
+          <div className="flex flex-col">
+            <span className="font-heading font-extrabold text-[0.95rem] tracking-wider text-white leading-none">AURA-WATCH</span>
+            <span className="text-[0.6rem] text-text-muted font-medium tracking-wider mt-0.5 uppercase">AI Surveillance Agent</span>
+          </div>
         </Link>
 
-        <nav className="hidden md:flex items-center gap-7 text-[0.875rem] text-text-secondary" aria-label="Primary">
-          <Link to="/#tracking" className="hover:text-text-primary transition-colors">
-            Tracking
+        <nav className="hidden md:flex items-center gap-7 text-[0.85rem] font-medium text-text-secondary" aria-label="Primary">
+          <Link to="/#capabilities" className="hover:text-text-primary transition-colors">
+            Features
           </Link>
-          <Link to="/#monitoring" className="hover:text-text-primary transition-colors">
-            Monitoring
+          <Link to="/#how-it-works" className="hover:text-text-primary transition-colors">
+            How It Works
           </Link>
-          <Link to="/#ask-ai" className="hover:text-text-primary transition-colors">
-            Ask Camera AI
+          <Link to="/#use-cases" className="hover:text-text-primary transition-colors">
+            Use Cases
           </Link>
-          <Link 
-            to="/blog" 
-            className={`hover:text-text-primary transition-colors ${isBlogActive ? 'text-text-primary font-medium' : ''}`}
-          >
-            Blog
+          <Link to="/login" className="hover:text-text-primary transition-colors">
+            Pricing
           </Link>
           <Link 
             to="/about" 
             className={`hover:text-text-primary transition-colors ${isAboutActive ? 'text-text-primary font-medium' : ''}`}
           >
-            About
+            About Us
           </Link>
           <Link 
             to="/contact" 
@@ -47,9 +46,8 @@ export default function Header() {
           </Link>
         </nav>
 
-        <Link to="/login" className="btn btn-primary text-[0.875rem] py-2 px-4">
-          Sign In
-          <ArrowRight size={15} />
+        <Link to="/contact" className="btn btn-primary text-[0.825rem] py-1.5 px-4 font-semibold tracking-wide shadow-[0_0_15px_rgba(6,182,212,0.1)]">
+          Request a Demo
         </Link>
       </div>
     </header>
