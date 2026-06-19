@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Settings, X } from 'lucide-react';
 import { apiFetch } from '../../../api';
 import { DEFAULT_STREAM_CONFIG } from '../../../edgeConfig';
@@ -27,12 +27,14 @@ export function StreamConfigDialog({
   onSaved,
 }: StreamConfigDialogProps) {
   const [config, setConfig] = useState<CameraConfig>(initialConfig);
+  const [alertRules, setAlertRules] = useState<string[]>([]);
 
   useEffect(() => {
     if (open) {
       setConfig(initialConfig);
+      setAlertRules(initialConfig.alertInstructions || []);
     }
-  }, [open, initialConfig]);
+  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +42,8 @@ export function StreamConfigDialog({
       alert('Select at least one detection target: Person or Vehicle.');
       return;
     }
+
+    const filteredRules = alertRules.filter((r) => r.trim() !== '');
 
     if (mode === 'add' && addDeviceId) {
       try {
@@ -56,6 +60,7 @@ export function StreamConfigDialog({
             pixelChangeThreshold: config.pixelChangeThreshold ?? DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
             detectPerson: config.detectPerson,
             detectVehicle: config.detectVehicle,
+            alertInstructions: filteredRules,
           }),
         });
         if (res.ok) {
@@ -84,6 +89,7 @@ export function StreamConfigDialog({
           pixelChangeThreshold: config.pixelChangeThreshold !== undefined ? Number(config.pixelChangeThreshold) : 0.02,
           detectPerson: config.detectPerson,
           detectVehicle: config.detectVehicle,
+          alertInstructions: filteredRules,
         }),
       });
       if (res.ok) {
@@ -182,6 +188,56 @@ export function StreamConfigDialog({
             </div>
             <p className="text-[0.72rem] text-text-muted leading-relaxed">
               Vehicle includes cars, trucks, buses, motorcycles, and bicycles.
+            </p>
+          </div>
+
+          {/* Custom Alert Rules */}
+          <div className="flex flex-col gap-2">
+            <label className="text-[0.78rem] text-text-secondary font-medium flex items-center justify-between">
+              <span>Custom Alert Rules (AI Evaluated)</span>
+              <button
+                type="button"
+                onClick={() => setAlertRules([...alertRules, ''])}
+                className="text-[0.72rem] text-primary hover:underline bg-transparent border-none cursor-pointer flex items-center gap-1 font-semibold"
+              >
+                + Add Rule
+              </button>
+            </label>
+            <div className="flex flex-col gap-2 max-h-[140px] overflow-y-auto pr-1">
+              {alertRules.length === 0 ? (
+                <p className="text-[0.72rem] text-text-muted leading-relaxed italic">
+                  No custom rules defined. The LLM will evaluate threat levels using general security guidelines.
+                </p>
+              ) : (
+                alertRules.map((rule, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      value={rule}
+                      onChange={(e) => {
+                        const next = [...alertRules];
+                        next[idx] = e.target.value;
+                        setAlertRules(next);
+                      }}
+                      placeholder="E.g., Alert if a person enters after 10pm"
+                      className="flex-1 bg-[rgba(255,255,255,0.03)] border border-border-glass rounded px-2.5 py-1.5 text-[0.78rem] text-text-primary"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAlertRules(alertRules.filter((_, i) => i !== idx));
+                      }}
+                      className="btn btn-secondary p-1.5 text-danger border-none hover:bg-white/5"
+                      title="Remove rule"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="text-[0.68rem] text-text-muted leading-relaxed">
+              Enter instructions in natural language. The AI checks these rules for every clip.
             </p>
           </div>
 

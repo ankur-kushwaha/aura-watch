@@ -15,5 +15,7 @@ export type { ScoredTimelineBadge, ScoredTimelineItemProps } from './ScoredTimel
 export type { TimelineScoreFilterValues } from './timelineScoreFilters';
 export { DEFAULT_TIMELINE_SCORE_FILTERS, passesTimelineScoreFilters } from './timelineScoreFilters';
 export { OrgInfoBadge } from './OrgInfoBadge';
+export { NotificationBell } from './NotificationBell';
+export { NotificationDrawer } from './NotificationDrawer';
 export * from './modals';
 export * from './tabs';

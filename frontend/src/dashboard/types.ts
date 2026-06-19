@@ -138,6 +138,7 @@ export interface CameraStream {
   detectPerson: boolean;
   detectVehicle: boolean;
   streamHost: string;
+  alertInstructions: string[];
 }
 
 export interface CameraConfig {
@@ -149,6 +150,7 @@ export interface CameraConfig {
   pixelChangeThreshold?: number;
   detectPerson: boolean;
   detectVehicle: boolean;
+  alertInstructions?: string[];
 }
 
 export interface RagResponseClip {
@@ -288,5 +290,22 @@ export interface DeviceEvent {
   eventType: string;
   message: string;
   detail?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface Notification {
+  id: string;
+  orgId: string;
+  deviceId?: string | null;
+  streamId?: string | null;
+  clipId?: string | null;
+  identityId?: string | null;
+  category: 'surveillance' | 'camera' | 'device' | 'websocket';
+  severity: 'info' | 'warn' | 'error' | 'critical';
+  title: string;
+  body: string;
+  riskLevel?: 'low' | 'medium' | 'high' | null;
+  triggeredByInstruction?: string | null;
+  readAt?: string | null;
   createdAt: string;
 }

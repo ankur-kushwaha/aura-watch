@@ -73,7 +73,7 @@ export class OpenAIService implements AIService {
    * Extracts frames from the local video clip and utilizes OpenAI GPT-4o-mini
    * to analyze the visual sequence and generate a text summary.
    */
-  async summarizeVideo(filepath: string, cameraName: string): Promise<string> {
+  async summarizeVideo(filepath: string, cameraName: string, alertInstructions?: string[]): Promise<string> {
     console.log(`[OpenAI] Preparing video clip for summary: ${filepath}`);
     
     // 1. Extract video frames as base64 images
@@ -96,7 +96,7 @@ export class OpenAIService implements AIService {
             content: [
               {
                 type: 'text',
-                text: buildVideoAnalysisPrompt(cameraName),
+                text: buildVideoAnalysisPrompt(cameraName, undefined, alertInstructions),
               },
               ...base64Frames.map(frame => ({
                 type: 'image_url' as const,

@@ -1,6 +1,7 @@
 import { Cpu, LogOut, PanelLeft, Settings } from 'lucide-react';
 import type { AuthOrg } from '../../api';
 import { OrgInfoBadge } from './OrgInfoBadge';
+import { NotificationBell } from './NotificationBell';
 
 export interface DashboardHeaderProps {
   appView: 'settings' | 'dashboard';
@@ -13,6 +14,8 @@ export interface DashboardHeaderProps {
   onOpenSidebar: () => void;
   onToggleSettings: () => void;
   onLogout: () => void;
+  unreadNotificationCount: number;
+  onNotificationBellClick: () => void;
 }
 
 export function DashboardHeader({
@@ -26,6 +29,8 @@ export function DashboardHeader({
   onOpenSidebar,
   onToggleSettings,
   onLogout,
+  unreadNotificationCount,
+  onNotificationBellClick,
 }: DashboardHeaderProps) {
   return (
     <header className="glass-panel p-4 sm:p-5 px-4 sm:px-6 flex flex-wrap justify-between items-center gap-4 mb-6">
@@ -56,6 +61,12 @@ export function DashboardHeader({
             availableOrgs={availableOrgs}
             switchingOrg={switchingOrg}
             onSwitchOrg={onSwitchOrg}
+          />
+        )}
+        {currentOrg && (
+          <NotificationBell
+            unreadCount={unreadNotificationCount}
+            onClick={onNotificationBellClick}
           />
         )}
         {selectedDeviceId && appView === 'dashboard' && (

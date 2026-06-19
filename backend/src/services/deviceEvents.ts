@@ -1,5 +1,6 @@
 import prisma from './db';
 import type { Prisma } from '@prisma/client';
+import { fromDeviceEvent } from './notificationService';
 
 export type DeviceEventCategory = 'camera' | 'websocket' | 'device' | 'preview' | 'recovery' | 'update';
 export type DeviceEventSeverity = 'info' | 'warn' | 'error';
@@ -247,6 +248,19 @@ export async function recordDeviceEvent(input: RecordDeviceEventInput) {
       message: input.message,
       detail: input.detail ?? undefined,
     },
+  });
+
+  // Fire notification for warn/error events (non-blocking)
+  void fromDeviceEvent(input.deviceId, {
+    id: event.id,
+    orgId: resolvedOrgId,
+    streamId: resolvedStreamId,
+    category: event.category,
+    severity: event.severity,
+    eventType: event.eventType,
+    message: event.message,
+  }).catch((err) => {
+    console.error(`[Notifications] fromDeviceEvent failed for ${input.deviceId}:`, err);
   });
 
   const now = Date.now();

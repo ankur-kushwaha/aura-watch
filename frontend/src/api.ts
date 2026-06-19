@@ -15,6 +15,10 @@ export interface OrgSettings {
   semanticSearch: boolean;
   aiChat: boolean;
   reidProcessing: boolean;
+  notificationsEnabled: boolean;
+  notifyMinSeverity: 'info' | 'warn' | 'error';
+  notifyEmail: boolean;
+  notifyWebhookUrl: string | null;
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -22,6 +26,10 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   semanticSearch: true,
   aiChat: true,
   reidProcessing: true,
+  notificationsEnabled: true,
+  notifyMinSeverity: 'warn',
+  notifyEmail: false,
+  notifyWebhookUrl: null,
 };
 
 export interface OrgMember {

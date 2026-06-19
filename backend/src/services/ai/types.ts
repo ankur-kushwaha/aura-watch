@@ -5,7 +5,7 @@ export interface AIService {
    * @param cameraName The name of the camera stream.
    * @returns A structured summary of the clip content.
    */
-  summarizeVideo(filepath: string, cameraName: string): Promise<string>;
+  summarizeVideo(filepath: string, cameraName: string, alertInstructions?: string[]): Promise<string>;
 
   /**
    * Generates a 768-dimensional text embedding for the given text.

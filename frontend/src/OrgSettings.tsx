@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Sparkles,
@@ -10,6 +10,8 @@ import {
   Users,
   UserPlus,
   Trash2,
+  Bell,
+  Mail,
 } from 'lucide-react';
 import {
   fetchOrgSettings,
@@ -133,7 +135,7 @@ export default function OrgSettingsPage({
 
   const hasChanges = draft && settings && JSON.stringify(draft) !== JSON.stringify(settings);
 
-  const updateDraft = (key: keyof OrgSettings, value: boolean) => {
+  const updateDraft = <K extends keyof OrgSettings>(key: K, value: OrgSettings[K]) => {
     if (!draft) return;
     const next = { ...draft, [key]: value };
     if (key === 'videoSummary' && !value) {
@@ -307,6 +309,78 @@ export default function OrgSettingsPage({
               disabled={!canEdit}
               onChange={(v) => updateDraft('aiChat', v)}
             />
+
+            <p className="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-2 mt-6">
+              Notifications
+            </p>
+            <SettingRow
+              icon={<Bell size={18} />}
+              title="Enable notifications"
+              description="Deliver surveillance and device alerts to the in-app notification center."
+              checked={draft.notificationsEnabled}
+              disabled={!canEdit}
+              onChange={(v) => updateDraft('notificationsEnabled', v)}
+            />
+            {draft.notificationsEnabled && (
+              <>
+                <div className="flex flex-col py-4 border-b border-[rgba(255,255,255,0.06)]">
+                  <p className="text-[0.9rem] font-semibold text-text-primary">Minimum alert severity</p>
+                  <p className="text-[0.78rem] text-text-muted leading-relaxed mt-0.5 mb-3">
+                    Only receive notifications for events matching or exceeding this severity level.
+                  </p>
+                  <div className="flex gap-4">
+                    {(['info', 'warn', 'error'] as const).map((sev) => (
+                      <label key={sev} className="flex items-center gap-2 text-[0.8rem] text-text-secondary cursor-pointer">
+                        <input
+                          type="radio"
+                          name="notifyMinSeverity"
+                          value={sev}
+                          checked={draft.notifyMinSeverity === sev}
+                          disabled={!canEdit}
+                          onChange={() => {
+                            if (!draft) return;
+                            updateDraft('notifyMinSeverity', sev);
+                          }}
+                          className="accent-primary"
+                        />
+                        <span className="capitalize">{sev}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <SettingRow
+                  icon={<Mail size={18} />}
+                  title="Email alerts"
+                  description="Receive email summaries for critical alert events (coming soon)."
+                  checked={draft.notifyEmail}
+                  disabled={true}
+                  onChange={(v) => updateDraft('notifyEmail', v)}
+                />
+
+                <div className="flex flex-col gap-2 py-4 border-b border-[rgba(255,255,255,0.06)] last:border-b-0">
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="min-w-0">
+                      <p className="text-[0.9rem] font-semibold text-text-primary">Webhook URL</p>
+                      <p className="text-[0.78rem] text-text-muted leading-relaxed mt-0.5">
+                        Deliver a POST request with notification details to this URL in real-time.
+                      </p>
+                    </div>
+                  </div>
+                  <input
+                    type="url"
+                    placeholder="https://yourserver.com/alerts-webhook"
+                    value={draft.notifyWebhookUrl || ''}
+                    disabled={!canEdit}
+                    onChange={(e) => {
+                      if (!draft) return;
+                      updateDraft('notifyWebhookUrl', e.target.value.trim() || null);
+                    }}
+                    className="mt-2 w-full max-w-lg bg-[rgba(255,255,255,0.04)] border border-border-glass rounded px-3 py-2 text-[0.8rem] text-text-primary"
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

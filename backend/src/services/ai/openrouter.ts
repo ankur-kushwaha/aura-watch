@@ -124,7 +124,7 @@ export class OpenRouterService implements AIService {
     }
   }
 
-  private async summarizeWithNativeVideo(filepath: string, cameraName: string): Promise<string> {
+  private async summarizeWithNativeVideo(filepath: string, cameraName: string, alertInstructions?: string[]): Promise<string> {
     const model = this.getVideoModel();
     const base64Video = this.encodeVideoToBase64(filepath);
 
@@ -136,7 +136,7 @@ export class OpenRouterService implements AIService {
         content: [
           {
             type: 'text',
-            text: buildVideoAnalysisPrompt(cameraName),
+            text: buildVideoAnalysisPrompt(cameraName, undefined, alertInstructions),
           },
           {
             type: 'video_url',
@@ -152,7 +152,7 @@ export class OpenRouterService implements AIService {
     return normalizeAiSummaryJson(raw);
   }
 
-  private async summarizeWithFrames(filepath: string, cameraName: string): Promise<string> {
+  private async summarizeWithFrames(filepath: string, cameraName: string, alertInstructions?: string[]): Promise<string> {
     const model = this.getVideoModel();
     const base64Frames = await this.extractFrames(filepath, MAX_FRAMES);
     if (base64Frames.length === 0) {
@@ -167,7 +167,7 @@ export class OpenRouterService implements AIService {
         content: [
           {
             type: 'text',
-            text: buildVideoAnalysisPrompt(cameraName),
+            text: buildVideoAnalysisPrompt(cameraName, undefined, alertInstructions),
           },
           ...base64Frames.map(frame => ({
             type: 'image_url',
@@ -197,7 +197,7 @@ export class OpenRouterService implements AIService {
    * Tries native video input first (requires >= $1 OpenRouter account balance),
    * then falls back to up to 10 extracted frames.
    */
-  async summarizeVideo(filepath: string, cameraName: string): Promise<string> {
+  async summarizeVideo(filepath: string, cameraName: string, alertInstructions?: string[]): Promise<string> {
     if (!fs.existsSync(filepath)) {
       throw new Error(`Video file not found at path: ${filepath}`);
     }
@@ -206,7 +206,7 @@ export class OpenRouterService implements AIService {
 
     if (this.shouldUseNativeVideo()) {
       try {
-        const summary = await this.summarizeWithNativeVideo(filepath, cameraName);
+        const summary = await this.summarizeWithNativeVideo(filepath, cameraName, alertInstructions);
         console.log(`[OpenRouter] Summary generated via native video: "${summary}"`);
         return summary;
       } catch (nativeError: any) {
@@ -224,7 +224,7 @@ export class OpenRouterService implements AIService {
     }
 
     try {
-      const summary = await this.summarizeWithFrames(filepath, cameraName);
+      const summary = await this.summarizeWithFrames(filepath, cameraName, alertInstructions);
       console.log(`[OpenRouter] Summary generated via frames: "${summary}"`);
       return summary;
     } catch (frameError) {

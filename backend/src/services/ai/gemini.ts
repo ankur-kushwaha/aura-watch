@@ -18,7 +18,7 @@ export class GeminiService implements AIService {
    * Uploads a local video file to Gemini, polls until it is processed,
    * and generates a structured summary of the video content.
    */
-  async summarizeVideo(filepath: string, cameraName: string): Promise<string> {
+  async summarizeVideo(filepath: string, cameraName: string, alertInstructions?: string[]): Promise<string> {
     if (!fs.existsSync(filepath)) {
       throw new Error(`Video file not found at path: ${filepath}`);
     }
@@ -74,7 +74,7 @@ export class GeminiService implements AIService {
             role: 'user',
             parts: [
               { fileData: { fileUri: fileInfo.uri!, mimeType: fileInfo.mimeType! } },
-              { text: buildVideoAnalysisPrompt(cameraName) },
+              { text: buildVideoAnalysisPrompt(cameraName, undefined, alertInstructions) },
             ],
           },
         ],

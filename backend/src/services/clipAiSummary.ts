@@ -16,7 +16,7 @@ function toAiSummaryResponse(raw?: string | null): ClipAiAnalysis | null {
 }
 
 async function summarizeClipFromVideoPath(
-  clip: Pick<VideoClip, 'id' | 'camera' | 'summary' | 'aiSummary'>,
+  clip: Pick<VideoClip, 'id' | 'camera' | 'summary' | 'aiSummary' | 'streamId'>,
   videoPath: string,
 ): Promise<{ updated: VideoClip; aiSummary: ClipAiAnalysis }> {
   const existing = toAiSummaryResponse(clip.aiSummary);
@@ -28,11 +28,23 @@ async function summarizeClipFromVideoPath(
     return { updated: current, aiSummary: existing };
   }
 
+  // Fetch alert instructions if streamId is present
+  let alertInstructions: string[] | undefined = undefined;
+  if (clip.streamId) {
+    const stream = await prisma.cameraStream.findUnique({
+      where: { streamId: clip.streamId },
+      select: { alertInstructions: true },
+    });
+    if (stream) {
+      alertInstructions = stream.alertInstructions;
+    }
+  }
+
   let geminiPath: string | null = null;
   try {
     geminiPath = await transcodeForGemini(videoPath);
     const summaryPath = geminiPath !== videoPath ? geminiPath : videoPath;
-    const aiSummaryJson = await summarizeVideo(summaryPath, clip.camera);
+    const aiSummaryJson = await summarizeVideo(summaryPath, clip.camera, alertInstructions);
 
     const updated = await prisma.videoClip.update({
       where: { id: clip.id },

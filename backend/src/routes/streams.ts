@@ -119,6 +119,7 @@ router.post('/', async (req: Request, res: Response) => {
     pixelChangeThreshold,
     detectPerson,
     detectVehicle,
+    alertInstructions,
   } = req.body;
 
   if (!deviceId || !name) {
@@ -150,6 +151,9 @@ router.post('/', async (req: Request, res: Response) => {
         detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : STREAM_CONFIG_DEFAULTS.detectPerson,
         detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : STREAM_CONFIG_DEFAULTS.detectVehicle,
         streamHost: '',
+        alertInstructions: alertInstructions !== undefined
+          ? (Array.isArray(alertInstructions) ? alertInstructions.filter(x => typeof x === 'string') : [])
+          : [],
       },
     });
 
@@ -182,6 +186,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
     detectVehicle,
     status,
     streamHost,
+    alertInstructions,
   } = req.body;
 
   if (!req.auth) {
@@ -210,6 +215,9 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
         detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : existing.detectVehicle,
         status: status !== undefined ? status : existing.status,
         streamHost: streamHost !== undefined ? streamHost : existing.streamHost,
+        alertInstructions: alertInstructions !== undefined
+          ? (Array.isArray(alertInstructions) ? alertInstructions.filter(x => typeof x === 'string') : [])
+          : existing.alertInstructions,
       },
     });
 

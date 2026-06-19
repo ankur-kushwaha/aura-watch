@@ -9,10 +9,14 @@ generator client {
 }
 
 type OrgSettings {
-  videoSummary     Boolean @default(true)
-  semanticSearch   Boolean @default(true)
-  aiChat           Boolean @default(true)
-  reidProcessing   Boolean @default(true)
+  videoSummary          Boolean @default(true)
+  semanticSearch        Boolean @default(true)
+  aiChat                Boolean @default(true)
+  reidProcessing        Boolean @default(true)
+  notificationsEnabled  Boolean @default(true)
+  notifyMinSeverity     String  @default("warn")  // "warn" | "error"
+  notifyEmail           Boolean @default(false)
+  notifyWebhookUrl      String?
 }
 
 type EdgeDeviceConfig {
@@ -103,6 +107,7 @@ model VideoClip {
   reidLog           Json?
   stream          CameraStream?   @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
   detections      ReidDetection[]
+  notifications   Notification[]
 }
 
 model EdgeDevice {
@@ -117,6 +122,7 @@ model EdgeDevice {
   config          EdgeDeviceConfig?
   org           Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   streams       CameraStream[]
+  notifications Notification[]
 }
 
 model CameraStream {
@@ -135,15 +141,21 @@ model CameraStream {
   detectVehicle        Boolean         @default(true)
   streamHost           String          @default("")
   lastHeartbeat        DateTime        @default(now())
+  /// User-defined natural language alert rules evaluated by the LLM classifier per clip.
+  /// Example: ["Alert if a person enters after 10pm", "Notify if more than 3 people gather"]
+  alertInstructions    String[]
   clips                VideoClip[]
   detections           ReidDetection[]
   fromRoutes           TopologyRoute[] @relation("FromRoute")
   toRoutes             TopologyRoute[] @relation("ToRoute")
+  notifications        Notification[]
 }
 
 model ReidIdentity {
   id                  String                   @id @default(auto()) @map("_id") @db.ObjectId
   label               String?
+  /// When true, the LLM classifier will fire a critical notification whenever this identity is detected.
+  isWatchlisted       Boolean                  @default(false)
   createdAt           DateTime                 @default(now())
   centroidUpdatedAt   DateTime?
   galleryCount        Int                      @default(0)
@@ -151,6 +163,7 @@ model ReidIdentity {
   org                 Organization?            @relation(fields: [orgId], references: [id], onDelete: Cascade)
   detections          ReidDetection[]
   streamTrackMappings ReidStreamTrackMapping[]
+  notifications       Notification[]
 }
 
 model ReidStreamTrackMapping {
@@ -231,5 +244,36 @@ model DeviceEvent {
   @@index([streamId, createdAt])
   @@index([orgId, createdAt])
   @@index([eventType, createdAt])
+}
+
+/// In-app notifications surfaced to the UI for org members.
+model Notification {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  orgId       String    @db.ObjectId
+  deviceId    String?
+  streamId    String?
+  clipId      String?   @db.ObjectId
+  identityId  String?   @db.ObjectId  // ReID identity that triggered this (watchlist / detection)
+  /// "surveillance" | "camera" | "device" | "websocket"
+  category    String
+  /// "info" | "warn" | "error" | "critical"
+  severity    String
+  title       String
+  body        String
+  /// LLM output for clip-sourced notifications: "low" | "medium" | "high"
+  riskLevel   String?
+  /// Which custom alertInstruction index (if any) triggered this notification
+  triggeredByInstruction String?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  clip        VideoClip?    @relation(fields: [clipId], references: [id], onDelete: SetNull)
+  device      EdgeDevice?   @relation(fields: [deviceId], references: [deviceId], onDelete: SetNull)
+  stream      CameraStream? @relation(fields: [streamId], references: [streamId], onDelete: SetNull)
+  identity    ReidIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, readAt, createdAt])
+  @@index([orgId, createdAt])
 }
 

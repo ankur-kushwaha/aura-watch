@@ -19,23 +19,36 @@ export interface ClipAiObjectCounts {
   vehicle: number;
 }
 
+export interface ClipAiAlert {
+  triggeredInstruction: string | null;
+  alertTitle: string;
+  alertBody: string;
+  riskLevel: 'medium' | 'high';
+}
+
 export interface ClipAiAnalysis {
   summary: string;
   objectCounts: ClipAiObjectCounts;
   objects: ClipAiDetectedObject[];
+  riskLevel?: 'low' | 'medium' | 'high' | null;
+  alerts?: ClipAiAlert[];
 }
 
-export function buildVideoAnalysisPrompt(cameraName: string, durationSec?: number): string {
+export function buildVideoAnalysisPrompt(cameraName: string, durationSec?: number, alertInstructions?: string[]): string {
   const durationHint = durationSec && durationSec > 0
     ? `The clip is approximately ${durationSec.toFixed(1)} seconds long.`
     : '';
 
+  const customRulesList = alertInstructions && alertInstructions.length > 0
+    ? alertInstructions.map((r, i) => `${i + 1}. ${r}`).join('\n')
+    : 'None';
+
   return `You are an expert AI video surveillance assistant analyzing a security camera clip from "${cameraName}".
 ${durationHint}
 
-Respond with ONLY valid JSON (no markdown, no code fences) matching this schema:
+Evaluate the video content and respond with ONLY valid JSON (no markdown, no code fences) matching this schema:
 {
-  "summary": "Narrative of what happens in the clip",
+  "summary": "Detailed narrative of what happens in the clip",
   "objects": [
     {
       "type": "person",
@@ -49,19 +62,35 @@ Respond with ONLY valid JSON (no markdown, no code fences) matching this schema:
       "vehicleType": "SUV",
       "licensePlate": "ABC1234"
     }
+  ],
+  "riskLevel": "low" | "medium" | "high",
+  "alerts": [
+    {
+      "triggeredInstruction": "exact text of the matched custom rule, or null if triggered by general security risk",
+      "alertTitle": "Short alert title (max 60 chars)",
+      "alertBody": "One sentence explaining why it triggered",
+      "riskLevel": "medium" | "high"
+    }
   ]
 }
 
-Rules:
-- First identify every distinct person and vehicle clearly visible in the clip. The "objects" array must include exactly one entry per person and one entry per vehicle — do not merge or skip any.
-- type must be "person" or "vehicle" only.
-- The "summary" must mention every person and vehicle in "objects". Use distinguishing attributes (clothing, color, vehicle type, movement, location in frame) so each listed object is clearly referenced. If there are 2 people and 3 vehicles, all 5 must appear in the summary.
-- Summary and objects must stay consistent: every object in the array appears in the summary, and nothing is mentioned in the summary without a matching objects entry.
-- Write 2-4 sentences for simple scenes; use up to 6 sentences when many people or vehicles are present so nothing is left out.
-- Omit fields you cannot reasonably infer; use null for unknown scalar fields when the object is present but the attribute is not visible.
-- For people: estimate gender and age group (child, teen, adult, elderly) only when visible; list clothing colors/types in clothingColors.
-- For vehicles: include color, body style in vehicleType (sedan, SUV, truck, van, motorcycle, bicycle, etc.), and licensePlate only if legible.
-- Be objective. Do not invent details not supported by the video.`;
+Rules for evaluation:
+1. First identify every distinct person and vehicle clearly visible in the clip. The "objects" array must include exactly one entry per person and one entry per vehicle — do not merge or skip any.
+2. type must be "person" or "vehicle" only.
+3. The "summary" must mention every person and vehicle in "objects". Use distinguishing attributes (clothing, color, vehicle type, movement, location in frame).
+4. Omit fields you cannot reasonably infer; use null for unknown fields.
+5. Assess the threat/risk level of the clip:
+   - "high": weapon visible, person running urgently, forced entry, large crowd (5+ people), vehicle loitering, abandoned object, nighttime intrusion.
+   - "medium": unknown person lingering, vehicle in restricted area.
+   - "low": normal pedestrian traffic, single person walking through, known staff.
+6. Custom Alert Rules to check:
+${customRulesList}
+
+7. Alerts list generation:
+   - For EACH custom rule listed above that is triggered by the clip activity, append an entry to the "alerts" array with "triggeredInstruction" matching the rule text, the appropriate "riskLevel" (medium or high), and custom title/body.
+   - If NO custom rules are triggered, but the general security risk level is "medium" or "high", include a single entry in "alerts" with "triggeredInstruction": null, and general title/body.
+   - If the overall clip is low risk and no custom rules trigger, "alerts" must be an empty array [].
+8. Set the top-level "riskLevel" to the highest risk level among all triggered alerts, or "low" if no alerts triggered.`;
 }
 
 function stripJsonFences(raw: string): string {
@@ -130,7 +159,55 @@ export function parseClipAiAnalysis(raw: string): ClipAiAnalysis {
       }
     : countObjects(objects);
 
-  return { summary, objectCounts, objects };
+  const riskLevel = parsed.riskLevel
+    ? (String(parsed.riskLevel).toLowerCase() as 'low' | 'medium' | 'high')
+    : null;
+  // Read old fields from parsed json for backward compatibility fallback
+  const oldTriggered = parsed.triggeredByInstruction ? String(parsed.triggeredByInstruction) : null;
+  const oldTitle = parsed.alertTitle ? String(parsed.alertTitle) : null;
+  const oldBody = parsed.alertBody ? String(parsed.alertBody) : null;
+
+  // Parse alerts array
+  const alerts: ClipAiAlert[] = [];
+  if (Array.isArray(parsed.alerts)) {
+    for (const item of parsed.alerts) {
+      if (item && typeof item === 'object') {
+        const title = String(item.alertTitle || item.title || '').trim();
+        const body = String(item.alertBody || item.body || '').trim();
+        const level = String(item.riskLevel || 'medium').toLowerCase() as 'medium' | 'high';
+        const rule = item.triggeredInstruction !== undefined
+          ? (item.triggeredInstruction ? String(item.triggeredInstruction).trim() : null)
+          : (item.triggeredByInstruction ? String(item.triggeredByInstruction).trim() : null);
+
+        if (title && body) {
+          alerts.push({
+            triggeredInstruction: rule,
+            alertTitle: title,
+            alertBody: body,
+            riskLevel: level === 'high' ? 'high' : 'medium',
+          });
+        }
+      }
+    }
+  }
+
+  // Backward compatibility fallback:
+  if (alerts.length === 0 && (riskLevel === 'medium' || riskLevel === 'high') && (oldTitle || oldBody)) {
+    alerts.push({
+      triggeredInstruction: oldTriggered,
+      alertTitle: oldTitle || 'Security Event',
+      alertBody: oldBody || summary || 'An event of interest was detected.',
+      riskLevel: riskLevel,
+    });
+  }
+
+  return {
+    summary,
+    objectCounts,
+    objects,
+    riskLevel,
+    alerts,
+  };
 }
 
 /** Parse model output and return canonical JSON string for storage. */

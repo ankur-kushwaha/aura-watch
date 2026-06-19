@@ -23,6 +23,7 @@ import reidRouter, { registerOnReidCropUploaded, registerOnReidCropDeleted, CROP
 import authRouter from './routes/auth';
 import adminRouter from './routes/admin';
 import orgsRouter from './routes/orgs';
+import notificationsRouter from './routes/notifications';
 import { requireAuth } from './middleware/auth';
 import { bootstrapMultiOrg } from './services/bootstrap';
 import { getDeviceOrgId } from './services/orgScope';
@@ -44,6 +45,8 @@ import { recordDeviceEventFromLogSafe, recordDeviceEventSafe, recordDeviceEvent 
 import { getEffectiveStreamStatus } from './services/deviceStatus';
 import { initDeviceCommands, resolveDeviceCommandResponse } from './services/deviceCommands';
 import { EDGE_DEVICE_CONFIG_DEFAULTS } from './config/edgeDeviceDefaults';
+import { evaluateClipWithLLM, registerNotificationBroadcast } from './services/notificationService';
+import { tryParseClipAiAnalysis } from './services/ai/clipAiAnalysis';
 
 const app = express();
 const server = http.createServer(app);
@@ -126,6 +129,7 @@ app.use('/api/rag', ragRouter);
 app.use('/api/devices', devicesRouter);
 app.use('/api/streams', streamsRouter);
 app.use('/api/reid', reidRouter);
+app.use('/api/notifications', notificationsRouter);
 
 // Serve static frontend files
 const FRONTEND_DIR = path.join(__dirname, '../../frontend/dist');
@@ -158,6 +162,16 @@ const uiStreamSubscriptions = new Map<WebSocket, string>();
 const streamDeviceCache = new Map<string, string>();
 
 initDeviceCommands((deviceId) => activeDevices.get(deviceId));
+
+// Inject WebSocket broadcast function into notification service
+registerNotificationBroadcast((message: object) => {
+  const payload = JSON.stringify(message);
+  for (const ws of uiClients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    }
+  }
+});
 
 function broadcastDevicesChanged() {
   const message = JSON.stringify({ type: 'devices_changed' });
@@ -724,6 +738,43 @@ async function processVideoClipInBackground(
     // Notify all UI clients — archive is global and may not have a device/stream subscription.
     broadcastNewClipToAllUIs(clipForBroadcast, deviceId, streamId);
 
+    // --- Notification: LLM surveillance classifier ---
+    if (orgId && orgSettings?.notificationsEnabled !== false) {
+      const aiSummaryRaw = (clipForBroadcast as any).aiSummary as string | null | undefined;
+      const parsedAi = tryParseClipAiAnalysis(aiSummaryRaw);
+
+      // Resolve identity labels from ReID detections linked to this clip
+      const reidDetections = await prisma.reidDetection.findMany({
+        where: {
+          OR: [{ clipId: clipForBroadcast.id }, { clipFilename: filename }],
+          identityId: { not: null },
+        },
+        include: { identity: { select: { id: true, label: true, isWatchlisted: true } } },
+      });
+
+      const identityLabels = [...new Set(
+        reidDetections
+          .map(d => d.identity?.label)
+          .filter((l): l is string => !!l),
+      )];
+
+      void evaluateClipWithLLM({
+        clipId: clipForBroadcast.id,
+        streamId,
+        deviceId,
+        orgId,
+        cameraName,
+        duration,
+        aiSummary: aiSummaryRaw ?? null,
+        objectCounts: {
+          person: parsedAi?.objectCounts?.person ?? 0,
+          vehicle: parsedAi?.objectCounts?.vehicle ?? 0,
+        },
+        identityLabels,
+      }).catch((err: any) => {
+        console.warn(`[Notifications] Clip evaluation failed for ${filename}:`, err.message);
+      });
+    }
   } catch (error: any) {
     console.error(`[Pipeline Error] Failed to process ${filename}:`, error);
     broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);

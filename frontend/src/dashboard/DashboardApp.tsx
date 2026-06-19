@@ -46,7 +46,10 @@ import type {
   EdgeDevice,
   LogEntry,
   VideoClip,
+  Notification,
 } from './types';
+import { NotificationDrawer } from './components';
+import { fetchNotifications, fetchUnreadCount, markNotificationsRead } from '../notificationsApi';
 
 import {
   findLatestStreamError,
@@ -114,6 +117,52 @@ export default function DashboardApp() {
   const [showSystemLogsDialog, setShowSystemLogsDialog] = useState(false);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
 
+  // Notifications States
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
+  const [loadingNotifications, setLoadingNotifications] = useState<boolean>(false);
+  const [notificationsDrawerOpen, setNotificationsDrawerOpen] = useState<boolean>(false);
+
+  const loadNotifications = useCallback(async () => {
+    setLoadingNotifications(true);
+    try {
+      const [{ notifications: fetched }, { count }] = await Promise.all([
+        fetchNotifications({ limit: 50 }),
+        fetchUnreadCount(),
+      ]);
+      setNotifications(fetched);
+      setUnreadNotificationCount(count);
+    } catch (err) {
+      console.error('Failed to load notifications:', err);
+    } finally {
+      setLoadingNotifications(false);
+    }
+  }, []);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await markNotificationsRead({ all: true });
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, readAt: new Date().toISOString() }))
+      );
+      setUnreadNotificationCount(0);
+    } catch (err) {
+      console.error('Failed to mark all notifications as read:', err);
+    }
+  };
+
+  const handleMarkRead = async (id: string) => {
+    try {
+      await markNotificationsRead({ ids: [id] });
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
+      );
+      setUnreadNotificationCount((prev) => Math.max(0, prev - 1));
+    } catch (err) {
+      console.error(`Failed to mark notification ${id} as read:`, err);
+    }
+  };
+
   useEffect(() => {
     fetchMe()
       .then((data) => {
@@ -124,6 +173,12 @@ export default function DashboardApp() {
       })
       .catch(() => { });
   }, []);
+
+  useEffect(() => {
+    if (currentOrg) {
+      loadNotifications();
+    }
+  }, [currentOrg, loadNotifications]);
 
   const handleSwitchOrg = async (orgId: string) => {
     if (orgId === currentOrg?.id) return;
@@ -328,6 +383,35 @@ export default function DashboardApp() {
     active: activeTab === 'reid',
   });
 
+  const handleNotificationClick = async (n: Notification) => {
+    setNotificationsDrawerOpen(false);
+
+    if (n.category === 'surveillance' && n.clipId) {
+      navigate('/app/events');
+      if (n.streamId) {
+        setSelectedStreamId(n.streamId);
+      }
+      try {
+        const res = await apiFetch(`/clips/${n.clipId}`);
+        if (res.ok) {
+          const data = await res.json();
+          const clip = data.clip || data;
+          if (clip) {
+            eventsTab.handleSelectClip(clip);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch clip for notification click:', err);
+      }
+    } else if (n.deviceId) {
+      const deviceStream = streams.find((s) => s.deviceId === n.deviceId);
+      if (deviceStream) {
+        setSelectedStreamId(deviceStream.streamId);
+        setSelectedDeviceId(n.deviceId);
+      }
+    }
+  };
+
   const fetchDevices = useCallback(async (selectFirst = false) => {
     try {
       const res = await apiFetch('/devices');
@@ -436,6 +520,20 @@ export default function DashboardApp() {
       const data = JSON.parse(event.data);
 
       switch (data.type) {
+        case 'notification_count':
+          if (currentOrg && data.orgId === currentOrg.id) {
+            setUnreadNotificationCount(data.count);
+          }
+          break;
+        case 'new_notification':
+          if (currentOrg && data.notification && data.notification.orgId === currentOrg.id) {
+            setNotifications((prev) => {
+              if (prev.some((n) => n.id === data.notification.id)) return prev;
+              return [data.notification, ...prev];
+            });
+            setUnreadNotificationCount((prev) => prev + 1);
+          }
+          break;
         case 'status':
           if (data.streamId) {
             const prevStatus = data.streamId === selectedStreamIdRef.current
@@ -483,6 +581,7 @@ export default function DashboardApp() {
                   pixelChangeThreshold: cfg.pixelChangeThreshold,
                   detectPerson: cfg.detectPerson ?? true,
                   detectVehicle: cfg.detectVehicle ?? true,
+                  alertInstructions: cfg.alertInstructions || [],
                 });
               }
             }
@@ -659,6 +758,7 @@ export default function DashboardApp() {
           pixelChangeThreshold: stream.pixelChangeThreshold,
           detectPerson: stream.detectPerson ?? true,
           detectVehicle: stream.detectVehicle ?? true,
+          alertInstructions: stream.alertInstructions || [],
         });
         setStatus(stream.status);
         setSelectedDeviceId(stream.deviceId);
@@ -880,6 +980,7 @@ export default function DashboardApp() {
       pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
       detectPerson: DEFAULT_STREAM_CONFIG.detectPerson,
       detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
+      alertInstructions: [],
     });
     setAddingStreamForDeviceId(deviceId);
     setShowConfigDialog(true);
@@ -1049,6 +1150,18 @@ export default function DashboardApp() {
         onOpenSidebar={() => setLeftSidebarOpen(true)}
         onToggleSettings={() => navigate(appView === 'settings' ? '/app/events' : '/app/settings')}
         onLogout={handleLogout}
+        unreadNotificationCount={unreadNotificationCount}
+        onNotificationBellClick={() => setNotificationsDrawerOpen((prev) => !prev)}
+      />
+
+      <NotificationDrawer
+        isOpen={notificationsDrawerOpen}
+        onClose={() => setNotificationsDrawerOpen(false)}
+        notifications={notifications}
+        loading={loadingNotifications}
+        onMarkAllRead={handleMarkAllRead}
+        onMarkRead={handleMarkRead}
+        onNotificationClick={handleNotificationClick}
       />
 
       {appView === 'settings' && currentOrg && currentUser ? (
