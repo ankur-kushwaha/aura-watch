@@ -169,7 +169,7 @@ export default function Landing() {
         </div>
 
         {/* Hero Content Section */}
-        <section className="relative pt-32 pb-20 px-6 max-w-[1400px] mx-auto min-h-[85vh] flex items-center z-10" aria-labelledby="hero-heading">
+        <section className="relative pt-28 pb-16 px-6 max-w-6xl mx-auto min-h-screen flex items-center z-10" aria-labelledby="hero-heading">
           <div className="relative z-10 w-full grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
             {/* Left Column: Hero Content */}
             <div className="lg:col-span-7 flex flex-col items-start text-left relative z-10">
@@ -180,7 +180,7 @@ export default function Landing() {
 
               <h1
                 id="hero-heading"
-                className="text-[2.25rem] md:text-[3.25rem] font-extrabold leading-[1.1] tracking-tight mb-5 landing-fade-in landing-delay-1"
+                className="text-[3rem] md:text-[4.5rem] font-extrabold leading-[1.05] tracking-tight mb-6 landing-fade-in landing-delay-1"
               >
                 <span className="text-white">AI Surveillance Agent </span>
                 <br />
@@ -189,66 +189,45 @@ export default function Landing() {
                 <span className="text-gradient-purple">Alerts. Answers.</span>
               </h1>
 
-              <p className="text-text-secondary text-[0.95rem] md:text-[1rem] leading-relaxed max-w-xl mb-8 landing-fade-in landing-delay-2">
+              <p className="text-text-secondary text-[1.05rem] md:text-[1.15rem] leading-relaxed max-w-xl mb-10 landing-fade-in landing-delay-2">
                 Aura-Watch uses powerful AI agents to monitor your cameras, detect suspicious activity, and provide real-time answers—so your team can act faster and smarter.
               </p>
 
-              <div className="flex flex-row items-center gap-4 mb-14 landing-fade-in landing-delay-3">
-                <Link to="/contact" className="btn btn-primary text-[0.875rem] px-6 py-2.5 font-semibold">
+              <div className="flex flex-row items-center gap-4 landing-fade-in landing-delay-3">
+                <Link to="/contact" className="btn btn-primary text-[1rem] px-8 py-3.5 font-semibold">
                   Request a Demo
                 </Link>
-                <a href="#capabilities" className="btn btn-secondary text-[0.875rem] px-6 py-2.5 font-semibold">
+                <a href="#capabilities" className="btn btn-secondary text-[1rem] px-8 py-3.5 font-semibold">
                   Explore Features
                 </a>
               </div>
-
-              {/* Left Column Bottom Feature List */}
-              <div className="grid grid-cols-2 gap-y-6 gap-x-4 w-full pt-6 border-t border-white/6 landing-fade-in landing-delay-4">
-                {[
-                  {
-                    title: '24/7 AI Monitoring',
-                    desc: 'Across all your cameras',
-                    icon: Camera,
-                  },
-                  {
-                    title: 'Detect & Track',
-                    desc: 'Suspicious activity in real-time',
-                    icon: Fingerprint,
-                  },
-                  {
-                    title: 'Instant Alerts',
-                    desc: 'Stay informed, act faster',
-                    icon: BellRing,
-                  },
-                  {
-                    title: 'Ask. Get Answers.',
-                    desc: 'AI agent answers in seconds',
-                    icon: MessageSquare,
-                  },
-                ].map((feat, idx) => (
-                  <div key={idx} className="flex gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 mt-0.5 shadow-[0_0_10px_rgba(124,58,237,0.1)]">
-                      <feat.icon size={16} />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-[0.85rem] font-bold text-white leading-tight">{feat.title}</span>
-                      <span className="text-[0.725rem] text-text-muted mt-1 leading-normal">{feat.desc}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
 
-            {/* Right Column: Spacer on desktop, stacked mockup on mobile/tablet */}
-            <div className="lg:col-span-5 relative z-10 w-full flex items-center justify-center">
-              {/* Stacked mobile preview image inside a premium glass panel */}
-              <div className="lg:hidden w-full max-w-[500px] mx-auto mt-6 rounded-2xl border border-white/8 bg-white/[0.015] p-3 shadow-[0_0_40px_rgba(124,58,237,0.12)] relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 via-transparent to-secondary/5 opacity-50 pointer-events-none" />
-                <img
-                  src="/screenshots/hero-right-graphic.png"
-                  alt="Aura-Watch AI Surveillance System Mockup"
-                  className="w-full h-auto rounded-xl block border border-white/5 shadow-2xl mix-blend-screen opacity-95"
-                />
+            {/* Right Column: Feature card on desktop, stacked below content on mobile */}
+            <div className="lg:col-span-5 relative z-10 w-full flex items-center justify-center landing-fade-in landing-delay-4">
+              {/* Feature grid card — shown on both desktop (right col) and mobile (stacked) */}
+              <div className="w-full max-w-[500px] lg:max-w-none mx-auto rounded-2xl border border-white/8 bg-white/[0.03] backdrop-blur-sm p-7 shadow-[0_0_50px_rgba(124,58,237,0.12)] relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-secondary/5 pointer-events-none" />
+                <div className="absolute top-0 right-0 w-40 h-40 bg-secondary/8 rounded-full blur-2xl pointer-events-none" />
+                <div className="absolute bottom-0 left-0 w-32 h-32 bg-primary/8 rounded-full blur-2xl pointer-events-none" />
+                <div className="grid grid-cols-2 gap-4 relative z-10">
+                  {[
+                    { title: '24/7 AI Monitoring', desc: 'Across all your cameras', icon: Camera },
+                    { title: 'Detect & Track', desc: 'Suspicious activity in real-time', icon: Fingerprint },
+                    { title: 'Instant Alerts', desc: 'Stay informed, act faster', icon: BellRing },
+                    { title: 'Ask. Get Answers.', desc: 'AI agent answers in seconds', icon: MessageSquare },
+                  ].map((feat, idx) => (
+                    <div key={idx} className="flex flex-col gap-3 p-5 rounded-xl border border-white/6 bg-white/[0.025] hover:bg-white/[0.05] hover:border-primary/25 transition-all group">
+                      <div className="w-11 h-11 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 shadow-[0_0_16px_rgba(124,58,237,0.15)] group-hover:shadow-[0_0_20px_rgba(124,58,237,0.25)] transition-all">
+                        <feat.icon size={20} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[0.9rem] font-bold text-white leading-tight">{feat.title}</span>
+                        <span className="text-[0.775rem] text-text-muted mt-1 leading-normal">{feat.desc}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

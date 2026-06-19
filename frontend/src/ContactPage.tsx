@@ -1,14 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Mail, Phone, MapPin, CheckCircle, Send } from 'lucide-react';
-import Header from './components/Header';
+import { Mail, MapPin, Phone, Sparkles } from 'lucide-react';
+import { useEffect } from 'react';
 import Footer from './components/Footer';
+import Header from './components/Header';
 import { CONTACT } from './constants';
 
 
 export default function ContactPage() {
-  const [formData, setFormData] = useState({ name: '', email: '', subject: '', message: '' });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSubmitted, setIsSubmitted] = useState(false);
 
   useEffect(() => {
     document.title = 'Contact Us — Aura Watch AI';
@@ -66,24 +63,6 @@ export default function ContactPage() {
     };
   }, []);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name || !formData.email || !formData.message) return;
-
-    setIsSubmitting(true);
-    // Simulate API request delay
-    setTimeout(() => {
-      setIsSubmitting(false);
-      setIsSubmitted(true);
-      setFormData({ name: '', email: '', subject: '', message: '' });
-    }, 1200);
-  };
-
   return (
     <div className="relative">
       {/* Nav */}
@@ -106,7 +85,7 @@ export default function ContactPage() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-5 gap-8 items-start">
+          <div className="grid md:grid-cols-1 gap-8 items-start">
             {/* Contact Info */}
             <div className="md:col-span-2 flex flex-col gap-5">
               <div className="glass-panel p-6 flex items-start gap-4">
@@ -142,99 +121,13 @@ export default function ContactPage() {
                 <div>
                   <h4 className="text-[0.95rem] font-bold mb-1">Location</h4>
                   <span className="text-text-secondary text-[0.85rem]">
-                    New Delhi, India
+                    Gurugram, India
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Contact Form */}
-            <div className="md:col-span-3">
-              <div className="glass-panel p-8">
-                {isSubmitted ? (
-                  <div className="text-center py-10 flex flex-col items-center gap-4">
-                    <div className="w-14 h-14 rounded-full bg-success/15 border border-success/30 flex items-center justify-center text-success mb-2">
-                      <CheckCircle size={32} />
-                    </div>
-                    <h3 className="text-[1.35rem] font-bold text-text-primary">Message Sent Successfully!</h3>
-                    <p className="text-text-secondary text-[0.9rem] max-w-sm leading-relaxed">
-                      Thank you for reaching out. Ankur will review your query and respond shortly.
-                    </p>
-                    <button 
-                      onClick={() => setIsSubmitted(false)}
-                      className="btn btn-secondary text-[0.85rem] mt-4 py-2 px-5"
-                    >
-                      Send Another Message
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-                    <h3 className="text-[1.25rem] font-bold mb-2">Send Message</h3>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div className="flex flex-col gap-1.5">
-                        <label htmlFor="name" className="text-[0.75rem] text-text-secondary font-semibold uppercase tracking-wider pl-1">Your Name *</label>
-                        <input 
-                          type="text" 
-                          id="name"
-                          name="name"
-                          required
-                          value={formData.name}
-                          onChange={handleInputChange}
-                          placeholder="Ankur Kushwaha"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label htmlFor="email" className="text-[0.75rem] text-text-secondary font-semibold uppercase tracking-wider pl-1">Email Address *</label>
-                        <input 
-                          type="email" 
-                          id="email"
-                          name="email"
-                          required
-                          value={formData.email}
-                          onChange={handleInputChange}
-                          placeholder="ankur.kus1@gmail.com"
-                        />
-                      </div>
-                    </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label htmlFor="subject" className="text-[0.75rem] text-text-secondary font-semibold uppercase tracking-wider pl-1">Subject</label>
-                      <input 
-                        type="text" 
-                        id="subject"
-                        name="subject"
-                        value={formData.subject}
-                        onChange={handleInputChange}
-                        placeholder="Licensing queries / General integration"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <label htmlFor="message" className="text-[0.75rem] text-text-secondary font-semibold uppercase tracking-wider pl-1">Your Message *</label>
-                      <textarea 
-                        id="message"
-                        name="message"
-                        required
-                        rows={5}
-                        value={formData.message}
-                        onChange={handleInputChange}
-                        placeholder="Detail how we can help you configure your multi-camera setups..."
-                        className="resize-none"
-                      />
-                    </div>
-
-                    <button 
-                      type="submit" 
-                      disabled={isSubmitting}
-                      className="btn btn-primary mt-2 py-3 w-full font-semibold"
-                    >
-                      {isSubmitting ? 'Sending Message...' : 'Send Message'}
-                      <Send size={15} />
-                    </button>
-                  </form>
-                )}
-              </div>
-            </div>
           </div>
         </div>
       </main>

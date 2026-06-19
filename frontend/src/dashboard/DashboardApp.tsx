@@ -222,6 +222,11 @@ export default function DashboardApp() {
   const lastStreamRefreshAtRef = useRef<number>(0);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
 
+  const [showInlineWebRtc, setShowInlineWebRtc] = useState<boolean>(true);
+  useEffect(() => {
+    setShowInlineWebRtc(true);
+  }, [selectedStreamId]);
+
   // WebSocket Ref
   const wsRef = useRef<WebSocket | null>(null);
   const wsIntentionalCloseRef = useRef(false);
@@ -244,13 +249,9 @@ export default function DashboardApp() {
     [streams, selectedStreamId],
   );
 
-  const webRtcPreviewUrl = useMemo(() => {
-    return selectedStream?.cameraType === 'rtsp' ? getWebRtcPreviewUrl(selectedStream.streamUrl) : null;
-  }, [selectedStream]);
-
   const usesWebPreview = LIVE_PREVIEW_ENABLED && selectedStream?.cameraType !== 'rtsp';
-  const usesRtspExternal = selectedStream?.cameraType === 'rtsp' && !webRtcPreviewUrl;
-  const usesExternalView = !usesWebPreview && !webRtcPreviewUrl;
+  const usesRtspExternal = selectedStream?.cameraType === 'rtsp';
+  const usesExternalView = !usesWebPreview;
   const usesWebPreviewRef = useRef(usesWebPreview);
   useEffect(() => {
     usesWebPreviewRef.current = usesWebPreview;
@@ -343,10 +344,14 @@ export default function DashboardApp() {
 
       if (streamsData.length > 0) {
         setSelectedStreamId((prevId) => {
-          if (selectFirst || !prevId) {
+          if (selectFirst) {
             return streamsData[0].streamId;
           }
-          return prevId;
+          if (prevId) {
+            const stillExists = streamsData.some((s) => s.streamId === prevId);
+            return stillExists ? prevId : '';
+          }
+          return '';
         });
       }
     } catch (err) {
@@ -650,7 +655,7 @@ export default function DashboardApp() {
   // Fetch initial data
   useEffect(() => {
     Promise.resolve().then(() => {
-      fetchDevices(true);
+      fetchDevices(false);
     });
   }, [fetchDevices]);
 
@@ -898,7 +903,7 @@ export default function DashboardApp() {
 
   const handleToggleStreamMonitoring = async (streamId: string, currentTrackingEnabled: boolean) => {
     const stream = streams.find((s) => s.streamId === streamId);
-    if (!stream || stream.status === 'Offline') return;
+    if (!stream) return;
 
     try {
       await apiFetch(`/streams/${streamId}/config`, {
@@ -1289,8 +1294,7 @@ export default function DashboardApp() {
                               >
                                 <div
                                   onClick={() => {
-                                    const hasWebRtc = stream.cameraType === 'rtsp' && !!getWebRtcPreviewUrl(stream.streamUrl);
-                                    if (stream.cameraType === 'rtsp' && !hasWebRtc) {
+                                    if (stream.cameraType === 'rtsp') {
                                       setSelectedStreamId((prev) => (prev === stream.streamId ? '' : stream.streamId));
                                       setSelectedDeviceId(stream.deviceId);
                                       setLiveFeedOpen(false);
@@ -1341,13 +1345,12 @@ export default function DashboardApp() {
                                         );
                                       }}
                                       className={`btn ${
-                                        stream.trackingEnabled && isStreamOnline
+                                        stream.trackingEnabled
                                           ? 'btn-primary'
                                           : 'btn-secondary'
                                       } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
-                                      disabled={!isStreamOnline}
                                     >
-                                      {stream.trackingEnabled && isStreamOnline ? (
+                                      {stream.trackingEnabled ? (
                                         <>
                                           <Activity size={10} /> Disable Tracking
                                         </>
@@ -1396,74 +1399,89 @@ export default function DashboardApp() {
                                     >
                                       {stream.streamUrl}
                                     </div>
-                                    <div className="grid grid-cols-2 gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void handleOpenInVlc(stream.streamUrl);
-                                        }}
-                                        className="btn btn-primary py-1 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1 font-semibold cursor-pointer"
-                                      >
-                                        <ExternalLink size={11} /> Open in VLC
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void handleCopyRtspUrl(stream.streamUrl);
-                                        }}
-                                        className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1 cursor-pointer"
-                                      >
-                                        <Copy size={11} /> Copy URL
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void handleCopyMacVlcCommand(stream.streamUrl);
-                                        }}
-                                        className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1 col-span-2 cursor-pointer"
-                                      >
-                                        <Terminal size={11} /> Copy macOS Terminal Command
-                                      </button>
-                                    </div>
-
-                                    {vlcLaunchHint === 'opened' && (
-                                      <p className="text-[0.7rem] text-emerald-400 font-medium leading-normal">
-                                        VLC should be opening. If not, copy the RTSP URL or terminal command.
-                                      </p>
-                                    )}
-
-                                    {vlcLaunchHint === 'failed' && (
-                                      <div className="text-left bg-[rgba(245,158,11,0.1)] border border-[rgba(245,158,11,0.35)] rounded p-2.5">
-                                        <p className="text-[0.75rem] font-semibold text-amber-300">
-                                          Browser could not open vlc://
-                                        </p>
-                                        <p className="text-[0.68rem] text-text-muted mt-1 leading-relaxed">
-                                          Install VLC from{' '}
-                                          <a
-                                            href="https://www.videolan.org/vlc/"
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-[#a78bfa] hover:underline"
-                                          >
-                                            videolan.org
-                                          </a>
-                                          , open it once, or in VLC: Media → Open Network Stream and paste the RTSP URL.
-                                        </p>
-                                      </div>
-                                    )}
-
-                                    <p className="text-[0.65rem] text-text-muted leading-relaxed">
+                                    <div className="flex flex-col gap-1.5" onClick={(e) => e.stopPropagation()}>
                                       {getWebRtcPreviewUrl(stream.streamUrl) ? (
-                                        <span className="text-emerald-400 font-medium">
-                                          WebRTC live preview is available. Click stream to watch.
-                                        </span>
+                                        showInlineWebRtc ? (
+                                          <div className="flex flex-col gap-2 animate-[fadeIn_0.2s_ease-out]">
+                                            <div className="w-full relative" style={{ aspectRatio: '16/9' }}>
+                                              <iframe
+                                                src={getWebRtcPreviewUrl(stream.streamUrl)!}
+                                                title="WebRTC Live Preview"
+                                                className="w-full h-full border-0 rounded-lg block bg-[#090d16]"
+                                                allow="autoplay; fullscreen"
+                                              />
+                                              <div className="absolute top-2 left-2 text-[0.6rem] font-semibold flex items-center gap-1.5 py-0.5 px-2 rounded-full bg-[rgba(16,185,129,0.25)] text-emerald-400 border border-[rgba(16,185,129,0.4)] pointer-events-none select-none z-10">
+                                                <span className="w-1 h-1 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
+                                                LIVE (WebRTC)
+                                              </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-1.5">
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setShowInlineWebRtc(false);
+                                                }}
+                                                className="btn btn-secondary py-1.5 text-[0.7rem] rounded flex items-center justify-center gap-1 hover:text-danger hover:border-danger/30 transition-colors cursor-pointer font-semibold"
+                                              >
+                                                <X size={11} /> Close Preview
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  void handleCopyMacVlcCommand(stream.streamUrl);
+                                                }}
+                                                className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
+                                                title="Copy macOS Terminal Command"
+                                              >
+                                                <Terminal size={11} /> Copy Command
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="grid grid-cols-2 gap-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setShowInlineWebRtc(true);
+                                              }}
+                                              className="btn btn-primary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 font-semibold cursor-pointer"
+                                            >
+                                              <Play size={11} /> Play Live View
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                void handleCopyMacVlcCommand(stream.streamUrl);
+                                              }}
+                                              className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
+                                              title="Copy macOS Terminal Command"
+                                            >
+                                              <Terminal size={11} /> Copy Terminal Command
+                                            </button>
+                                          </div>
+                                        )
                                       ) : (
-                                        "Live preview is not supported in-browser for RTSP. Open in VLC to watch live."
+                                        <div className="flex flex-col gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              void handleCopyMacVlcCommand(stream.streamUrl);
+                                            }}
+                                            className="btn btn-secondary w-full py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold"
+                                          >
+                                            <Terminal size={11} /> Copy Terminal Command
+                                          </button>
+                                          <p className="text-[0.65rem] text-text-muted leading-relaxed mt-1 text-center">
+                                            Live preview is not supported in-browser for this RTSP stream.
+                                          </p>
+                                        </div>
                                       )}
-                                    </p>
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1483,9 +1501,9 @@ export default function DashboardApp() {
           <div className="glass-panel p-5 relative">
             <div className={`flex justify-between items-center gap-2 flex-wrap ${liveFeedOpen ? 'mb-4' : ''}`}>
               <h2 className="text-[1.1rem] flex items-center gap-2">
-                                <Video size={18} color="var(--color-secondary)" />
-                                {usesWebPreview || webRtcPreviewUrl ? 'Live Camera Feed' : 'Camera Stream'}
-                              </h2>
+                <Video size={18} color="var(--color-secondary)" />
+                {usesWebPreview ? 'Live Camera Feed' : 'Camera Stream'}
+              </h2>
               <div className="flex items-center gap-2 flex-wrap">
                 {liveFeedOpen && status === 'Error' && (
                   <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
@@ -1635,20 +1653,7 @@ export default function DashboardApp() {
                   </div>
                 ) : (
                 <div className="w-full relative min-h-[200px]">
-                  {webRtcPreviewUrl ? (
-                    <div className="w-full relative" style={{ aspectRatio: '16/9' }}>
-                      <iframe
-                        src={webRtcPreviewUrl}
-                        title="WebRTC Live Preview"
-                        className="w-full h-full border-0 rounded-xl block bg-[#090d16]"
-                        allow="autoplay; fullscreen"
-                      />
-                      <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(16,185,129,0.2)] text-emerald-400 border border-[rgba(16,185,129,0.35)] pointer-events-none select-none z-10">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
-                        LIVE (WebRTC)
-                      </div>
-                    </div>
-                  ) : liveFrame && (
+                  {liveFrame && (
                     <img
                       src={liveFrame}
                       alt="Live camera preview"

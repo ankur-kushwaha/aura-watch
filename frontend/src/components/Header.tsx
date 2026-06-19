@@ -32,23 +32,28 @@ export default function Header() {
           <Link to="/login" className="hover:text-text-primary transition-colors">
             Pricing
           </Link>
-          <Link 
-            to="/about" 
+          <Link
+            to="/about"
             className={`hover:text-text-primary transition-colors ${isAboutActive ? 'text-text-primary font-medium' : ''}`}
           >
             About Us
           </Link>
-          <Link 
-            to="/contact" 
+          <Link
+            to="/contact"
             className={`hover:text-text-primary transition-colors ${isContactActive ? 'text-text-primary font-medium' : ''}`}
           >
             Contact
           </Link>
         </nav>
-
-        <Link to="/contact" className="btn btn-primary text-[0.825rem] py-1.5 px-4 font-semibold tracking-wide shadow-[0_0_15px_rgba(6,182,212,0.1)]">
-          Request a Demo
-        </Link>
+        <div>
+          <Link to="/contact" className="btn btn-primary text-[0.825rem] py-1.5 px-4 font-semibold tracking-wide shadow-[0_0_15px_rgba(6,182,212,0.1)]">
+            Request a Demo
+          </Link>
+          &nbsp;
+          &nbsp;
+          <Link to="/login" className="btn btn-primary text-[0.825rem] py-1.5 px-4 font-semibold tracking-wide shadow-[0_0_15px_rgba(6,182,212,0.1)]">
+            Sign in
+          </Link></div>
       </div>
     </header>
   );
