@@ -71,6 +71,21 @@ import {
 } from './components/modals';
 import { useEventsTab, useReidTab } from './hooks';
 
+const getWebRtcPreviewUrl = (rtspUrl: string | undefined): string | null => {
+  if (!rtspUrl) return null;
+  const lowerUrl = rtspUrl.toLowerCase();
+  if (!lowerUrl.startsWith('rtsp://')) return null;
+
+  const match = rtspUrl.match(/^rtsp:\/\/([^:/]+)(?::\d+)?\/(.+)$/i);
+  if (match) {
+    const host = match[1];
+    const path = match[2];
+    const cleanPath = path.endsWith('/') ? path : `${path}/`;
+    return `https://${host}/${cleanPath}`;
+  }
+  return null;
+};
+
 export default function DashboardApp() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -229,9 +244,13 @@ export default function DashboardApp() {
     [streams, selectedStreamId],
   );
 
+  const webRtcPreviewUrl = useMemo(() => {
+    return selectedStream?.cameraType === 'rtsp' ? getWebRtcPreviewUrl(selectedStream.streamUrl) : null;
+  }, [selectedStream]);
+
   const usesWebPreview = LIVE_PREVIEW_ENABLED && selectedStream?.cameraType !== 'rtsp';
-  const usesRtspExternal = selectedStream?.cameraType === 'rtsp';
-  const usesExternalView = !usesWebPreview;
+  const usesRtspExternal = selectedStream?.cameraType === 'rtsp' && !webRtcPreviewUrl;
+  const usesExternalView = !usesWebPreview && !webRtcPreviewUrl;
   const usesWebPreviewRef = useRef(usesWebPreview);
   useEffect(() => {
     usesWebPreviewRef.current = usesWebPreview;
@@ -1270,7 +1289,8 @@ export default function DashboardApp() {
                               >
                                 <div
                                   onClick={() => {
-                                    if (stream.cameraType === 'rtsp') {
+                                    const hasWebRtc = stream.cameraType === 'rtsp' && !!getWebRtcPreviewUrl(stream.streamUrl);
+                                    if (stream.cameraType === 'rtsp' && !hasWebRtc) {
                                       setSelectedStreamId((prev) => (prev === stream.streamId ? '' : stream.streamId));
                                       setSelectedDeviceId(stream.deviceId);
                                       setLiveFeedOpen(false);
@@ -1436,7 +1456,13 @@ export default function DashboardApp() {
                                     )}
 
                                     <p className="text-[0.65rem] text-text-muted leading-relaxed">
-                                      Live preview is not supported in-browser for RTSP. Open in VLC to watch live.
+                                      {getWebRtcPreviewUrl(stream.streamUrl) ? (
+                                        <span className="text-emerald-400 font-medium">
+                                          WebRTC live preview is available. Click stream to watch.
+                                        </span>
+                                      ) : (
+                                        "Live preview is not supported in-browser for RTSP. Open in VLC to watch live."
+                                      )}
                                     </p>
                                   </div>
                                 )}
@@ -1457,9 +1483,9 @@ export default function DashboardApp() {
           <div className="glass-panel p-5 relative">
             <div className={`flex justify-between items-center gap-2 flex-wrap ${liveFeedOpen ? 'mb-4' : ''}`}>
               <h2 className="text-[1.1rem] flex items-center gap-2">
-                <Video size={18} color="var(--color-secondary)" />
-                {usesWebPreview ? 'Live Camera Feed' : 'Camera Stream'}
-              </h2>
+                                <Video size={18} color="var(--color-secondary)" />
+                                {usesWebPreview || webRtcPreviewUrl ? 'Live Camera Feed' : 'Camera Stream'}
+                              </h2>
               <div className="flex items-center gap-2 flex-wrap">
                 {liveFeedOpen && status === 'Error' && (
                   <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
@@ -1609,7 +1635,20 @@ export default function DashboardApp() {
                   </div>
                 ) : (
                 <div className="w-full relative min-h-[200px]">
-                  {liveFrame && (
+                  {webRtcPreviewUrl ? (
+                    <div className="w-full relative" style={{ aspectRatio: '16/9' }}>
+                      <iframe
+                        src={webRtcPreviewUrl}
+                        title="WebRTC Live Preview"
+                        className="w-full h-full border-0 rounded-xl block bg-[#090d16]"
+                        allow="autoplay; fullscreen"
+                      />
+                      <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(16,185,129,0.2)] text-emerald-400 border border-[rgba(16,185,129,0.35)] pointer-events-none select-none z-10">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
+                        LIVE (WebRTC)
+                      </div>
+                    </div>
+                  ) : liveFrame && (
                     <img
                       src={liveFrame}
                       alt="Live camera preview"

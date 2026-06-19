@@ -7,16 +7,10 @@ import {
   Activity,
   ArrowRight,
   BellRing,
-  Brain,
   Camera,
-  Eye,
   Fingerprint,
-  LayoutGrid,
   MessageSquare,
-  Network,
   Search,
-  Shield,
-  Zap,
 } from 'lucide-react';
 
 
@@ -60,95 +54,6 @@ const TRACKING_TIMELINE_EXAMPLES = [
   },
 ];
 
-const CAPABILITIES = [
-  {
-    icon: Zap,
-    title: 'Smart on-device detection',
-    description: 'AI runs on your hardware. Clips upload only when people, vehicles, or motion are detected.',
-  },
-  {
-    icon: Activity,
-    title: 'Live multi-camera view',
-    description: 'Stream every angle in real time—Monitoring, Recording, Processing, Offline at a glance.',
-  },
-  {
-    icon: MessageSquare,
-    title: 'Ask Camera AI',
-    description: 'Query your entire archive in plain English. Get cited clips back instantly.',
-  },
-  {
-    icon: Brain,
-    title: 'AI video summaries',
-    description: 'Every event gets a readable summary so you know what happened before hitting play.',
-  },
-  {
-    icon: Fingerprint,
-    title: 'Cross-camera tracking',
-    description: 'Identify unique individuals, track whereabouts in real-time, and trace suspect paths across disjoint camera feeds with unified Re-ID.',
-  },
-  {
-    icon: Network,
-    title: 'Remote fleet management',
-    description: 'Add streams, tweak thresholds, reboot devices, and read logs from one hub.',
-  },
-];
-
-const USE_CASES = [
-  {
-    icon: Eye,
-    title: 'Active multi-feed monitoring',
-    featured: true,
-    mode: 'monitor' as const,
-    description:
-      'For anyone who constantly watches several camera feeds—warehouse managers, front desk, homeowners with many angles. One command center instead of tab-hopping, with a real-time pipeline ready for proactive alerts.',
-    examples: [
-      'Watch all cameras from a single dashboard',
-      'Alert me when motion is detected after hours',
-      'Notify me if someone enters a restricted zone',
-    ],
-  },
-  {
-    icon: Fingerprint,
-    title: 'Multi-camera person tracking',
-    featured: true,
-    mode: 'tracking' as const,
-    description:
-      'For tracing whereabouts and investigating security incidents across multiple physical areas. Form a unified trail of any suspect, verify matches with confidence scores, and get notified about unauthorized activity or loitering.',
-    examples: [
-      'Trace suspect path from entrance to back office',
-      'Locate where a missing person was last seen',
-      'Receive instant alerts for suspicious cross-camera patterns',
-    ],
-  },
-  {
-    icon: MessageSquare,
-    title: 'Ask Camera AI investigations',
-    featured: true,
-    mode: 'ask' as const,
-    description:
-      'For when you weren\'t watching—or need to find something fast. Ask questions about past events in plain English and get cited clips. No scrubbing through hours of footage.',
-    examples: [
-      'Was anyone at the front door after midnight?',
-      'Did anyone carry a box between 2–4 PM?',
-      'Show me all deliveries to the loading dock this week',
-    ],
-  },
-  {
-    icon: Shield,
-    title: 'Home & office security',
-    featured: false,
-    description: 'Monitor live when you\'re watching, ask AI when you need to catch up.',
-    examples: ['How many visitors today?', 'What happened while I was away?'],
-  },
-  {
-    icon: Camera,
-    title: 'Distributed camera fleets',
-    featured: false,
-    description: 'Deploy agents on Pi or Jetson anywhere. Manage streams and updates remotely.',
-    examples: ['Add an RTSP stream', 'Restart an edge device from the dashboard'],
-  },
-];
-
 const STEPS = [
   {
     step: '01',
@@ -172,29 +77,33 @@ const STEPS = [
   },
 ];
 
-function AccentIcon({
-  icon: Icon,
-  accent,
-  size = 'md',
-}: {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  accent: 'primary' | 'secondary';
-  size?: 'md' | 'lg';
-}) {
-  const styles =
-    accent === 'primary'
-      ? 'bg-primary/15 text-primary shadow-[0_0_20px_rgba(124,58,237,0.15)]'
-      : 'bg-secondary/15 text-secondary shadow-[0_0_20px_rgba(6,182,212,0.12)]';
+const FAQ_ITEMS = [
+  {
+    q: 'How does Aura-Watch connect to my existing cameras?',
+    a: 'Aura-Watch connects to your cameras via standard streaming protocols such as RTSP, RTMP, WebRTC, or HTTP. You can easily connect IP cameras, NVRs, webcams, Raspberry Pi feeds, or NVIDIA Jetson streams in minutes using our lightweight edge agent.',
+  },
+  {
+    q: 'Does my video footage upload to the cloud 24/7?',
+    a: 'No. To save bandwidth and maintain privacy, our smart edge agent processes video locally. It only uploads short recorded clips to the dashboard when meaningful events (like people, vehicles, or motion) are detected.',
+  },
+  {
+    q: 'How does multi-camera person tracking (Re-ID) work?',
+    a: 'Our AI agent extracts visual feature vectors (embeddings) of detected individuals. When a person leaves one camera feed and enters another, our system matches these feature vectors to track their path chronologically across disjoint cameras, generating a unified movement timeline.',
+  },
+  {
+    q: 'What is Ask Camera AI and how does it query my footage?',
+    a: 'Ask Camera AI is a natural language search system. Every motion clip is transcribed into an AI-written summary. When you ask a question (e.g. "Did anyone carry a box?"), the system uses vector semantic search to query these summaries and returns the exact video clips as proof.',
+  },
+  {
+    q: 'Can I set up custom alert rules for suspicious activity?',
+    a: 'Yes. You can configure proactive alerts based on time, camera group, or event sequences (e.g. "Alert me if motion is detected on Camera 1 and then Camera 2 within 2 minutes after 10 PM"). Alerts are triggered instantly via the dashboard or webhooks.',
+  },
+  {
+    q: 'Is my data secure and private?',
+    a: 'Yes, privacy is a core value. All local processing runs on your edge hardware, and transmission of clips to the secure dashboard is fully encrypted. You retain complete control over your footage, logs, and user access levels.',
+  },
+];
 
-  const dim = size === 'lg' ? 'w-14 h-14' : 'w-11 h-11';
-  const iconSize = size === 'lg' ? 26 : 22;
-
-  return (
-    <div className={`${dim} rounded-xl flex items-center justify-center shrink-0 ${styles}`}>
-      <Icon size={iconSize} />
-    </div>
-  );
-}
 
 function SectionHeader({ label, title, description }: { label: string; title: string; description: string }) {
   return (
@@ -202,6 +111,33 @@ function SectionHeader({ label, title, description }: { label: string; title: st
       <span className="text-[0.7rem] uppercase tracking-widest text-secondary font-bold">{label}</span>
       <h2 className="text-[2rem] md:text-[2.5rem] font-bold mt-3 mb-4">{title}</h2>
       <p className="text-text-secondary max-w-2xl mx-auto text-[1.05rem] leading-relaxed">{description}</p>
+    </div>
+  );
+}
+
+function FaqItem({ q, a }: { q: string; a: string }) {
+  const [isOpen, setIsOpen] = React.useState(false);
+
+  return (
+    <div className="glass-panel border-white/6 bg-white/[0.015] hover:bg-white/[0.03] transition-all rounded-2xl overflow-hidden mb-4">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full text-left px-6 py-5 flex items-center justify-between gap-4 font-semibold text-[1.05rem] text-white hover:text-secondary transition-colors focus:outline-none"
+        aria-expanded={isOpen}
+      >
+        <span>{q}</span>
+        <span className={`text-secondary transform transition-transform duration-300 shrink-0 text-xl font-light ${isOpen ? 'rotate-45' : ''}`}>
+          ＋
+        </span>
+      </button>
+      <div
+        className={`transition-all duration-300 ease-in-out overflow-hidden ${isOpen ? 'max-h-[500px] opacity-100 border-t border-white/5' : 'max-h-0 opacity-0'
+          }`}
+      >
+        <p className="px-6 py-5 text-text-secondary text-[0.95rem] leading-relaxed bg-black/10">
+          {a}
+        </p>
+      </div>
     </div>
   );
 }
@@ -217,7 +153,7 @@ export default function Landing() {
 
       <main className="relative">
         {/* Hero Background Image - Full height of browser/viewport, half width on desktop */}
-        <div className="absolute right-0 top-0 h-screen w-full lg:w-1/2 z-0 pointer-events-none select-none overflow-hidden">
+        <div className="hidden lg:block absolute right-0 top-0 h-screen w-1/2 z-0 pointer-events-none select-none overflow-hidden hero-blur-mask">
           {/* Ambient Background Glow Spheres */}
           <div className="absolute top-1/2 left-2/3 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[80%] bg-[radial-gradient(circle,rgba(6,182,212,0.22),transparent_70%)] blur-3xl pointer-events-none z-10" />
           <div className="absolute top-1/2 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[80%] bg-[radial-gradient(circle,rgba(124,58,237,0.18),transparent_70%)] blur-3xl pointer-events-none z-10" />
@@ -303,8 +239,18 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Right Column: Empty to allow the background image to show */}
-            <div className="hidden lg:block lg:col-span-5" />
+            {/* Right Column: Spacer on desktop, stacked mockup on mobile/tablet */}
+            <div className="lg:col-span-5 relative z-10 w-full flex items-center justify-center">
+              {/* Stacked mobile preview image inside a premium glass panel */}
+              <div className="lg:hidden w-full max-w-[500px] mx-auto mt-6 rounded-2xl border border-white/8 bg-white/[0.015] p-3 shadow-[0_0_40px_rgba(124,58,237,0.12)] relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 via-transparent to-secondary/5 opacity-50 pointer-events-none" />
+                <img
+                  src="/screenshots/hero-right-graphic.png"
+                  alt="Aura-Watch AI Surveillance System Mockup"
+                  className="w-full h-auto rounded-xl block border border-white/5 shadow-2xl mix-blend-screen opacity-95"
+                />
+              </div>
+            </div>
           </div>
         </section>
         {/* Deep dives */}
@@ -525,6 +471,22 @@ export default function Landing() {
                   </React.Fragment>
                 ))}
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* FAQ Section */}
+        <section id="faq" className="px-6 py-20 scroll-mt-20">
+          <div className="max-w-4xl mx-auto">
+            <SectionHeader
+              label="FAQ"
+              title="Frequently Asked Questions"
+              description="Got questions about Aura-Watch? We have answers to the most common queries about our surveillance agents."
+            />
+            <div className="mt-12 max-w-3xl mx-auto">
+              {FAQ_ITEMS.map((item, idx) => (
+                <FaqItem key={idx} q={item.q} a={item.a} />
+              ))}
             </div>
           </div>
         </section>
