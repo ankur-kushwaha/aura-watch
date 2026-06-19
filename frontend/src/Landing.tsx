@@ -18,7 +18,6 @@ import {
   Search,
   Shield,
   Sparkles,
-  Users,
   Zap,
 } from 'lucide-react';
 
@@ -56,6 +55,20 @@ const CORE_VALUES = [
     accent: 'primary' as const,
   },
   {
+    id: 'tracking',
+    icon: Fingerprint,
+    tag: 'Multi-Camera Tracking',
+    title: 'Trace paths & know whereabouts',
+    description:
+      'Identify and track people seamlessly across your camera network. Connect feeds to build a unified movement timeline, detect suspicious loitering, and locate specific individuals instantly across different rooms or zones.',
+    highlights: [
+      'Multi-camera person re-identification (Re-ID)',
+      'Chronological path mapping and timelines',
+      'Real-time alerts for suspicious whereabouts',
+    ],
+    accent: 'primary' as const,
+  },
+  {
     id: 'ask-ai',
     icon: MessageSquare,
     tag: 'Ask Camera AI',
@@ -86,6 +99,30 @@ const ALERT_EXAMPLES = [
   'Vehicle detected at the loading dock',
 ];
 
+const TRACKING_TIMELINE_EXAMPLES = [
+  {
+    time: '10:42 AM',
+    camera: 'Front Gate Camera',
+    event: 'Person entering gate entrance',
+    confidence: '98% match',
+    status: 'entry',
+  },
+  {
+    time: '10:44 AM',
+    camera: 'Main Lobby Cam',
+    event: 'Person tracked crossing lobby',
+    confidence: '95% match',
+    status: 'transit',
+  },
+  {
+    time: '10:48 AM',
+    camera: 'Restricted Back Office',
+    event: 'Suspicious loitering alert',
+    confidence: '97% match',
+    status: 'alert',
+  },
+];
+
 const CAPABILITIES = [
   {
     icon: Zap,
@@ -110,7 +147,7 @@ const CAPABILITIES = [
   {
     icon: Fingerprint,
     title: 'Cross-camera tracking',
-    description: 'Link the same person across cameras, merge duplicates, and define room connections.',
+    description: 'Identify unique individuals, track whereabouts in real-time, and trace suspect paths across disjoint camera feeds with unified Re-ID.',
   },
   {
     icon: Network,
@@ -134,6 +171,19 @@ const USE_CASES = [
     ],
   },
   {
+    icon: Fingerprint,
+    title: 'Multi-camera person tracking',
+    featured: true,
+    mode: 'tracking' as const,
+    description:
+      'For tracing whereabouts and investigating security incidents across multiple physical areas. Form a unified trail of any suspect, verify matches with confidence scores, and get notified about unauthorized activity or loitering.',
+    examples: [
+      'Trace suspect path from entrance to back office',
+      'Locate where a missing person was last seen',
+      'Receive instant alerts for suspicious cross-camera patterns',
+    ],
+  },
+  {
     icon: MessageSquare,
     title: 'Ask Camera AI investigations',
     featured: true,
@@ -152,13 +202,6 @@ const USE_CASES = [
     featured: false,
     description: 'Monitor live when you\'re watching, ask AI when you need to catch up.',
     examples: ['How many visitors today?', 'What happened while I was away?'],
-  },
-  {
-    icon: Users,
-    title: 'Multi-camera investigations',
-    featured: false,
-    description: 'Trace a person from lobby to warehouse across your entire camera network.',
-    examples: ['Where did they go after the east hallway?', 'Link these two sightings'],
   },
   {
     icon: Camera,
@@ -182,8 +225,8 @@ const STEPS = [
   },
   {
     step: '03',
-    title: 'Monitor actively',
-    description: 'Watch every feed live. Get alerted in real time when rules you care about fire.',
+    title: 'Track & monitor',
+    description: 'Watch live feeds, trace movements across cameras, and get alerted on suspicious activity.',
   },
   {
     step: '04',
@@ -245,6 +288,9 @@ export default function Landing() {
           </div>
 
           <nav className="hidden md:flex items-center gap-7 text-[0.875rem] text-text-secondary" aria-label="Primary">
+            <a href="#tracking" className="hover:text-text-primary transition-colors">
+              Tracking
+            </a>
             <a href="#monitoring" className="hover:text-text-primary transition-colors">
               Monitoring
             </a>
@@ -275,30 +321,34 @@ export default function Landing() {
         <div className="max-w-4xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/10 bg-white/4 text-[0.8rem] text-text-secondary mb-8 landing-fade-in">
             <Sparkles size={14} className="text-secondary" />
-            Live monitoring · Ask Camera AI
+            Live Monitoring · Cross-Camera Tracking · Ask Camera AI
           </div>
 
           <p className="text-secondary text-[1.125rem] md:text-[1.35rem] font-medium mb-4 landing-fade-in landing-delay-1">
-            Watch every feed—or ask your cameras what you missed.
+            Trace whereabouts, watch live, and search with AI.
           </p>
 
           <h1
             id="hero-heading"
             className="text-[2.75rem] md:text-[4rem] font-extrabold leading-[1.08] tracking-tight mb-6 landing-fade-in landing-delay-2"
           >
-            <span className="text-gradient">Multi-camera live monitoring.</span>
+            <span className="text-gradient">Track people across all cameras.</span>
             <br />
-            <span className="text-gradient-purple">Ask your cameras what happened.</span>
+            <span className="text-gradient-purple">Monitor live and ask Camera AI.</span>
           </h1>
 
           <p className="text-text-secondary text-[1.05rem] md:text-[1.15rem] max-w-2xl mx-auto leading-relaxed mb-10 landing-fade-in landing-delay-3">
-            Aura Watch AI gives you two superpowers: monitor every camera from one dashboard in real time, and
-            ask questions about your footage in plain English—with cited clips as proof.
+            Aura Watch AI gives you three security superpowers: trace a person&apos;s exact whereabouts across disjoint feeds,
+            monitor all cameras live in a single glassmorphism dashboard, and query your footage in plain English.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 landing-fade-in landing-delay-4">
-            <a href="#monitoring" className="btn btn-primary text-[1rem] px-7 py-3">
-              Active monitoring using AI
+            <a href="#tracking" className="btn btn-primary text-[1rem] px-7 py-3">
+              Multi-Camera Tracking
+              <Fingerprint size={18} />
+            </a>
+            <a href="#monitoring" className="btn btn-secondary text-[1rem] px-7 py-3">
+              Live Monitoring
               <Activity size={18} />
             </a>
             <a href="#ask-ai" className="btn btn-secondary text-[1rem] px-7 py-3">
@@ -309,9 +359,9 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Two core values */}
+      {/* Core values */}
       <section className="px-6 pb-20">
-        <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-5">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
           {CORE_VALUES.map((value) => (
             <div
               key={value.id}
@@ -369,9 +419,73 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Monitoring + Ask AI deep dives */}
+      {/* Deep dives */}
       <section className="px-6 py-20">
         <div className="max-w-6xl mx-auto flex flex-col gap-8">
+          {/* Multi-camera tracking deep dive */}
+          <div id="tracking" className="glass-panel active p-8 md:p-12 scroll-mt-24">
+            <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[0.75rem] font-semibold uppercase tracking-wider mb-6">
+                  <Fingerprint size={13} />
+                  Multi-Camera Person Tracking
+                </div>
+                <h2 className="text-[2rem] md:text-[2.5rem] font-bold leading-tight mb-5">
+                  Trace whereabouts.
+                  <br />
+                  <span className="text-gradient-purple">Know suspicious paths.</span>
+                </h2>
+                <p className="text-text-secondary text-[1.05rem] leading-relaxed mb-6">
+                  Instantly track a person&apos;s movement across disjoint camera feeds. Using advanced person
+                  re-identification (Re-ID), Aura Watch matches visual features to compile a unified, chronological
+                  timeline of where individuals go—helping you spot suspicious behavior and unauthorized area access.
+                </p>
+                <Link to="/login" className="btn btn-primary text-[0.95rem] px-6 py-2.5">
+                  Explore Re-ID Dashboard
+                  <ArrowRight size={16} />
+                </Link>
+              </div>
+
+              {/* Simulated timeline mockup */}
+              <div className="glass-panel p-6 border-white/6 bg-white/[0.02] flex flex-col gap-4">
+                <div className="flex items-center justify-between border-b border-white/6 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-danger animate-pulse" />
+                    <span className="text-[0.8rem] font-bold tracking-wider text-text-primary uppercase">Identity Trace: #104</span>
+                  </div>
+                  <span className="text-[0.7rem] bg-primary/20 text-primary border border-primary/30 px-2 py-0.5 rounded-full font-medium">Active Match Profile</span>
+                </div>
+
+                <div className="relative flex flex-col gap-6 pl-4 border-l border-dashed border-white/12">
+                  {TRACKING_TIMELINE_EXAMPLES.map((step, idx) => (
+                    <div key={idx} className="relative group/step">
+                      {/* Timeline Dot */}
+                      <div className={`absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full border-2 border-bg-dark transition-all ${
+                        step.status === 'entry' ? 'bg-success' : step.status === 'transit' ? 'bg-secondary' : 'bg-danger shadow-[0_0_8px_var(--color-danger)]'
+                      }`} />
+                      
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[0.85rem] font-semibold text-text-primary">{step.camera}</span>
+                          <span className="text-[0.75rem] text-text-muted">{step.time}</span>
+                        </div>
+                        <p className="text-[0.8rem] text-text-secondary">{step.event}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[0.7rem] font-medium text-secondary">{step.confidence}</span>
+                          {step.status === 'alert' && (
+                            <span className="text-[0.65rem] bg-danger/10 text-danger border border-danger/25 px-1.5 py-0.5 rounded uppercase font-bold tracking-wider">
+                              Suspicious Activity
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Active monitoring using AI */}
           <div id="monitoring" className="glass-panel p-8 md:p-12 scroll-mt-24">
             <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
@@ -484,16 +598,20 @@ export default function Landing() {
             description="Watch actively when you're on duty—or ask AI when you need to catch up, investigate, or find something fast."
           />
 
-          <div className="grid md:grid-cols-2 gap-5 mb-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
             {featuredUseCases.map((useCase) => (
               <div
                 key={useCase.title}
-                className={`glass-panel p-8 flex flex-col gap-4 ${useCase.mode === 'monitor' ? 'active' : ''}`}
+                className={`glass-panel p-8 flex flex-col gap-4 ${useCase.mode === 'tracking' ? 'active' : ''}`}
               >
                 <div className="flex items-center gap-4">
-                  <AccentIcon icon={useCase.icon} accent={useCase.mode === 'monitor' ? 'primary' : 'secondary'} size="lg" />
+                  <AccentIcon
+                    icon={useCase.icon}
+                    accent={useCase.mode === 'ask' ? 'secondary' : 'primary'}
+                    size="lg"
+                  />
                   <span className="text-[0.7rem] uppercase tracking-widest text-text-muted font-bold">
-                    {useCase.mode === 'monitor' ? 'Watch live' : 'Ask AI'}
+                    {useCase.mode === 'monitor' ? 'Watch live' : useCase.mode === 'tracking' ? 'Track path' : 'Ask AI'}
                   </span>
                 </div>
                 <h3 className="text-[1.2rem] font-semibold">{useCase.title}</h3>
@@ -559,8 +677,9 @@ export default function Landing() {
             <div className="flex flex-col md:flex-row items-center justify-center gap-6 md:gap-8">
               {[
                 { label: 'Your cameras', sub: 'Detect & record', icon: Camera },
-                { label: 'Live monitoring', sub: 'Watch · Alert', icon: Activity },
-                { label: 'Ask Camera AI', sub: 'Search · Cited clips', icon: MessageSquare },
+                { label: 'Person tracking', sub: 'Trace whereabouts', icon: Fingerprint },
+                { label: 'Live monitoring', sub: 'Watch & Alert', icon: Activity },
+                { label: 'Ask Camera AI', sub: 'Search & cited clips', icon: MessageSquare },
               ].map((node, i) => (
                 <React.Fragment key={node.label}>
                   <div className="flex flex-col items-center text-center">
@@ -570,7 +689,7 @@ export default function Landing() {
                     <div className="font-semibold text-[0.9rem]">{node.label}</div>
                     <div className="text-[0.75rem] text-text-muted mt-0.5">{node.sub}</div>
                   </div>
-                  {i < 2 && (
+                  {i < 3 && (
                     <div className="hidden md:flex items-center text-text-muted/30">
                       <ArrowRight size={14} />
                     </div>
@@ -623,6 +742,11 @@ export default function Landing() {
                 Explore
               </h4>
               <ul className="flex flex-col gap-2.5 text-[0.875rem] text-text-muted">
+                <li>
+                  <a href="#tracking" className="hover:text-text-primary transition-colors">
+                    Person Tracking
+                  </a>
+                </li>
                 <li>
                   <a href="#monitoring" className="hover:text-text-primary transition-colors">
                     Active monitoring using AI

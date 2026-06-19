@@ -1,9 +1,9 @@
 export const SITE = {
   name: 'Aura Watch AI',
   url: 'https://aura-watch.adboardtools.com',
-  title: 'Aura Watch AI — Multi-Camera Live Monitoring & Ask Camera AI',
+  title: 'Aura Watch AI — Multi-Camera Tracking, Live Monitoring & Ask Camera AI',
   description:
-    'Monitor every camera feed in real time from one dashboard, get proactive AI alerts, and ask questions about your footage in plain English—with cited clips as proof.',
+    'Track suspect paths across cameras and know their whereabouts. Monitor every feed in real time, get proactive AI alerts, and ask questions about your footage in plain English.',
   ogImage: '/screenshots/dashboard-archive.png',
   twitterHandle: '',
 } as const;
