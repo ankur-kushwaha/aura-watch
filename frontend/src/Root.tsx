@@ -4,7 +4,13 @@ import Admin from './Admin.tsx';
 import Landing from './Landing.tsx';
 import Login from './Login.tsx';
 import Register from './Register.tsx';
+import BlogList from './BlogList.tsx';
+import BlogPost from './BlogPost.tsx';
+import About from './About.tsx';
+import ContactPage from './ContactPage.tsx';
+import Privacy from './Privacy.tsx';
 import { isLoggedIn } from './auth.ts';
+import ScrollToTop from './components/ScrollToTop.tsx';
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   if (isLoggedIn()) {
@@ -23,6 +29,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 export default function Root() {
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <Routes>
         <Route
           path="/"
@@ -47,6 +54,26 @@ export default function Root() {
               <Register />
             </PublicRoute>
           }
+        />
+        <Route
+          path="/blog"
+          element={<BlogList />}
+        />
+        <Route
+          path="/blog/:slug"
+          element={<BlogPost />}
+        />
+        <Route
+          path="/about"
+          element={<About />}
+        />
+        <Route
+          path="/contact"
+          element={<ContactPage />}
+        />
+        <Route
+          path="/privacy"
+          element={<Privacy />}
         />
         <Route
           path="/app/*"
