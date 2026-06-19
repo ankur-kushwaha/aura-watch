@@ -2032,16 +2032,37 @@ class EdgeAgent:
             self.send_status(stream_id, self._resolve_stream_status(stream_id))
 
     def _on_ws_close(self, _ws, _status_code, _msg):
+        if self.heartbeat_timer:
+            self.heartbeat_timer.cancel()
+        if self.preview_stall_timer:
+            self.preview_stall_timer.cancel()
+
+        # Close code 4001 means the hub rejected us because the device is not
+        # registered.  Retrying immediately would just create a tight loop that
+        # spams the backend logs.  Shut down and let the operator register the
+        # device via the dashboard (or re-run with a valid enrollment token).
+        if _status_code == 4001:
+            print(
+                "[Edge WS] Rejected by hub: device not registered (4001). "
+                "Register this device via the dashboard before restarting the edge agent.",
+                flush=True,
+            )
+            self._recent_logs.append(
+                (
+                    "Cloud WebSocket closed with 4001 — device not registered. "
+                    "Shutting down to avoid retry loop.",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            self.shutdown_event.set()
+            return
+
         print("[Edge WS] Connection closed. Retrying in 5 seconds...", flush=True)
         self._recent_logs.append(
             ("Cloud WebSocket disconnected. Retrying in 5 seconds...", datetime.now(timezone.utc).isoformat())
         )
         if len(self._recent_logs) > 100:
             self._recent_logs = self._recent_logs[-100:]
-        if self.heartbeat_timer:
-            self.heartbeat_timer.cancel()
-        if self.preview_stall_timer:
-            self.preview_stall_timer.cancel()
         if not self.shutdown_event.is_set():
             self.reconnect_timer = threading.Timer(5.0, self._reconnect_cloud_ws)
             self.reconnect_timer.daemon = True

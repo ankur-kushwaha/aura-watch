@@ -8,7 +8,6 @@ import {
   Play,
   Trash2,
   Activity,
-  RefreshCw,
   Cpu,
   Terminal,
   Video,
@@ -19,6 +18,7 @@ import {
   AlertTriangle,
   SlidersHorizontal,
   Maximize2,
+  RefreshCw,
 } from 'lucide-react';
 import {
   apiFetch,
@@ -113,7 +113,6 @@ export default function DashboardApp() {
   const [deviceMetricsDevice, setDeviceMetricsDevice] = useState<{ deviceId: string; name: string } | null>(null);
   const [showSystemLogsDialog, setShowSystemLogsDialog] = useState(false);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
-  const [refreshingDevices, setRefreshingDevices] = useState(false);
 
   useEffect(() => {
     fetchMe()
@@ -358,18 +357,7 @@ export default function DashboardApp() {
     }
   }, []);
 
-  const refreshDevices = useCallback(async () => {
-    setRefreshingDevices(true);
-    try {
-      await apiFetch('/devices/check-versions', { method: 'POST' });
-      await fetchDevices();
-    } catch (err) {
-      console.error('Failed to refresh device versions', err);
-      await fetchDevices();
-    } finally {
-      setRefreshingDevices(false);
-    }
-  }, [fetchDevices]);
+
 
   useEffect(() => {
     if (location.pathname === '/app' || location.pathname === '/app/') {
@@ -1119,16 +1107,8 @@ export default function DashboardApp() {
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-[1.1rem] flex items-center gap-2">
                     <Cpu size={18} color="var(--color-primary)" /> Registered Edge Devices
-                    <DeviceInstallTooltip orgId={currentOrg?.id ?? ''} />
                   </h2>
-                  <button
-                    onClick={() => refreshDevices()}
-                    disabled={refreshingDevices}
-                    className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1 disabled:opacity-50"
-                  >
-                    <RefreshCw size={12} className={refreshingDevices ? 'animate-spin' : ''} />
-                    {refreshingDevices ? 'Checking...' : 'Refresh List'}
-                  </button>
+                  <DeviceInstallTooltip orgId={currentOrg?.id ?? ''} showAsButton />
                 </div>
 
                 {devices.length === 0 ? (
@@ -1264,8 +1244,8 @@ export default function DashboardApp() {
                                         }
                                       }}
                                       className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${isSelected
-                                          ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
-                                          : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
+                                        ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
+                                        : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
                                         }`}
                                     >
                                       <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1304,8 +1284,8 @@ export default function DashboardApp() {
                                             );
                                           }}
                                           className={`btn ${stream.trackingEnabled
-                                              ? 'btn-primary'
-                                              : 'btn-secondary'
+                                            ? 'btn-primary'
+                                            : 'btn-secondary'
                                             } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
                                         >
                                           {stream.trackingEnabled ? (

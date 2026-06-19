@@ -9,7 +9,7 @@ import {
 import { apiFetch } from '../../api';
 import { buildInstallCmd } from '../utils/media';
 
-export function DeviceInstallTooltip({ orgId }: { orgId: string }) {
+export function DeviceInstallTooltip({ orgId, showAsButton }: { orgId: string; showAsButton?: boolean }) {
   const [open, setOpen] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
@@ -43,14 +43,25 @@ export function DeviceInstallTooltip({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        title="How to add a new device"
-        className="inline-flex items-center p-0.5 text-text-muted hover:text-primary transition-colors bg-transparent border-none cursor-pointer"
-      >
-        <Info size={15} />
-      </button>
+      {showAsButton ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Add a new edge device"
+          className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
+        >
+          <Plus size={12} /> Add Device
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="How to add a new device"
+          className="inline-flex items-center p-0.5 text-text-muted hover:text-primary transition-colors bg-transparent border-none cursor-pointer"
+        >
+          <Info size={15} />
+        </button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-6">
