@@ -75,6 +75,9 @@ class VisionPipeline:
         self._clip_frame_interval = 1.0 / max(settings.clip_fps, 1)
         self._last_preroll_at = 0.0
         self._motion_active = False
+        self._continuous_feed_thread: Optional[threading.Thread] = None
+        self._continuous_feed_stop = threading.Event()
+        self._continuous_feed_encoder: Optional[ClipEncoder] = None
 
     def start_clip_feed(self, encoder: ClipEncoder) -> None:
         """Write the latest camera frame on a wall-clock tick so clip length matches recording time."""
@@ -99,6 +102,40 @@ class VisionPipeline:
         next_tick = time.monotonic()
         while not self._clip_feed_stop.is_set():
             encoder = self._clip_feed_encoder
+            frame = self._latest_frame
+            if encoder and frame is not None and encoder.is_running():
+                encoder.write_frame(frame.copy())
+
+            next_tick += self._clip_frame_interval
+            sleep_for = next_tick - time.monotonic()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            else:
+                next_tick = time.monotonic()
+
+    def start_continuous_feed(self, encoder: ClipEncoder) -> None:
+        """Write the latest camera frame continuously so live push stays active."""
+        self.stop_continuous_feed()
+        self._continuous_feed_encoder = encoder
+        self._continuous_feed_stop.clear()
+        self._continuous_feed_thread = threading.Thread(
+            target=self._continuous_feed_loop,
+            name="continuous-feed",
+            daemon=True,
+        )
+        self._continuous_feed_thread.start()
+
+    def stop_continuous_feed(self) -> None:
+        self._continuous_feed_stop.set()
+        if self._continuous_feed_thread and self._continuous_feed_thread.is_alive():
+            self._continuous_feed_thread.join(timeout=2.0)
+        self._continuous_feed_thread = None
+        self._continuous_feed_encoder = None
+
+    def _continuous_feed_loop(self) -> None:
+        next_tick = time.monotonic()
+        while not self._continuous_feed_stop.is_set():
+            encoder = self._continuous_feed_encoder
             frame = self._latest_frame
             if encoder and frame is not None and encoder.is_running():
                 encoder.write_frame(frame.copy())
@@ -203,6 +240,7 @@ class VisionPipeline:
 
     def join_capture(self, timeout: float = 5.0):
         self.stop_clip_feed()
+        self.stop_continuous_feed()
         if self._capture_thread and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=timeout)
 

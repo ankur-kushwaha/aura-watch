@@ -49,14 +49,21 @@ def subsample_frames(frames: list[np.ndarray], target_count: int) -> list[np.nda
     ]
 
 
+def _escape_tee_target(target: str) -> str:
+    # Escape backslashes, colons, and commas for FFmpeg's tee muxer
+    return target.replace("\\", "\\\\").replace(":", "\\:").replace(",", "\\,")
+
+
 class ClipEncoder:
     """Pipe annotated BGR frames into FFmpeg for a single MP4 clip file."""
 
-    def __init__(self, output_path: str, width: int, height: int, fps: int = 10):
+    def __init__(self, output_path: str, width: int, height: int, fps: int = 10, remote_stream_url: Optional[str] = None, only_remote: bool = False):
         self.output_path = output_path
         self.width = width
         self.height = height
         self.fps = max(fps, 1)
+        self.remote_stream_url = remote_stream_url
+        self.only_remote = only_remote
         self.process: Optional[subprocess.Popen] = None
         self._write_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
         self._writer_thread: Optional[threading.Thread] = None
@@ -64,38 +71,109 @@ class ClipEncoder:
         self.frames_written = 0
 
     def start(self):
-        os.makedirs(os.path.dirname(os.path.abspath(self.output_path)), exist_ok=True)
+        if not self.only_remote:
+            os.makedirs(os.path.dirname(os.path.abspath(self.output_path)), exist_ok=True)
         loglevel = ffmpeg_loglevel()
-        args = [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            loglevel,
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "bgr24",
-            "-s",
-            f"{self.width}x{self.height}",
-            "-r",
-            str(self.fps),
-            "-i",
-            "pipe:0",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-tune",
-            "zerolatency",
-            "-g",
-            str(self.fps),
-            "-pix_fmt",
-            "yuv420p",
-            "-an",
-            "-movflags",
-            "+faststart",
-            self.output_path,
-        ]
+        
+        if self.only_remote and self.remote_stream_url:
+            args = [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                loglevel,
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "-s",
+                f"{self.width}x{self.height}",
+                "-r",
+                str(self.fps),
+                "-i",
+                "pipe:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-g",
+                str(self.fps),
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                "-f",
+                "rtsp",
+                "-rtsp_transport",
+                "tcp",
+                self.remote_stream_url,
+            ]
+        elif self.remote_stream_url:
+            escaped_file = _escape_tee_target(os.path.abspath(self.output_path))
+            escaped_remote = _escape_tee_target(self.remote_stream_url)
+            args = [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                loglevel,
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "-s",
+                f"{self.width}x{self.height}",
+                "-r",
+                str(self.fps),
+                "-i",
+                "pipe:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-g",
+                str(self.fps),
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                "-flags",
+                "+global_header",
+                "-f",
+                "tee",
+                f"[f=mp4]{escaped_file}|[f=rtsp:onfail=ignore:rtsp_transport=tcp]{escaped_remote}",
+            ]
+        else:
+            args = [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                loglevel,
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "-s",
+                f"{self.width}x{self.height}",
+                "-r",
+                str(self.fps),
+                "-i",
+                "pipe:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-g",
+                str(self.fps),
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                "-movflags",
+                "+faststart",
+                self.output_path,
+            ]
         self.process = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,

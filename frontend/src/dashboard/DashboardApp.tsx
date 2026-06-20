@@ -74,19 +74,28 @@ import {
 } from './components/modals';
 import { useEventsTab, useReidTab } from './hooks';
 
-const getWebRtcPreviewUrl = (rtspUrl: string | undefined): string | null => {
-  if (!rtspUrl) return null;
-  const lowerUrl = rtspUrl.toLowerCase();
-  if (!lowerUrl.startsWith('rtsp://')) return null;
+const getWebRtcPreviewUrl = (stream: CameraStream | undefined): string | null => {
+  if (!stream) return null;
 
-  const match = rtspUrl.match(/^rtsp:\/\/([^:/]+)(?::\d+)?\/(.+)$/i);
-  if (match) {
-    const host = match[1];
-    const path = match[2];
-    const cleanPath = path.endsWith('/') ? path : `${path}/`;
-    return `https://${host}/${cleanPath}`;
+  let host = '';
+  if (stream.streamHost) {
+    host = stream.streamHost;
+  } else if (stream.streamUrl) {
+    const match = stream.streamUrl.match(/^rtsp:\/\/([^:/]+)(?::\d+)?\//i);
+    if (match) {
+      const parsedHost = match[1];
+      if (!parsedHost.match(/^(127\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|localhost)/)) {
+        host = parsedHost;
+      }
+    }
   }
-  return null;
+
+  if (!host) {
+    host = 'mediamtx.adboardtools.com';
+  }
+
+  const streamPath = `live_${stream.streamId}`;
+  return `https://${host}/${streamPath}/`;
 };
 
 export default function DashboardApp() {
@@ -1475,23 +1484,25 @@ export default function DashboardApp() {
                                       </div>
                                     </div>
 
-                                    {/* Inline RTSP Operations */}
-                                    {stream.cameraType === 'rtsp' && isSelected && (
+                                    {/* Inline Operations */}
+                                    {isSelected && (
                                       <div className="flex flex-col gap-2.5 p-3 rounded-lg border border-border-glass bg-[rgba(124,58,237,0.03)] ml-2 mb-1.5">
-                                        <div
-                                          className="text-[0.7rem] text-text-secondary truncate font-mono bg-[rgba(0,0,0,0.20)] px-2 py-1 rounded border border-[rgba(255,255,255,0.04)] select-all cursor-pointer"
-                                          title="Double click to select all"
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          {stream.streamUrl}
-                                        </div>
+                                        {stream.cameraType === 'rtsp' && (
+                                          <div
+                                            className="text-[0.7rem] text-text-secondary truncate font-mono bg-[rgba(0,0,0,0.20)] px-2 py-1 rounded border border-[rgba(255,255,255,0.04)] select-all cursor-pointer"
+                                            title="Double click to select all"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            {stream.streamUrl}
+                                          </div>
+                                        )}
                                         <div className="flex flex-col gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                          {getWebRtcPreviewUrl(stream.streamUrl) ? (
+                                          {getWebRtcPreviewUrl(stream) ? (
                                             showInlineWebRtc ? (
                                               <div className="flex flex-col gap-2 animate-[fadeIn_0.2s_ease-out]">
                                                 <div className="w-full relative" style={{ aspectRatio: '16/9' }}>
                                                   <iframe
-                                                    src={getWebRtcPreviewUrl(stream.streamUrl)!}
+                                                    src={getWebRtcPreviewUrl(stream)!}
                                                     title="WebRTC Live Preview"
                                                     className="w-full h-full border-0 rounded-lg block bg-[#090d16]"
                                                     allow="autoplay; fullscreen"
@@ -1512,17 +1523,21 @@ export default function DashboardApp() {
                                                   >
                                                     <X size={11} /> Close Preview
                                                   </button>
-                                                  <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      void handleCopyMacVlcCommand(stream.streamUrl);
-                                                    }}
-                                                    className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
-                                                    title="Copy macOS Terminal Command"
-                                                  >
-                                                    <Terminal size={11} /> Copy Command
-                                                  </button>
+                                                  {stream.cameraType === 'rtsp' ? (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        void handleCopyMacVlcCommand(stream.streamUrl);
+                                                      }}
+                                                      className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
+                                                      title="Copy macOS Terminal Command"
+                                                    >
+                                                      <Terminal size={11} /> Copy Command
+                                                    </button>
+                                                  ) : (
+                                                    <div />
+                                                  )}
                                                 </div>
                                               </div>
                                             ) : (
@@ -1537,34 +1552,42 @@ export default function DashboardApp() {
                                                 >
                                                   <Play size={11} /> Play Live View
                                                 </button>
-                                                <button
-                                                  type="button"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    void handleCopyMacVlcCommand(stream.streamUrl);
-                                                  }}
-                                                  className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
-                                                  title="Copy macOS Terminal Command"
-                                                >
-                                                  <Terminal size={11} /> Copy Terminal Command
-                                                </button>
+                                                {stream.cameraType === 'rtsp' ? (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      void handleCopyMacVlcCommand(stream.streamUrl);
+                                                    }}
+                                                    className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
+                                                    title="Copy macOS Terminal Command"
+                                                  >
+                                                    <Terminal size={11} /> Copy Command
+                                                  </button>
+                                                ) : (
+                                                  <div />
+                                                )}
                                               </div>
                                             )
                                           ) : (
                                             <div className="flex flex-col gap-1.5">
-                                              <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  void handleCopyMacVlcCommand(stream.streamUrl);
-                                                }}
-                                                className="btn btn-secondary w-full py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold"
-                                              >
-                                                <Terminal size={11} /> Copy Terminal Command
-                                              </button>
-                                              <p className="text-[0.65rem] text-text-muted leading-relaxed mt-1 text-center">
-                                                Live preview is not supported in-browser for this RTSP stream.
-                                              </p>
+                                              {stream.cameraType === 'rtsp' && (
+                                                <>
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      void handleCopyMacVlcCommand(stream.streamUrl);
+                                                    }}
+                                                    className="btn btn-secondary w-full py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold"
+                                                  >
+                                                    <Terminal size={11} /> Copy Terminal Command
+                                                  </button>
+                                                  <p className="text-[0.65rem] text-text-muted leading-relaxed mt-1 text-center">
+                                                    Live preview is not supported in-browser for this RTSP stream.
+                                                  </p>
+                                                </>
+                                              )}
                                             </div>
                                           )}
                                         </div>

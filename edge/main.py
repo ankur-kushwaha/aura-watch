@@ -772,6 +772,55 @@ class EdgeAgent:
         except Exception:
             pass
 
+    def _run_continuous_rtsp_push(self, stream_id: str, stream_url: str, remote_url: str, stop_event: threading.Event):
+        self.send_log(f"[Pusher] Starting continuous RTSP stream copy to {remote_url}")
+        transport = rtsp_transport_value()
+        
+        while not stop_event.is_set() and not self.shutdown_event.is_set():
+            args = ["ffmpeg", "-y", "-loglevel", "error"]
+            if transport in ("tcp", "udp"):
+                args += ["-rtsp_transport", transport]
+            
+            args += [
+                "-i", stream_url,
+                "-c", "copy",
+                "-an",
+                "-f", "rtsp",
+                "-rtsp_transport", "tcp",
+                remote_url
+            ]
+            
+            try:
+                proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                while proc.poll() is None:
+                    if stop_event.is_set() or self.shutdown_event.is_set():
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait(timeout=2)
+                        break
+                    time.sleep(1)
+                
+                if not stop_event.is_set() and not self.shutdown_event.is_set():
+                    stderr_data = ""
+                    if proc.stderr:
+                        try:
+                            stderr_data = proc.stderr.read().decode('utf-8', errors='ignore').strip()
+                        except Exception:
+                            pass
+                    err_suffix = f": {stderr_data}" if stderr_data else ""
+                    self.send_log(f"[Pusher] Continuous RTSP stream copy exited with code {proc.returncode}{err_suffix}. Restarting in 5s...")
+                    
+            except Exception as e:
+                self.send_log(f"[Pusher] Continuous RTSP stream copy failed to start: {e}. Retry in 5s...")
+                
+            for _ in range(25):
+                if stop_event.is_set() or self.shutdown_event.is_set():
+                    break
+                time.sleep(0.2)
+
     def _stream_pipeline_loop(self, stream_id: str, stop_event: threading.Event):
         retry_delay = 10.0
         consecutive_failures = 0
@@ -921,6 +970,55 @@ class EdgeAgent:
 
             try:
                 pipeline.start_capture()
+                
+                global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip()
+                if global_remote_url:
+                    pusher_stop_event = threading.Event()
+                    if global_remote_url.endswith("/"):
+                        remote_url = f"{global_remote_url}{stream_id}"
+                    elif "/" not in global_remote_url.split("://", 1)[-1]:
+                        remote_url = f"{global_remote_url}/{stream_id}"
+                    else:
+                        remote_url = f"{global_remote_url}_{stream_id}"
+                    
+                    # Check if the camera stream is already on the target MediaMTX host to avoid redundancy/feedback loops
+                    is_same_server = False
+                    try:
+                        from urllib.parse import urlparse
+                        stream_host = urlparse(config.stream_url).hostname
+                        remote_host = urlparse(remote_url).hostname
+                        if stream_host and remote_host and stream_host.lower() == remote_host.lower():
+                            is_same_server = True
+                    except Exception:
+                        pass
+
+                    if is_same_server:
+                        self.send_log(f"[{config.name}] Stream URL is already on the target MediaMTX server ({stream_host}). Skipping continuous push.")
+                    else:
+                        if config.camera_type == "rtsp":
+                            t = threading.Thread(
+                                target=self._run_continuous_rtsp_push,
+                                args=(stream_id, config.stream_url, remote_url, pusher_stop_event),
+                                name=f"pusher-{stream_id}",
+                                daemon=True
+                            )
+                            pipeline_data["pusher_thread"] = t
+                            pipeline_data["pusher_stop_event"] = pusher_stop_event
+                            t.start()
+                        else:
+                            self.send_log(f"[{config.name}] Starting continuous webcam transcode push to {remote_url} (CPU intensive)")
+                            continuous_encoder = ClipEncoder(
+                                output_path="",
+                                width=camera.width,
+                                height=camera.height,
+                                fps=runtime.camera_fps,
+                                remote_stream_url=remote_url,
+                                only_remote=True
+                            )
+                            continuous_encoder.start()
+                            pipeline_data["continuous_encoder"] = continuous_encoder
+                            pipeline.start_continuous_feed(continuous_encoder)
+
                 pipeline.run()
             except Exception as exc:
                 detail = str(exc)
@@ -934,6 +1032,18 @@ class EdgeAgent:
                 self._mark_stream_error(stream_id)
                 self.send_status(stream_id, "Error")
             finally:
+                pusher_stop = pipeline_data.pop("pusher_stop_event", None)
+                if pusher_stop:
+                    pusher_stop.set()
+                pusher_thread = pipeline_data.pop("pusher_thread", None)
+                if pusher_thread and pusher_thread.is_alive():
+                    pusher_thread.join(timeout=3.0)
+                    
+                continuous_encoder = pipeline_data.pop("continuous_encoder", None)
+                if continuous_encoder:
+                    pipeline.stop_continuous_feed()
+                    continuous_encoder.stop()
+
                 pipeline_data.pop("pipeline", None)
                 pipeline.join_capture()
                 self._stop_active_clip_encoder(pipeline_data)
@@ -1130,7 +1240,28 @@ class EdgeAgent:
         )
 
         try:
-            clip_encoder = ClipEncoder(output_path, width, height, fps=clip_fps)
+            global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip()
+            remote_url = None
+            if global_remote_url:
+                if global_remote_url.endswith("/"):
+                    remote_url = f"{global_remote_url}{stream_id}"
+                elif "/" not in global_remote_url.split("://", 1)[-1]:
+                    remote_url = f"{global_remote_url}/{stream_id}"
+                else:
+                    remote_url = f"{global_remote_url}_{stream_id}"
+                
+                # If the input camera stream is already on the target MediaMTX host, do not push to avoid feedback loops
+                if config and config.stream_url:
+                    try:
+                        from urllib.parse import urlparse
+                        stream_host = urlparse(config.stream_url).hostname
+                        remote_host = urlparse(remote_url).hostname
+                        if stream_host and remote_host and stream_host.lower() == remote_host.lower():
+                            remote_url = None
+                    except Exception:
+                        pass
+
+            clip_encoder = ClipEncoder(output_path, width, height, fps=clip_fps, remote_stream_url=remote_url)
             clip_encoder.start()
 
             preroll_frames = subsample_frames(
