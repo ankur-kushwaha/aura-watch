@@ -63,7 +63,7 @@ import { dashboardTabFromPath } from './utils/routing';
 import { copyMacVlcTerminalCommand } from './utils/vlc';
 import { DashboardHeader, DashboardPlaceholder, DeviceInstallTooltip } from './components';
 import { SystemStatusLogsList } from './components/SystemStatusLogsList';
-import { DashboardTabs, EventsTab, ReidTab } from './components/tabs';
+import { DashboardTabs, EventsTab, type EventsTabRef, ReidTab } from './components/tabs';
 import { ManageNotificationsTab } from './components/tabs/ManageNotificationsTab';
 import {
   DeviceConfigDialog,
@@ -72,7 +72,7 @@ import {
   StreamConfigDialog,
   SystemStatusLogsDialog,
 } from './components/modals';
-import { useEventsTab, useReidTab } from './hooks';
+import { useReidTab } from './hooks';
 
 const getWebRtcPreviewUrl = (stream: CameraStream | undefined): string | null => {
   if (!stream) return null;
@@ -406,15 +406,7 @@ export default function DashboardApp() {
     selectedStreamDeviceIdRef.current = selectedStream?.deviceId ?? null;
   }, [selectedStreamId, selectedStream?.deviceId]);
 
-  const eventsTab = useEventsTab({
-    devices,
-    streams,
-    orgSettings,
-    onlineDeviceIds,
-    hasOnlineDevices,
-    isMobileViewport,
-    deviceNameById,
-  });
+  const eventsTabRef = useRef<EventsTabRef>(null);
 
   const reidTab = useReidTab({
     streams,
@@ -436,7 +428,7 @@ export default function DashboardApp() {
           const data = await res.json();
           const clip = data.clip || data;
           if (clip) {
-            eventsTab.handleSelectClip(clip);
+            eventsTabRef.current?.handleSelectClip(clip);
           }
         }
       } catch (err) {
@@ -498,10 +490,10 @@ export default function DashboardApp() {
   }, [onlineDeviceIds]);
 
   useEffect(() => {
-    fetchClipsRef.current = eventsTab.fetchClips;
-    handleNewClipRef.current = eventsTab.handleNewClip;
+    fetchClipsRef.current = () => eventsTabRef.current?.fetchClips() ?? Promise.resolve();
+    handleNewClipRef.current = (clip) => eventsTabRef.current?.handleNewClip(clip);
     triggerReidRefreshRef.current = reidTab.triggerReidRefresh;
-  }, [eventsTab.fetchClips, eventsTab.handleNewClip, reidTab.triggerReidRefresh]);
+  }, [reidTab.triggerReidRefresh]);
 
   useEffect(() => {
     streamStatusRef.current = status;
@@ -1876,21 +1868,36 @@ export default function DashboardApp() {
                 <DashboardPlaceholder reason="loading" />
               ) : !hasOnlineDevices && (activeTab === 'events' || activeTab === 'reid') ? (
                 <DashboardPlaceholder reason={devices.length === 0 ? 'no-devices' : 'offline'} />
-              ) : activeTab === 'events' ? (
-                <EventsTab events={eventsTab} />
-              ) : activeTab === 'reid' ? (
-                <ReidTab reid={reidTab} view={reidTab.reidView} />
-              ) : activeTab === 'notifications' ? (
-                <ManageNotificationsTab
-                  notifications={notifications}
-                  onMarkRead={handleMarkRead}
-                  onNotificationClick={handleNotificationClick}
-                  onDeleteNotification={handleDeleteNotification}
-                  onClearAllNotifications={handleClearAllNotifications}
-                  streams={streams}
-                  currentOrg={currentOrg}
-                />
-              ) : null}
+              ) : (
+                <>
+                  <div style={{ display: activeTab === 'events' ? 'block' : 'none' }}>
+                    <EventsTab
+                      ref={eventsTabRef}
+                      devices={devices}
+                      streams={streams}
+                      orgSettings={orgSettings}
+                      onlineDeviceIds={onlineDeviceIds}
+                      hasOnlineDevices={hasOnlineDevices}
+                      isMobileViewport={isMobileViewport}
+                      deviceNameById={deviceNameById}
+                    />
+                  </div>
+                  {activeTab === 'reid' && (
+                    <ReidTab reid={reidTab} view={reidTab.reidView} />
+                  )}
+                  {activeTab === 'notifications' && (
+                    <ManageNotificationsTab
+                      notifications={notifications}
+                      onMarkRead={handleMarkRead}
+                      onNotificationClick={handleNotificationClick}
+                      onDeleteNotification={handleDeleteNotification}
+                      onClearAllNotifications={handleClearAllNotifications}
+                      streams={streams}
+                      currentOrg={currentOrg}
+                    />
+                  )}
+                </>
+              )}
             </div>
 
 
