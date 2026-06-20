@@ -106,8 +106,10 @@ export function ManageNotificationsTab({
   }, [currentOrg]);
 
   useEffect(() => {
-    loadRules();
-    loadMembers();
+    Promise.resolve().then(() => {
+      loadRules();
+      loadMembers();
+    });
   }, [loadRules, loadMembers]);
 
   const handleCreateRule = async (e: React.FormEvent) => {

@@ -13,6 +13,7 @@
 import prisma from './db';
 import { getOrgSettings } from './orgSettings';
 import { tryParseClipAiAnalysis } from './ai/clipAiAnalysis';
+import { sendAlertEmail } from './emailService';
 import type { WebSocket } from 'ws';
 
 // ---------------------------------------------------------------------------
@@ -245,30 +246,42 @@ async function routeNotification(notification: any, ruleId: string | null, orgId
       }
     }
 
-    // 2. Email routing (mock sending email to selected users/members)
+    // 2. Email routing using Resend
     if (channels.includes('email')) {
       let targetEmails: string[] = [];
       if (rule.userIds && rule.userIds.length > 0) {
         const users = await prisma.user.findMany({
           where: { id: { in: rule.userIds } },
-          select: { email: true, name: true }
+          select: { email: true }
         });
-        targetEmails = users.map(u => `${u.name} <${u.email}>`);
+        targetEmails = users.map(u => u.email);
       } else {
         // notify all members of the org
         const members = await prisma.orgMember.findMany({
           where: { orgId },
-          include: { user: { select: { email: true, name: true } } }
+          include: { user: { select: { email: true } } }
         });
-        targetEmails = members.map(m => `${m.user.name} <${m.user.email}>`);
+        targetEmails = members.map(m => m.user.email);
       }
 
-      console.log(`\n=============================================================`);
-      console.log(`[MOCK EMAIL SERVICE] SENDING ALERT NOTIFICATION EMAIL:`);
-      console.log(`To: ${targetEmails.join(', ')}`);
-      console.log(`Subject: Aura Watch Alert - [${notification.severity.toUpperCase()}] ${notification.title}`);
-      console.log(`Body:\n  Hello,\n\n  The following security event was detected:\n  ${notification.body}\n\n  Triggered Rule: "${rule.name}"\n  Instruction: "${rule.instruction}"\n\n  Review the footage in the Dashboard: http://localhost:3000/app/notifications`);
-      console.log(`=============================================================\n`);
+      if (targetEmails.length > 0) {
+        const subject = `Aura Watch Alert - [${notification.severity.toUpperCase()}] ${notification.title}`;
+        const emailBody = `Hello,
+
+The following security event was detected:
+${notification.body}
+
+Triggered Rule: "${rule.name}"
+Instruction: "${rule.instruction}"
+
+Review the footage in the Dashboard: http://localhost:3000/app/notifications`;
+
+        await sendAlertEmail({
+          to: targetEmails,
+          subject,
+          body: emailBody,
+        });
+      }
     }
   } catch (err: any) {
     console.error('[Notification Routing] failed:', err.message);
