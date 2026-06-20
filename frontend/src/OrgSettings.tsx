@@ -23,6 +23,7 @@ import {
   type OrgMember,
   type AuthOrg,
 } from './api';
+import { trackEvent } from './lib/posthog';
 
 interface SettingRowProps {
   icon: React.ReactNode;
@@ -155,6 +156,7 @@ export default function OrgSettingsPage({
     setSaveMessage(null);
     try {
       const updated = await updateOrgSettings(org.id, draft);
+      trackEvent('save_org_settings', { orgId: org.id });
       setSettings(updated);
       setDraft(updated);
       onSettingsSaved(updated);
@@ -180,6 +182,7 @@ export default function OrgSettingsPage({
       if (addPassword) payload.password = addPassword;
 
       await addOrgMember(org.id, payload);
+      trackEvent('add_org_member', { orgId: org.id, role: addRole });
       setAddEmail('');
       setAddName('');
       setAddPassword('');
@@ -202,6 +205,7 @@ export default function OrgSettingsPage({
     setMembersError(null);
     try {
       await removeOrgMember(org.id, member.userId);
+      trackEvent('remove_org_member', { orgId: org.id, removedUserId: member.userId });
       await loadMembers();
     } catch (err: unknown) {
       setMembersError(err instanceof Error ? err.message : 'Failed to remove member');

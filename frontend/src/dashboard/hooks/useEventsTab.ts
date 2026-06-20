@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, generateClipAiSummary, type OrgSettings } from '../../api';
 import { CLIPS_PAGE_SIZE } from '../constants';
+import { trackEvent } from '../../lib/posthog';
 import type {
   CameraStream,
   ClipDetectionsResponse,
@@ -224,6 +225,7 @@ export function useEventsTab({
   const handleSelectClip = useCallback((clip: VideoClip) => {
     setSelectedClip(clip);
     setAiSummaryError(null);
+    trackEvent('view_clip', { clipId: clip.id, hasSummary: !!clip.summary });
     if (isMobileViewport) {
       setClipPreviewOpen(true);
     }
@@ -235,6 +237,7 @@ export function useEventsTab({
     setGeneratingAiSummary(true);
     setAiSummaryError(null);
     try {
+      trackEvent('generate_ai_summary', { clipId: selectedClip.id });
       const result = await generateClipAiSummary(selectedClip.id);
       const updatedClip: VideoClip = {
         ...selectedClip,

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Cpu, LogIn } from 'lucide-react';
 import { login } from './api';
+import { identifyUser, trackEvent } from './lib/posthog';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -16,7 +17,14 @@ export default function Login() {
     setSubmitting(true);
 
     try {
-      await login(email.trim(), password);
+      const session = await login(email.trim(), password);
+      identifyUser(session.user.id, {
+        email: session.user.email,
+        name: session.user.name,
+        orgId: session.org?.id,
+        orgName: session.org?.name
+      });
+      trackEvent('user_logged_in', { orgId: session.org?.id });
       navigate('/app/events', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Invalid email or password.');

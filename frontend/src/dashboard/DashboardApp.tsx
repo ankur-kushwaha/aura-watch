@@ -33,6 +33,7 @@ import {
 import { clearLoggedIn } from '../auth';
 import { exitImpersonation, isImpersonating } from '../adminApi';
 import OrgSettingsPage from '../OrgSettings';
+import { identifyUser, trackEvent } from '../lib/posthog';
 import {
   createDefaultDeviceConfig,
   DEFAULT_STREAM_CONFIG,
@@ -191,6 +192,14 @@ export default function DashboardApp() {
         if (data.org) setCurrentOrg(data.org);
         setAvailableOrgs(data.orgs);
         if (data.settings) setOrgSettings(data.settings);
+        if (data.user) {
+          identifyUser(data.user.id, {
+            email: data.user.email,
+            name: data.user.name,
+            orgId: data.org?.id,
+            orgName: data.org?.name
+          });
+        }
       })
       .catch(() => { });
   }, []);
@@ -205,6 +214,7 @@ export default function DashboardApp() {
     if (orgId === currentOrg?.id) return;
     setSwitchingOrg(true);
     try {
+      trackEvent('switch_organization', { fromOrgId: currentOrg?.id, toOrgId: orgId });
       const org = await switchOrg(orgId);
       setCurrentOrg(org);
       window.location.reload();
@@ -1061,6 +1071,7 @@ export default function DashboardApp() {
   const handleStreamConfigSaved = async (result?: { streamId: string }) => {
     await fetchDevices();
     if (result?.streamId) {
+      trackEvent('save_stream_config', { streamId: result.streamId });
       setSelectedStreamId(result.streamId);
       setLiveFeedOpen(true);
     }
@@ -1070,6 +1081,7 @@ export default function DashboardApp() {
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this edge device and all its streams?')) return;
     try {
+      trackEvent('delete_device', { deviceId });
       const res = await apiFetch(`/devices/${deviceId}`, {
         method: 'DELETE',
       });

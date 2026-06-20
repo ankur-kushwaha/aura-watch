@@ -28,6 +28,7 @@ import alertRulesRouter from './routes/alertRules';
 import { requireAuth } from './middleware/auth';
 import { bootstrapMultiOrg } from './services/bootstrap';
 import { getDeviceOrgId } from './services/orgScope';
+import { trackEvent, shutdownPostHog } from './services/posthog';
 import { getOrgSettings } from './services/orgSettings';
 import { initQdrant } from './services/qdrant';
 import { aggregateTrackEvents, enrichDetectedObjects, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
@@ -536,6 +537,12 @@ async function processVideoClipInBackground(
   const orgSettings = orgId ? await getOrgSettings(orgId) : null;
 
   try {
+    trackEvent(orgId || deviceId, 'process_video_clip', {
+      duration,
+      cameraName,
+      streamId,
+      trackEventCount: trackEvents.length,
+    });
     const reidFromClipPromise =
       orgSettings?.reidProcessing !== false && trackEvents.length > 0
         ? processReidTrackEventsFromClip(
@@ -1224,6 +1231,10 @@ wss.on('connection', async (ws: WebSocket, req) => {
 // Graceful shutdown helper
 async function shutdown() {
   console.log('[Server] Graceful shutdown initiated. Cleaning up...');
+
+  // Shutdown PostHog
+  console.log('[Server] Shutting down PostHog...');
+  await shutdownPostHog();
   
   // Close all active WebSocket connections
   console.log('[Server] Closing WebSocket connections...');

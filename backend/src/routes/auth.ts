@@ -3,6 +3,7 @@ import prisma from '../services/db';
 import { hashPassword, signToken, verifyPassword } from '../services/auth';
 import { ensureUniqueOrgSlug } from '../services/bootstrap';
 import { getOrgSettings } from '../services/orgSettings';
+import { identifyUser, trackEvent } from '../services/posthog';
 
 const router = Router();
 
@@ -56,6 +57,14 @@ router.post('/register', async (req: Request, res: Response) => {
 
       return { user, org };
     });
+
+    identifyUser(result.user.id, {
+      email: result.user.email,
+      name: result.user.name,
+      orgId: result.org.id,
+      orgName: result.org.name,
+    });
+    trackEvent(result.user.id, 'backend_user_registered', { orgId: result.org.id });
 
     const token = signToken({
       userId: result.user.id,
@@ -117,6 +126,14 @@ router.post('/login', async (req: Request, res: Response) => {
       email: user.email,
       role: membership.role,
     });
+
+    identifyUser(user.id, {
+      email: user.email,
+      name: user.name,
+      orgId: membership.orgId,
+      orgName: membership.org.name,
+    });
+    trackEvent(user.id, 'backend_user_logged_in', { orgId: membership.orgId });
 
     res.json({
       token,
@@ -207,6 +224,11 @@ router.post('/switch-org', async (req: Request, res: Response) => {
       orgId: membership.orgId,
       email: req.auth.email,
       role: membership.role,
+    });
+
+    trackEvent(req.auth.userId, 'backend_switch_organization', {
+      fromOrgId: req.auth.orgId,
+      toOrgId: orgId,
     });
 
     res.json({

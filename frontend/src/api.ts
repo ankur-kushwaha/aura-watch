@@ -1,3 +1,5 @@
+import { resetPostHog } from './lib/posthog';
+
 const API_BASE = import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
 
 const TOKEN_KEY = 'aura-watch-token';
@@ -111,6 +113,7 @@ export function clearSession(): void {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(ORG_KEY);
   sessionStorage.removeItem('aura-watch-authenticated');
+  resetPostHog();
 }
 
 export function isLoggedIn(): boolean {

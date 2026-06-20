@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Building2 } from 'lucide-react';
 import { register } from './api';
+import { identifyUser, trackEvent } from './lib/posthog';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -18,7 +19,14 @@ export default function Register() {
     setSubmitting(true);
 
     try {
-      await register(email.trim(), password, name.trim(), orgName.trim());
+      const session = await register(email.trim(), password, name.trim(), orgName.trim());
+      identifyUser(session.user.id, {
+        email: session.user.email,
+        name: session.user.name,
+        orgId: session.org?.id,
+        orgName: session.org?.name
+      });
+      trackEvent('user_registered', { orgId: session.org?.id, orgName: session.org?.name });
       navigate('/app/events', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Registration failed.');
