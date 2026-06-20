@@ -971,7 +971,7 @@ class EdgeAgent:
             try:
                 pipeline.start_capture()
                 
-                global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip()
+                global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip() or "rtsp://mediamtx.adboardtools.com:8554/live"
                 if global_remote_url:
                     pusher_stop_event = threading.Event()
                     if global_remote_url.endswith("/"):
@@ -1240,7 +1240,7 @@ class EdgeAgent:
         )
 
         try:
-            global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip()
+            global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip() or "rtsp://mediamtx.adboardtools.com:8554/live"
             remote_url = None
             if global_remote_url:
                 if global_remote_url.endswith("/"):
