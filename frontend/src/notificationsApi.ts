@@ -43,3 +43,25 @@ export async function markNotificationsRead(payload: { ids: string[] } | { all: 
   }
   return res.json();
 }
+
+export async function deleteNotification(id: string): Promise<{ success: boolean; unreadCount: number }> {
+  const res = await apiFetch(`/notifications/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to delete notification');
+  }
+  return res.json();
+}
+
+export async function clearAllNotifications(): Promise<{ success: boolean; deletedCount: number; unreadCount: number }> {
+  const res = await apiFetch('/notifications', {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to clear notifications');
+  }
+  return res.json();
+}

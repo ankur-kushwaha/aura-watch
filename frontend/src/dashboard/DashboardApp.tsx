@@ -49,7 +49,7 @@ import type {
   Notification,
 } from './types';
 import { NotificationDrawer } from './components';
-import { fetchNotifications, fetchUnreadCount, markNotificationsRead } from '../notificationsApi';
+import { fetchNotifications, fetchUnreadCount, markNotificationsRead, deleteNotification, clearAllNotifications } from '../notificationsApi';
 
 import {
   findLatestStreamError,
@@ -63,6 +63,7 @@ import { copyMacVlcTerminalCommand } from './utils/vlc';
 import { DashboardHeader, DashboardPlaceholder, DeviceInstallTooltip } from './components';
 import { SystemStatusLogsList } from './components/SystemStatusLogsList';
 import { DashboardTabs, EventsTab, ReidTab } from './components/tabs';
+import { ManageNotificationsTab } from './components/tabs/ManageNotificationsTab';
 import {
   DeviceConfigDialog,
   DeviceLogsDialog,
@@ -160,6 +161,26 @@ export default function DashboardApp() {
       setUnreadNotificationCount((prev) => Math.max(0, prev - 1));
     } catch (err) {
       console.error(`Failed to mark notification ${id} as read:`, err);
+    }
+  };
+
+  const handleDeleteNotification = async (id: string) => {
+    try {
+      const data = await deleteNotification(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      setUnreadNotificationCount(data.unreadCount);
+    } catch (err) {
+      console.error(`Failed to delete notification ${id}:`, err);
+    }
+  };
+
+  const handleClearAllNotifications = async () => {
+    try {
+      await clearAllNotifications();
+      setNotifications([]);
+      setUnreadNotificationCount(0);
+    } catch (err) {
+      console.error('Failed to clear notifications:', err);
     }
   };
 
@@ -581,7 +602,6 @@ export default function DashboardApp() {
                   pixelChangeThreshold: cfg.pixelChangeThreshold,
                   detectPerson: cfg.detectPerson ?? true,
                   detectVehicle: cfg.detectVehicle ?? true,
-                  alertInstructions: cfg.alertInstructions || [],
                 });
               }
             }
@@ -758,7 +778,6 @@ export default function DashboardApp() {
           pixelChangeThreshold: stream.pixelChangeThreshold,
           detectPerson: stream.detectPerson ?? true,
           detectVehicle: stream.detectVehicle ?? true,
-          alertInstructions: stream.alertInstructions || [],
         });
         setStatus(stream.status);
         setSelectedDeviceId(stream.deviceId);
@@ -980,7 +999,6 @@ export default function DashboardApp() {
       pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
       detectPerson: DEFAULT_STREAM_CONFIG.detectPerson,
       detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
-      alertInstructions: [],
     });
     setAddingStreamForDeviceId(deviceId);
     setShowConfigDialog(true);
@@ -1162,6 +1180,10 @@ export default function DashboardApp() {
         onMarkAllRead={handleMarkAllRead}
         onMarkRead={handleMarkRead}
         onNotificationClick={handleNotificationClick}
+        onViewAll={() => {
+          setNotificationsDrawerOpen(false);
+          navigate('/app/notifications');
+        }}
       />
 
       {appView === 'settings' && currentOrg && currentUser ? (
@@ -1178,6 +1200,7 @@ export default function DashboardApp() {
             hasOnlineDevices={hasOnlineDevices}
             onSelectEvents={() => navigate('/app/events')}
             onSelectReid={() => navigate('/app/reid')}
+            onSelectNotifications={() => navigate('/app/notifications')}
           />
 
           {/* Mobile left sidebar backdrop */}
@@ -1817,12 +1840,22 @@ export default function DashboardApp() {
             <div className="lg:col-span-8 flex flex-col gap-6">
               {loadingDevices ? (
                 <DashboardPlaceholder reason="loading" />
-              ) : !hasOnlineDevices ? (
+              ) : !hasOnlineDevices && (activeTab === 'events' || activeTab === 'reid') ? (
                 <DashboardPlaceholder reason={devices.length === 0 ? 'no-devices' : 'offline'} />
               ) : activeTab === 'events' ? (
                 <EventsTab events={eventsTab} />
               ) : activeTab === 'reid' ? (
                 <ReidTab reid={reidTab} view={reidTab.reidView} />
+              ) : activeTab === 'notifications' ? (
+                <ManageNotificationsTab
+                  notifications={notifications}
+                  onMarkRead={handleMarkRead}
+                  onNotificationClick={handleNotificationClick}
+                  onDeleteNotification={handleDeleteNotification}
+                  onClearAllNotifications={handleClearAllNotifications}
+                  streams={streams}
+                  currentOrg={currentOrg}
+                />
               ) : null}
             </div>
 

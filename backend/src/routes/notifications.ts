@@ -9,6 +9,8 @@ import {
   getNotifications,
   getUnreadCount,
   markNotificationsRead,
+  deleteNotification,
+  clearAllNotifications,
 } from '../services/notificationService';
 
 const router = Router();
@@ -76,6 +78,42 @@ router.post('/mark-read', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[Notifications] mark-read error:', err);
     res.status(500).json({ error: 'Failed to mark notifications as read' });
+  }
+});
+
+/**
+ * DELETE /api/notifications/:id
+ * Delete a single notification.
+ */
+router.delete('/:id', async (req: Request, res: Response) => {
+  if (!req.auth) return res.status(401).json({ error: 'Authentication required' });
+
+  try {
+    const deleted = await deleteNotification(req.auth.orgId, req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    const count = await getUnreadCount(req.auth.orgId);
+    res.json({ success: true, unreadCount: count });
+  } catch (err: any) {
+    console.error('[Notifications] delete error:', err);
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
+/**
+ * DELETE /api/notifications
+ * Clear all notifications for the organization.
+ */
+router.delete('/', async (req: Request, res: Response) => {
+  if (!req.auth) return res.status(401).json({ error: 'Authentication required' });
+
+  try {
+    const deletedCount = await clearAllNotifications(req.auth.orgId);
+    res.json({ success: true, deletedCount, unreadCount: 0 });
+  } catch (err: any) {
+    console.error('[Notifications] clear-all error:', err);
+    res.status(500).json({ error: 'Failed to clear notifications' });
   }
 });
 

@@ -16,7 +16,7 @@ function toAiSummaryResponse(raw?: string | null): ClipAiAnalysis | null {
 }
 
 async function summarizeClipFromVideoPath(
-  clip: Pick<VideoClip, 'id' | 'camera' | 'summary' | 'aiSummary' | 'streamId'>,
+  clip: Pick<VideoClip, 'id' | 'camera' | 'summary' | 'aiSummary' | 'streamId' | 'deviceId'>,
   videoPath: string,
 ): Promise<{ updated: VideoClip; aiSummary: ClipAiAnalysis }> {
   const existing = toAiSummaryResponse(clip.aiSummary);
@@ -28,23 +28,42 @@ async function summarizeClipFromVideoPath(
     return { updated: current, aiSummary: existing };
   }
 
-  // Fetch alert instructions if streamId is present
-  let alertInstructions: string[] | undefined = undefined;
-  if (clip.streamId) {
+  // Fetch active AlertRules for this stream/organization
+  let alertInstructions: string[] = [];
+  let orgId = clip.deviceId ? await getDeviceOrgId(clip.deviceId) : null;
+
+  if (!orgId && clip.streamId) {
     const stream = await prisma.cameraStream.findUnique({
       where: { streamId: clip.streamId },
-      select: { alertInstructions: true },
+      select: { device: { select: { orgId: true } } },
     });
-    if (stream) {
-      alertInstructions = stream.alertInstructions;
-    }
+    orgId = stream?.device?.orgId || null;
+  }
+
+  if (orgId) {
+    const rules = await prisma.alertRule.findMany({
+      where: {
+        orgId,
+        isActive: true,
+        OR: [
+          { allStreams: true },
+          { streamIds: { has: clip.streamId ?? '' } }
+        ]
+      },
+      select: { instruction: true }
+    });
+    alertInstructions = rules.map(r => r.instruction);
   }
 
   let geminiPath: string | null = null;
   try {
     geminiPath = await transcodeForGemini(videoPath);
     const summaryPath = geminiPath !== videoPath ? geminiPath : videoPath;
-    const aiSummaryJson = await summarizeVideo(summaryPath, clip.camera, alertInstructions);
+    const aiSummaryJson = await summarizeVideo(
+      summaryPath,
+      clip.camera,
+      alertInstructions.length > 0 ? alertInstructions : undefined
+    );
 
     const updated = await prisma.videoClip.update({
       where: { id: clip.id },

@@ -1,6 +1,6 @@
 import type { EffectiveEdgeDeviceConfig } from '../edgeConfig';
 
-export type DashboardTab = 'events' | 'reid';
+export type DashboardTab = 'events' | 'reid' | 'notifications';
 
 export interface VideoClipDetectedObject {
   trackId: number;
@@ -138,7 +138,6 @@ export interface CameraStream {
   detectPerson: boolean;
   detectVehicle: boolean;
   streamHost: string;
-  alertInstructions: string[];
 }
 
 export interface CameraConfig {
@@ -150,7 +149,6 @@ export interface CameraConfig {
   pixelChangeThreshold?: number;
   detectPerson: boolean;
   detectVehicle: boolean;
-  alertInstructions?: string[];
 }
 
 export interface RagResponseClip {
@@ -300,6 +298,7 @@ export interface Notification {
   streamId?: string | null;
   clipId?: string | null;
   identityId?: string | null;
+  alertRuleId?: string | null;
   category: 'surveillance' | 'camera' | 'device' | 'websocket';
   severity: 'info' | 'warn' | 'error' | 'critical';
   title: string;

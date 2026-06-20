@@ -29,6 +29,7 @@ export interface CreateNotificationInput {
   streamId?: string | null;
   clipId?: string | null;
   identityId?: string | null;
+  alertRuleId?: string | null;
   category: NotificationCategory;
   severity: NotificationSeverity;
   title: string;
@@ -78,6 +79,7 @@ export async function createNotification(input: CreateNotificationInput) {
       streamId: input.streamId ?? null,
       clipId: input.clipId ?? null,
       identityId: input.identityId ?? null,
+      alertRuleId: input.alertRuleId ?? null,
       category: input.category,
       severity: input.severity,
       title: input.title,
@@ -218,6 +220,61 @@ interface ClipEvalInput {
   identityLabels: string[];
 }
 
+async function routeNotification(notification: any, ruleId: string | null, orgId: string) {
+  try {
+    if (!ruleId) return;
+    const rule = await prisma.alertRule.findUnique({
+      where: { id: ruleId }
+    });
+    if (!rule || !rule.isActive) return;
+
+    const channels = rule.channels || ['in_app'];
+
+    // 1. Webhook routing
+    if (channels.includes('webhook')) {
+      const webhookUrl = rule.webhookUrl || (await getOrgSettings(orgId)).notifyWebhookUrl;
+      if (webhookUrl) {
+        console.log(`[Notification Webhook] Sending payload to ${webhookUrl}...`);
+        fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event: 'alert_triggered', rule, notification }),
+        }).catch(err => {
+          console.error(`[Notification Webhook] Failed to deliver alert payload:`, err.message);
+        });
+      }
+    }
+
+    // 2. Email routing (mock sending email to selected users/members)
+    if (channels.includes('email')) {
+      let targetEmails: string[] = [];
+      if (rule.userIds && rule.userIds.length > 0) {
+        const users = await prisma.user.findMany({
+          where: { id: { in: rule.userIds } },
+          select: { email: true, name: true }
+        });
+        targetEmails = users.map(u => `${u.name} <${u.email}>`);
+      } else {
+        // notify all members of the org
+        const members = await prisma.orgMember.findMany({
+          where: { orgId },
+          include: { user: { select: { email: true, name: true } } }
+        });
+        targetEmails = members.map(m => `${m.user.name} <${m.user.email}>`);
+      }
+
+      console.log(`\n=============================================================`);
+      console.log(`[MOCK EMAIL SERVICE] SENDING ALERT NOTIFICATION EMAIL:`);
+      console.log(`To: ${targetEmails.join(', ')}`);
+      console.log(`Subject: Aura Watch Alert - [${notification.severity.toUpperCase()}] ${notification.title}`);
+      console.log(`Body:\n  Hello,\n\n  The following security event was detected:\n  ${notification.body}\n\n  Triggered Rule: "${rule.name}"\n  Instruction: "${rule.instruction}"\n\n  Review the footage in the Dashboard: http://localhost:3000/app/notifications`);
+      console.log(`=============================================================\n`);
+    }
+  } catch (err: any) {
+    console.error('[Notification Routing] failed:', err.message);
+  }
+}
+
 export async function evaluateClipWithLLM(input: ClipEvalInput): Promise<void> {
   try {
     const settings = await getOrgSettings(input.orgId);
@@ -256,12 +313,27 @@ export async function evaluateClipWithLLM(input: ClipEvalInput): Promise<void> {
         const title = alert.alertTitle || `Security Event — ${input.cameraName}`;
         const body = alert.alertBody || analysis.summary;
 
-        await createNotification({
+        let alertRuleId: string | null = null;
+        if (alert.triggeredInstruction) {
+          const rule = await prisma.alertRule.findFirst({
+            where: {
+              orgId: input.orgId,
+              instruction: alert.triggeredInstruction.trim(),
+              isActive: true,
+            },
+          });
+          if (rule) {
+            alertRuleId = rule.id;
+          }
+        }
+
+        const notification = await createNotification({
           orgId: input.orgId,
           deviceId: input.deviceId,
           streamId: input.streamId,
           clipId: input.clipId,
           identityId: null,
+          alertRuleId,
           category: 'surveillance',
           severity,
           title,
@@ -269,6 +341,10 @@ export async function evaluateClipWithLLM(input: ClipEvalInput): Promise<void> {
           riskLevel: alert.riskLevel,
           triggeredByInstruction: alert.triggeredInstruction ?? null,
         });
+
+        if (alertRuleId) {
+          void routeNotification(notification, alertRuleId, input.orgId);
+        }
       }
     }
   } catch (err: any) {
@@ -329,4 +405,18 @@ export async function markNotificationsRead(
 export async function pruneOldNotifications(): Promise<void> {
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   await prisma.notification.deleteMany({ where: { createdAt: { lt: cutoff } } });
+}
+
+export async function deleteNotification(orgId: string, id: string): Promise<boolean> {
+  const result = await prisma.notification.deleteMany({
+    where: { orgId, id },
+  });
+  return result.count > 0;
+}
+
+export async function clearAllNotifications(orgId: string): Promise<number> {
+  const result = await prisma.notification.deleteMany({
+    where: { orgId },
+  });
+  return result.count;
 }

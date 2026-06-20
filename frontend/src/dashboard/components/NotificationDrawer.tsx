@@ -1,4 +1,4 @@
-import { X, CheckCheck, Video, AlertTriangle, Info, ShieldAlert, Cpu } from 'lucide-react';
+import { X, CheckCheck, Video, AlertTriangle, Info, ShieldAlert, Cpu, Bell } from 'lucide-react';
 import type { Notification } from '../types';
 
 export interface NotificationDrawerProps {
@@ -9,6 +9,7 @@ export interface NotificationDrawerProps {
   onMarkAllRead: () => void;
   onMarkRead: (id: string) => void;
   onNotificationClick: (n: Notification) => void;
+  onViewAll?: () => void;
 }
 
 function formatRelativeTime(dateString: string): string {
@@ -31,6 +32,7 @@ export function NotificationDrawer({
   onMarkAllRead,
   onMarkRead,
   onNotificationClick,
+  onViewAll,
 }: NotificationDrawerProps) {
   if (!isOpen) return null;
 
@@ -206,6 +208,19 @@ export function NotificationDrawer({
             })
           )}
         </div>
+
+        {onViewAll && (
+          <div className="p-4 border-t border-white/10 bg-white/[0.01] flex justify-center shrink-0">
+            <button
+              type="button"
+              onClick={onViewAll}
+              className="w-full btn btn-primary py-2 text-[0.8rem] text-center font-semibold rounded-lg flex items-center justify-center gap-2"
+            >
+              <Bell size={14} />
+              View All in Notification Center
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

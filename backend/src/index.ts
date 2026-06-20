@@ -24,6 +24,7 @@ import authRouter from './routes/auth';
 import adminRouter from './routes/admin';
 import orgsRouter from './routes/orgs';
 import notificationsRouter from './routes/notifications';
+import alertRulesRouter from './routes/alertRules';
 import { requireAuth } from './middleware/auth';
 import { bootstrapMultiOrg } from './services/bootstrap';
 import { getDeviceOrgId } from './services/orgScope';
@@ -130,6 +131,7 @@ app.use('/api/devices', devicesRouter);
 app.use('/api/streams', streamsRouter);
 app.use('/api/reid', reidRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/alert-rules', alertRulesRouter);
 
 // Serve static frontend files
 const FRONTEND_DIR = path.join(__dirname, '../../frontend/dist');
