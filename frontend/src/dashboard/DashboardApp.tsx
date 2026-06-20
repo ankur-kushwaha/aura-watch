@@ -77,23 +77,22 @@ import { useEventsTab, useReidTab } from './hooks';
 const getWebRtcPreviewUrl = (stream: CameraStream | undefined): string | null => {
   if (!stream) return null;
 
-  let host = '';
-  if (stream.streamHost) {
-    host = stream.streamHost;
-  } else if (stream.streamUrl) {
-    const match = stream.streamUrl.match(/^rtsp:\/\/([^:/]+)(?::\d+)?\//i);
+  if (stream.streamUrl) {
+    const match = stream.streamUrl.match(/^rtsp:\/\/([^:/]+)(?::\d+)?\/(.+)$/i);
     if (match) {
       const parsedHost = match[1];
+      const parsedPath = match[2];
+      
+      // If it is a public host (not local IP or localhost), just translate it directly to HTTPS
       if (!parsedHost.match(/^(127\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|localhost)/)) {
-        host = parsedHost;
+        const cleanPath = parsedPath.endsWith('/') ? parsedPath : `${parsedPath}/`;
+        return `https://${parsedHost}/${cleanPath}`;
       }
     }
   }
 
-  if (!host) {
-    host = 'mediamtx.adboardtools.com';
-  }
-
+  // Fallback for local cameras pushing to MediaMTX on the VPS
+  const host = stream.streamHost || 'mediamtx.adboardtools.com';
   const streamPath = `live_${stream.streamId}`;
   return `https://${host}/${streamPath}/`;
 };
