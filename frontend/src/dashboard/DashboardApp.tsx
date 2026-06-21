@@ -1,26 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Camera,
   Settings,
-  Play,
-  Trash2,
-  Activity,
-  Cpu,
-  Terminal,
-  Plus,
-  X,
-  Power,
-  ScrollText,
   SlidersHorizontal,
-  Maximize2,
+  Fingerprint,
+  AlertTriangle,
+  Bell,
+  Film,
+  Monitor,
+  Map as MapIcon,
+  Clock,
 } from 'lucide-react';
 import {
   apiFetch,
   getStoredOrg,
-  switchOrg,
   fetchMe,
   DEFAULT_ORG_SETTINGS,
   type AuthOrg,
@@ -51,11 +46,12 @@ import { fetchNotifications, fetchUnreadCount, markNotificationsRead, deleteNoti
 
 
 import { dashboardTabFromPath } from './utils/routing';
-import { copyMacVlcTerminalCommand } from './utils/vlc';
-import { DashboardHeader, DashboardPlaceholder, DeviceInstallTooltip } from './components';
-import { SystemStatusLogsList } from './components/SystemStatusLogsList';
-import { DashboardTabs, EventsTab, type EventsTabRef, ReidTab } from './components/tabs';
+import { EventsTab, type EventsTabRef, ReidTab } from './components/tabs';
 import { ManageNotificationsTab } from './components/tabs/ManageNotificationsTab';
+import { LiveWallTab } from './components/tabs/LiveWallTab';
+import { ClipLibraryTab } from './components/tabs/ClipLibraryTab';
+import { AskCameraAiTab } from './components/tabs/AskCameraAiTab';
+import { ConfigurationTab } from './components/tabs/ConfigurationTab';
 import {
   DeviceConfigDialog,
   DeviceLogsDialog,
@@ -65,46 +61,83 @@ import {
 } from './components/modals';
 import { useReidTab } from './hooks';
 
-const getWebRtcPreviewUrl = (stream: CameraStream | undefined): string | null => {
-  if (!stream) return null;
+function PremiseMapTab() {
+  return (
+    <div className="glass-panel p-5 rounded-2xl flex flex-col gap-4 animate-[slideUp_0.3s_ease-out] w-full min-h-[calc(100vh-140px)] justify-center items-center text-center">
+      <div className="max-w-xl w-full flex flex-col gap-6">
+        <h3 className="text-[1.25rem] font-bold text-text-primary">Premise Camera Map</h3>
+        {/* Mock plan overlay */}
+        <div className="relative border border-border-glass rounded-xl overflow-hidden bg-gradient-to-br from-[#0c121e] to-[#04060b] aspect-[16/9] flex items-center justify-center">
+          {/* Grid lines */}
+          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none" />
 
-  if (stream.streamUrl) {
-    const match = stream.streamUrl.match(/^rtsp:\/\/([^:/]+)(?::\d+)?\/(.+)$/i);
-    if (match) {
-      const parsedHost = match[1];
-      const parsedPath = match[2];
-      
-      // If it is a public host (not local IP or localhost), just translate it directly to HTTPS
-      if (!parsedHost.match(/^(127\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|localhost)/)) {
-        const cleanPath = parsedPath.endsWith('/') ? parsedPath : `${parsedPath}/`;
-        return `https://${parsedHost}/${cleanPath}`;
-      }
-    }
-  }
+          {/* Blueprint-style outline drawings */}
+          <div className="absolute inset-10 border border-dashed border-[rgba(255,255,255,0.05)] rounded-lg pointer-events-none flex items-center justify-center">
+            <span className="text-[0.7rem] text-text-muted select-none uppercase tracking-widest font-mono">West Campus Floor Plan</span>
+          </div>
+          <div className="absolute top-1/4 left-1/3 w-1/3 h-1/2 border border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.005)] rounded pointer-events-none" />
 
-  // Fallback for local cameras pushing to MediaMTX on the VPS
-  const host = stream.streamHost || 'mediamtx.adboardtools.com';
-  const streamPath = `live_${stream.streamId}`;
-  return `https://${host}/${streamPath}/`;
-};
+          {/* Camera pin placements */}
+          {[
+            { code: 'C-01', top: '20%', left: '25%', name: 'Main Entrance' },
+            { code: 'C-04', top: '45%', left: '35%', name: 'Lobby' },
+            { code: 'C-07', top: '75%', left: '15%', name: 'Loading Dock' },
+            { code: 'C-12', top: '35%', left: '65%', name: 'Reception' },
+            { code: 'C-15', top: '60%', left: '75%', name: 'East Corridor' },
+            { code: 'C-18', top: '80%', left: '55%', name: 'Server Room' },
+          ].map((pin) => (
+            <div
+              key={pin.code}
+              className="absolute group"
+              style={{ top: pin.top, left: pin.left }}
+            >
+              <div className="w-3.5 h-3.5 rounded-full bg-[var(--color-secondary)] border-2 border-white flex items-center justify-center cursor-pointer shadow-[0_0_12px_var(--color-secondary)] active:scale-95 transition-all duration-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-white block"></span>
+              </div>
+              {/* Tooltip on hover */}
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded bg-[rgba(9,13,22,0.85)] border border-border-glass shadow-lg pointer-events-none select-none opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap z-50 flex flex-col text-left">
+                <span className="text-[0.65rem] font-bold text-[var(--color-secondary)] font-mono">{pin.code}</span>
+                <span className="text-[0.72rem] font-semibold text-white mt-0.5">{pin.name}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[0.8rem] text-text-muted">Interactive map showing locations of all registered cameras across the facility premise. Hover over camera nodes to see location tags.</p>
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardApp() {
   const navigate = useNavigate();
   const location = useLocation();
   const appView = location.pathname.startsWith('/app/settings') ? 'settings' : 'dashboard';
-  const activeTab = dashboardTabFromPath(location.pathname) ?? 'events';
+  const activeTab = dashboardTabFromPath(location.pathname) ?? 'live';
+
+  const [cameraTime, setCameraTime] = useState('');
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const formatTime = (t: number) => String(t).padStart(2, '0');
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const m = months[now.getMonth()];
+      const d = now.getDate();
+      setCameraTime(`${formatTime(now.getHours())}:${formatTime(now.getMinutes())}:${formatTime(now.getSeconds())} UTC-05 ${m} ${d}`);
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const [currentOrg, setCurrentOrg] = useState<AuthOrg | null>(() => getStoredOrg());
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [availableOrgs, setAvailableOrgs] = useState<AuthOrg[]>([]);
-  const [switchingOrg, setSwitchingOrg] = useState(false);
   const [orgSettings, setOrgSettings] = useState<OrgSettings>(DEFAULT_ORG_SETTINGS);
 
   // App States
   const [devices, setDevices] = useState<EdgeDevice[]>([]);
-  const [loadingDevices, setLoadingDevices] = useState<boolean>(true);
   const [streams, setStreams] = useState<CameraStream[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  if (selectedDeviceId) { /* state tracked for modals */ }
   const [selectedStreamId, setSelectedStreamId] = useState<string>('');
   const [showConfigDialog, setShowConfigDialog] = useState<boolean>(false);
   const [showDeviceConfigDialog, setShowDeviceConfigDialog] = useState<boolean>(false);
@@ -189,7 +222,6 @@ export default function DashboardApp() {
       .then((data) => {
         setCurrentUser(data.user);
         if (data.org) setCurrentOrg(data.org);
-        setAvailableOrgs(data.orgs);
         if (data.settings) setOrgSettings(data.settings);
         if (data.user) {
           identifyUser(data.user.id, {
@@ -208,21 +240,6 @@ export default function DashboardApp() {
       loadNotifications();
     }
   }, [currentOrg, loadNotifications]);
-
-  const handleSwitchOrg = async (orgId: string) => {
-    if (orgId === currentOrg?.id) return;
-    setSwitchingOrg(true);
-    try {
-      trackEvent('switch_organization', { fromOrgId: currentOrg?.id, toOrgId: orgId });
-      const org = await switchOrg(orgId);
-      setCurrentOrg(org);
-      window.location.reload();
-    } catch (err: any) {
-      alert(err.message || 'Failed to switch organization');
-    } finally {
-      setSwitchingOrg(false);
-    }
-  };
 
   const selectedStreamIdRef = useRef(selectedStreamId);
   const selectedStreamDeviceIdRef = useRef<string | null>(null);
@@ -259,7 +276,6 @@ export default function DashboardApp() {
   });
   const [status, setStatus] = useState<string>('Offline');
   const [logs, setLogs] = useState<{ message: string; timestamp: string }[]>([]);
-  const [leftSidebarOpen, setLeftSidebarOpen] = useState<boolean>(false);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches,
   );
@@ -271,19 +287,6 @@ export default function DashboardApp() {
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, []);
-
-  useEffect(() => {
-    if (!isMobileViewport) {
-      setLeftSidebarOpen(false);
-    }
-  }, [isMobileViewport]);
-
-  const closeMobileLeftSidebarOnButtonClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
-    if (!isMobileViewport) return;
-    if ((e.target as HTMLElement).closest('button')) {
-      setLeftSidebarOpen(false);
-    }
-  }, [isMobileViewport]);
 
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -318,16 +321,7 @@ export default function DashboardApp() {
     [streams, selectedStreamId],
   );
 
-  const appendLog = useCallback((message: string) => {
-    const logEntry = { message, timestamp: new Date().toISOString() };
-    setLogs((prev) => {
-      const last = prev[prev.length - 1];
-      if (last && last.message === logEntry.message && last.timestamp === logEntry.timestamp) {
-        return prev;
-      }
-      return [...prev, logEntry];
-    });
-  }, []);
+
 
 
 
@@ -397,8 +391,6 @@ export default function DashboardApp() {
       }
     } catch (err) {
       console.error('Failed to fetch devices/streams', err);
-    } finally {
-      setLoadingDevices(false);
     }
   }, []);
 
@@ -406,13 +398,10 @@ export default function DashboardApp() {
 
   useEffect(() => {
     if (location.pathname === '/app' || location.pathname === '/app/') {
-      navigate('/app/events', { replace: true });
+      navigate('/app/live', { replace: true });
       return;
     }
     if (location.pathname.startsWith('/app/settings')) return;
-    if (location.pathname.startsWith('/app/ai')) {
-      navigate('/app/events', { replace: true });
-    }
   }, [location.pathname, navigate]);
 
   useEffect(() => {
@@ -679,16 +668,7 @@ export default function DashboardApp() {
     }
   }, [selectedStreamId, streams]);
 
-  const handleCopyMacVlcCommand = useCallback(async (url?: string) => {
-    const targetUrl = url || selectedStream?.streamUrl;
-    if (!targetUrl) return;
-    const copied = await copyMacVlcTerminalCommand(targetUrl);
-    appendLog(
-      copied
-        ? '[Dashboard] macOS command copied — paste in Terminal: open -a VLC "rtsp://..."'
-        : '[Dashboard] Could not copy Terminal command',
-    );
-  }, [appendLog, selectedStream?.streamUrl]);
+
 
   // Subscribe/unsubscribe live preview when a stream is selected and inline preview is active
   useEffect(() => {
@@ -907,43 +887,103 @@ export default function DashboardApp() {
     !location.pathname.startsWith('/app/settings') &&
     dashboardTabFromPath(location.pathname) === null
   ) {
-    return <Navigate to="/app/events" replace />;
+    return <Navigate to="/app/live" replace />;
   }
 
   return (
-    <div className="p-4 sm:p-6 max-w-[1440px] mx-auto">
+    <div className="flex min-h-screen bg-[var(--color-bg-dark)] text-[var(--color-text-primary)] w-full">
+      {/* LEFT NARROW SIDEBAR */}
+      <div className="w-16 md:w-20 bg-[#070b13] border-r border-border-glass flex flex-col justify-between items-center py-6 shrink-0 z-50 select-none">
+        <div className="flex flex-col gap-6 items-center w-full">
+          {/* Logo */}
+          <div className="p-2 bg-[rgba(255,255,255,0.02)] border border-border-glass rounded-xl shadow-inner select-none cursor-pointer flex items-center justify-center">
+            <svg viewBox="0 0 24 24" className="w-6 h-6 text-[var(--color-secondary)] fill-none stroke-current stroke-2">
+              <rect x="2" y="2" width="20" height="20" rx="6" />
+              <circle cx="12" cy="12" r="5" />
+              <circle cx="12" cy="12" r="1.5" className="fill-current" />
+            </svg>
+          </div>
 
-      {isImpersonating() && (
-        <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[0.85rem] text-amber-200">
-            Super admin impersonation — viewing as <span className="font-semibold">{currentOrg?.name}</span>
-            {currentOrg?.role ? ` (${currentOrg.role})` : ''}
-          </p>
-          <button
-            type="button"
-            onClick={handleExitImpersonation}
-            className="btn btn-secondary py-1.5 px-3 text-[0.8rem]"
-          >
-            Exit to admin console
-          </button>
+          {/* Divider */}
+          <div className="w-8 h-[1px] bg-border-glass shrink-0" />
+
+          {/* Tab buttons */}
+          <div className="flex flex-col gap-3 items-center w-full px-2">
+            {[
+              { tab: 'live' as const, icon: Camera, title: 'Live wall' },
+              { tab: 'events' as const, icon: Film, title: 'Event archive', hasBadge: true },
+              // { tab: 'clips' as const, icon: Film, title: 'Clip library' },
+              { tab: 'reid' as const, icon: Fingerprint, title: 'Cross-Camera ReID' },
+              { tab: 'ai' as const, icon: Monitor, title: 'Ask Camera AI' },
+              // { tab: 'map' as const, icon: MapIcon, title: 'Premise map' },
+              { tab: 'config' as const, icon: SlidersHorizontal, title: 'Configuration' },
+            ].map(({ tab, icon: Icon, title, hasBadge }) => {
+              const isSelected = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => navigate(`/app/${tab}`)}
+                  title={title}
+                  className={`relative p-3 rounded-xl transition-all duration-200 border-none outline-none cursor-pointer group flex items-center justify-center ${isSelected
+                    ? 'bg-[rgba(6,182,212,0.1)] text-[var(--color-secondary)] border border-[rgba(6,182,212,0.2)]'
+                    : 'text-text-muted hover:text-text-secondary hover:bg-[rgba(255,255,255,0.02)]'
+                    }`}
+                >
+                  <Icon size={20} className={isSelected ? 'stroke-[2.5px]' : 'stroke-2'} />
+                  {hasBadge && unreadNotificationCount > 0 && (
+                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[var(--color-danger)] animate-pulse" />
+                  )}
+                  {/* Tooltip on hover */}
+                  <div className="absolute left-16 px-2.5 py-1 rounded bg-[rgba(9,13,22,0.9)] border border-border-glass shadow-lg pointer-events-none select-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap z-50 text-[0.75rem] font-bold text-white">
+                    {title}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      )}
 
-      <DashboardHeader
-        appView={appView}
-        currentOrg={currentOrg}
-        availableOrgs={availableOrgs}
-        switchingOrg={switchingOrg}
-        selectedDeviceId={selectedDeviceId}
-        status={status}
-        onSwitchOrg={handleSwitchOrg}
-        onOpenSidebar={() => setLeftSidebarOpen(true)}
-        onToggleSettings={() => navigate(appView === 'settings' ? '/app/events' : '/app/settings')}
-        onLogout={handleLogout}
-        unreadNotificationCount={unreadNotificationCount}
-        onNotificationBellClick={() => setNotificationsDrawerOpen((prev) => !prev)}
-      />
+        {/* User initials & notifications bell */}
+        <div className="flex flex-col gap-4 items-center px-2 w-full">
+          {/* Notifications Drawer Toggle */}
+          <button
+            onClick={() => setNotificationsDrawerOpen((prev) => !prev)}
+            className="p-3 rounded-xl transition-all duration-200 border-none outline-none cursor-pointer hover:bg-[rgba(255,255,255,0.02)] text-text-muted hover:text-text-secondary relative flex items-center justify-center"
+            title="Notifications drawer"
+          >
+            <Bell size={20} />
+            {unreadNotificationCount > 0 && (
+              <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-[var(--color-danger)] text-[0.55rem] font-bold text-white leading-none scale-90">
+                {unreadNotificationCount}
+              </span>
+            )}
+          </button>
 
+          {/* Switch Org/Org Settings Option if settings tab isn't open */}
+          <button
+            onClick={() => navigate('/app/settings')}
+            className={`p-3 rounded-xl transition-all duration-200 border-none outline-none cursor-pointer hover:bg-[rgba(255,255,255,0.02)] text-text-muted hover:text-text-secondary flex items-center justify-center ${appView === 'settings' ? 'text-[var(--color-primary)] bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)]' : ''
+              }`}
+            title="Organization settings"
+          >
+            <Settings size={20} />
+          </button>
+
+          {/* Divider */}
+          <div className="w-8 h-[1px] bg-border-glass shrink-0" />
+
+          {/* User profile initials circle */}
+          <div
+            onClick={handleLogout}
+            title="Sign out"
+            className="w-9 h-9 rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-secondary)] text-white font-extrabold text-[0.8rem] flex items-center justify-center shadow-[0_0_12px_var(--color-primary-glow)] cursor-pointer hover:scale-105 active:scale-95 transition-all duration-200 select-none"
+          >
+            {currentUser?.name?.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase() || 'JM'}
+          </div>
+        </div>
+      </div>
+
+      {/* Notification Drawer */}
       <NotificationDrawer
         isOpen={notificationsDrawerOpen}
         onClose={() => setNotificationsDrawerOpen(false)}
@@ -958,509 +998,210 @@ export default function DashboardApp() {
         }}
       />
 
-      {appView === 'settings' && currentOrg && currentUser ? (
-        <OrgSettingsPage
-          org={currentOrg}
-          currentUserId={currentUser.id}
-          onBack={() => navigate('/app/events')}
-          onSettingsSaved={setOrgSettings}
-        />
-      ) : (
-        <>
-          <DashboardTabs
-            activeTab={activeTab}
-            hasOnlineDevices={hasOnlineDevices}
-            onSelectEvents={() => navigate('/app/events')}
-            onSelectReid={() => navigate('/app/reid')}
-            onSelectNotifications={() => navigate('/app/notifications')}
-          />
-
-          {/* Mobile left sidebar backdrop */}
-          {leftSidebarOpen && appView === 'dashboard' && createPortal(
-            <div
-              className="fixed inset-0 z-[10001] bg-[rgba(9,13,22,0.75)] backdrop-blur-sm lg:hidden"
-              onClick={() => setLeftSidebarOpen(false)}
-              aria-hidden="true"
-            />,
-            document.body,
-          )}
-
-          {/* DASHBOARD LAYOUT */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 relative">
-
-            {/* LEFT COLUMN: DEVICES & CAMERA */}
-            <div
-              className={`lg:col-span-4 flex flex-col gap-6
-            fixed inset-y-0 left-0 z-[10002] w-[min(100vw-2.5rem,380px)] overflow-y-auto p-4 pt-5
-            bg-[rgba(9,13,22,0.97)] border-r border-border-glass shadow-2xl
-            transition-transform duration-300 ease-out
-            lg:relative lg:z-auto lg:w-auto lg:overflow-visible lg:p-0 lg:bg-transparent lg:border-r-0 lg:shadow-none
-            ${leftSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
-              onClickCapture={closeMobileLeftSidebarOnButtonClick}
-            >
-              <div className="flex justify-between items-center lg:hidden mb-1">
-                <span className="text-[0.85rem] font-semibold text-text-secondary">Devices & Cameras</span>
-                <button
-                  type="button"
-                  onClick={() => setLeftSidebarOpen(false)}
-                  className="btn btn-secondary p-1.5 rounded-md"
-                  aria-label="Close devices panel"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              {/* DEVICE SELECTOR PANEL */}
-              <div className="glass-panel p-5">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-[1.1rem] flex items-center gap-2">
-                    <Cpu size={18} color="var(--color-primary)" /> Registered Edge Devices
-                  </h2>
-                  <DeviceInstallTooltip orgId={currentOrg?.id ?? ''} showAsButton />
-                </div>
-
-                {devices.length === 0 ? (
-                  <div className="text-text-muted text-[0.85rem] text-center p-4 border border-dashed border-border-glass rounded-lg">
-                    No edge devices registered. Run the edge agent script on a device to register.
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-4">
-                    {devices.map((dev) => {
-                      const isDeviceOnline = dev.status !== 'Offline';
-                      const deviceStreams = streams.filter((s) => s.deviceId === dev.deviceId);
-
-                      return (
-                        <div
-                          key={dev.deviceId}
-                          className="border border-border-glass rounded-xl bg-[rgba(255,255,255,0.015)] p-3.5 flex flex-col gap-3"
-                        >
-                          {/* Device Header */}
-                          <div className="flex justify-between items-center border-b border-[rgba(255,255,255,0.05)] pb-2.5">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={`w-2 h-2 rounded-full inline-block flex-shrink-0 ${isDeviceOnline ? 'bg-emerald-400' : 'bg-text-muted'
-                                    }`}
-                                  style={{
-                                    boxShadow: isDeviceOnline
-                                      ? '0 0 8px var(--color-success)'
-                                      : 'none',
-                                  }}
-                                />
-                                <h3 className="text-[0.9rem] font-bold text-text-primary truncate">
-                                  {dev.name}
-                                </h3>
-                              </div>
-                              <p className="text-[0.7rem] text-text-muted mt-0.5 truncate">
-                                ID: {dev.deviceId} • Device: {dev.status}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAddStream(dev.deviceId);
-                                }}
-                                className="btn btn-secondary py-1 px-2 text-[0.7rem] rounded-md flex items-center gap-1 hover:border-primary/50 hover:text-primary transition-all duration-200"
-                              >
-                                <Plus size={12} /> Add Stream
-                              </button>
-                              <button
-                                onClick={(e) => handleDeleteDevice(dev.deviceId, e)}
-                                className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border border-transparent hover:border-danger/30 rounded-md shrink-0 transition-all duration-200"
-                                title="Delete Device"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Device Actions */}
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button
-                              onClick={(e) => handleDeviceReboot(dev.deviceId, dev.name, e)}
-                              disabled={!isDeviceOnline || deviceCommandPending === `${dev.deviceId}:reboot`}
-                              className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
-                              title="Reboot Device"
-                            >
-                              <Power size={11} />
-                              {deviceCommandPending === `${dev.deviceId}:reboot` ? 'Rebooting...' : 'Reboot'}
-                            </button>
-
-                            <button
-                              onClick={(e) => openDeviceLogsModal(dev.deviceId, dev.name, e)}
-                              className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1"
-                              title="View Device Logs"
-                            >
-                              <ScrollText size={11} /> Logs
-                            </button>
-                            <button
-                              onClick={(e) => openDeviceMetricsModal(dev.deviceId, dev.name, e)}
-                              disabled={!isDeviceOnline}
-                              className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1 disabled:opacity-40"
-                              title="View Device Metrics"
-                            >
-                              <Activity size={11} /> Metrics
-                            </button>
-                            <button
-                              onClick={(e) => openDeviceConfigDialog(dev, e)}
-                              className="btn btn-secondary py-0.5 px-2 text-[0.65rem] rounded-md flex items-center gap-1"
-                              title="Device settings"
-                            >
-                              <SlidersHorizontal size={11} /> Settings
-                            </button>
-                          </div>
-
-                          {/* Nested Streams List */}
-                          <div className="flex flex-col gap-2">
-                            {deviceStreams.length === 0 ? (
-                              <p className="text-text-muted text-[0.75rem] text-center py-2 italic">
-                                No streams configured. Click 'Add Stream' above.
-                              </p>
-                            ) : (
-                              deviceStreams.map((stream) => {
-                                const isSelected = stream.streamId === selectedStreamId;
-                                const isStreamOnline = stream.status !== 'Offline';
-                                const streamStatusColor =
-                                  stream.status === 'Monitoring'
-                                    ? 'var(--color-success)'
-                                    : stream.status === 'Recording'
-                                      ? 'var(--color-danger)'
-                                      : stream.status === 'Error'
-                                        ? 'var(--color-danger)'
-                                        : stream.status === 'Processing Video' ||
-                                          stream.status === 'Processing'
-                                          ? 'var(--color-primary)'
-                                          : stream.status === 'Idle'
-                                            ? 'var(--color-secondary)'
-                                            : 'var(--color-text-muted)';
-
-                                return (
-                                  <div
-                                    key={stream.streamId}
-                                    className="flex flex-col gap-1.5"
-                                  >
-                                    <div
-                                      onClick={() => {
-                                        setSelectedStreamId((prev) => (prev === stream.streamId ? '' : stream.streamId));
-                                        setSelectedDeviceId(stream.deviceId);
-                                      }}
-                                      className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${isSelected
-                                        ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
-                                        : 'border-border-glass bg-[rgba(255,255,255,0.015)]'
-                                        }`}
-                                    >
-                                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                                        <span
-                                          className="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
-                                          style={{
-                                            background: streamStatusColor,
-                                            boxShadow:
-                                              isStreamOnline && stream.status !== 'Idle'
-                                                ? `0 0 6px ${streamStatusColor}`
-                                                : 'none',
-                                          }}
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                          <div className="text-[0.8rem] font-semibold text-text-primary truncate">
-                                            {stream.name}
-                                          </div>
-                                          <div className="text-[0.65rem] text-text-secondary truncate mt-0.5">
-                                            {stream.status === 'Error'
-                                              ? 'Camera connection error'
-                                              : stream.cameraType === 'webcam'
-                                                ? 'Webcam'
-                                                : `RTSP: ${stream.streamUrl}`}
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      <div className="flex items-center gap-1">
-                                        {/* Toggle Monitoring Button */}
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleToggleStreamMonitoring(
-                                              stream.streamId,
-                                              stream.trackingEnabled
-                                            );
-                                          }}
-                                          className={`btn ${stream.trackingEnabled
-                                            ? 'btn-primary'
-                                            : 'btn-secondary'
-                                            } py-0.5 px-2 text-[0.65rem] rounded-md h-[24px] shrink-0 flex items-center gap-1 font-semibold`}
-                                        >
-                                          {stream.trackingEnabled ? (
-                                            <>
-                                              <Activity size={10} /> Disable Tracking
-                                            </>
-                                          ) : (
-                                            <>
-                                              <Camera size={10} /> Enable Tracking
-                                            </>
-                                          )}
-                                        </button>
-
-                                        {/* Settings Button */}
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedStreamId(stream.streamId);
-                                            setSelectedDeviceId(dev.deviceId);
-                                            setShowConfigDialog(true);
-                                          }}
-                                          className="btn p-1 bg-transparent text-text-muted hover:text-primary border-none shrink-0 transition-colors duration-200"
-                                          title="Configure Stream"
-                                        >
-                                          <Settings size={12} />
-                                        </button>
-
-                                        {/* Delete Button */}
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteStream(stream.streamId, e);
-                                          }}
-                                          className="btn p-1 bg-transparent text-text-muted hover:text-danger border-none shrink-0"
-                                          title="Delete Stream"
-                                        >
-                                          <Trash2 size={12} />
-                                        </button>
-                                      </div>
-                                    </div>
-
-                                    {/* Inline Operations */}
-                                    {isSelected && (
-                                      <div className="flex flex-col gap-2.5 p-3 rounded-lg border border-border-glass bg-[rgba(124,58,237,0.03)] ml-2 mb-1.5">
-                                        {stream.cameraType === 'rtsp' && (
-                                          <div
-                                            className="text-[0.7rem] text-text-secondary truncate font-mono bg-[rgba(0,0,0,0.20)] px-2 py-1 rounded border border-[rgba(255,255,255,0.04)] select-all cursor-pointer"
-                                            title="Double click to select all"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            {stream.streamUrl}
-                                          </div>
-                                        )}
-                                        <div className="flex flex-col gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                          {getWebRtcPreviewUrl(stream) ? (
-                                            showInlineWebRtc ? (
-                                              <div className="flex flex-col gap-2 animate-[fadeIn_0.2s_ease-out]">
-                                                <div className="w-full relative" style={{ aspectRatio: '16/9' }}>
-                                                  <iframe
-                                                    src={getWebRtcPreviewUrl(stream)!}
-                                                    title="WebRTC Live Preview"
-                                                    className="w-full h-full border-0 rounded-lg block bg-[#090d16]"
-                                                    allow="autoplay; fullscreen"
-                                                  />
-                                                  <div className="absolute top-2 left-2 text-[0.6rem] font-semibold flex items-center gap-1.5 py-0.5 px-2 rounded-full bg-[rgba(16,185,129,0.25)] text-emerald-400 border border-[rgba(16,185,129,0.4)] pointer-events-none select-none z-10">
-                                                    <span className="w-1 h-1 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
-                                                    LIVE (WebRTC)
-                                                  </div>
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-1.5">
-                                                  <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      setShowInlineWebRtc(false);
-                                                    }}
-                                                    className="btn btn-secondary py-1.5 text-[0.7rem] rounded flex items-center justify-center gap-1 hover:text-danger hover:border-danger/30 transition-colors cursor-pointer font-semibold"
-                                                  >
-                                                    <X size={11} /> Close Preview
-                                                  </button>
-                                                  {stream.cameraType === 'rtsp' ? (
-                                                    <button
-                                                      type="button"
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        void handleCopyMacVlcCommand(stream.streamUrl);
-                                                      }}
-                                                      className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
-                                                      title="Copy macOS Terminal Command"
-                                                    >
-                                                      <Terminal size={11} /> Copy Command
-                                                    </button>
-                                                  ) : (
-                                                    <div />
-                                                  )}
-                                                </div>
-                                              </div>
-                                            ) : (
-                                              <div className="grid grid-cols-2 gap-1.5">
-                                                <button
-                                                  type="button"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setShowInlineWebRtc(true);
-                                                  }}
-                                                  className="btn btn-primary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 font-semibold cursor-pointer"
-                                                >
-                                                  <Play size={11} /> Play Live View
-                                                </button>
-                                                {stream.cameraType === 'rtsp' ? (
-                                                  <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      void handleCopyMacVlcCommand(stream.streamUrl);
-                                                    }}
-                                                    className="btn btn-secondary py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold truncate"
-                                                    title="Copy macOS Terminal Command"
-                                                  >
-                                                    <Terminal size={11} /> Copy Command
-                                                  </button>
-                                                ) : (
-                                                  <div />
-                                                )}
-                                              </div>
-                                            )
-                                          ) : (
-                                            <div className="flex flex-col gap-1.5">
-                                              {stream.cameraType === 'rtsp' && (
-                                                <>
-                                                  <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      void handleCopyMacVlcCommand(stream.streamUrl);
-                                                    }}
-                                                    className="btn btn-secondary w-full py-1.5 px-2 text-[0.7rem] rounded flex items-center justify-center gap-1.5 cursor-pointer font-semibold"
-                                                  >
-                                                    <Terminal size={11} /> Copy Terminal Command
-                                                  </button>
-                                                  <p className="text-[0.65rem] text-text-muted leading-relaxed mt-1 text-center">
-                                                    Live preview is not supported in-browser for this RTSP stream.
-                                                  </p>
-                                                </>
-                                              )}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-
-
-
-
-              {/* LIVE TERMINAL LOGS */}
-              <div className="glass-panel p-5">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <h2 className="text-[1.1rem] flex items-center gap-2">
-                    <Terminal size={18} color="var(--color-secondary)" /> System Status Logs
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => setShowSystemLogsDialog(true)}
-                    className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1 shrink-0"
-                    title="View logs fullscreen"
-                    aria-label="View logs fullscreen"
-                  >
-                    <Maximize2 size={12} />
-                    Expand
-                  </button>
-                </div>
-                <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3.5 text-[0.85rem] leading-[1.4] text-[#38bdf8] h-[180px] overflow-y-auto border border-[rgba(255,255,255,0.05)]" ref={terminalContainerRef}>
-                  <SystemStatusLogsList logs={logs} selectedStreamId={selectedStreamId} />
-                </div>
-              </div>
+      {/* MAIN CONTAINER */}
+      <div className="flex-1 flex flex-col p-6 overflow-y-auto max-h-screen">
+        {/* TOP STATUS BAR */}
+        <div className="flex flex-wrap justify-between items-center gap-4 pb-4 border-b border-border-glass mb-6 shrink-0 select-none text-left">
+          <div className="flex items-center gap-3">
+            {/* Pulsing armed badge */}
+            <div className="flex items-center gap-2 bg-[rgba(52,211,153,0.08)] px-3 py-1 rounded-full border border-[rgba(52,211,153,0.22)]">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+              <span className="text-[0.65rem] font-black tracking-widest text-emerald-400 uppercase">SYSTEM ARMED</span>
             </div>
 
-            {/* RIGHT COLUMN: TAB CONTENT */}
-            <div className="lg:col-span-8 flex flex-col gap-6">
-              {loadingDevices ? (
-                <DashboardPlaceholder reason="loading" />
-              ) : !hasOnlineDevices && (activeTab === 'events' || activeTab === 'reid') ? (
-                <DashboardPlaceholder reason={devices.length === 0 ? 'no-devices' : 'offline'} />
-              ) : (
-                <>
-                  <div style={{ display: activeTab === 'events' ? 'block' : 'none' }}>
-                    <EventsTab
-                      ref={eventsTabRef}
-                      devices={devices}
-                      streams={streams}
-                      orgSettings={orgSettings}
-                      onlineDeviceIds={onlineDeviceIds}
-                      hasOnlineDevices={hasOnlineDevices}
-                      isMobileViewport={isMobileViewport}
-                      deviceNameById={deviceNameById}
-                    />
-                  </div>
-                  {activeTab === 'reid' && (
-                    <ReidTab reid={reidTab} view={reidTab.reidView} />
-                  )}
-                  {activeTab === 'notifications' && (
-                    <ManageNotificationsTab
-                      notifications={notifications}
-                      onMarkRead={handleMarkRead}
-                      onNotificationClick={handleNotificationClick}
-                      onDeleteNotification={handleDeleteNotification}
-                      onClearAllNotifications={handleClearAllNotifications}
-                      streams={streams}
-                      currentOrg={currentOrg}
-                    />
-                  )}
-                </>
-              )}
+            <div className="w-[1px] h-4 bg-border-glass" />
+
+            {/* Dynamic Active Tab Name & Subtitle */}
+            <div className="flex flex-col">
+              <h1 className="text-[1.15rem] font-extrabold text-text-primary capitalize leading-none tracking-tight">
+                {activeTab === 'live' && 'Live monitoring'}
+                {activeTab === 'events' && 'Event archive'}
+                {activeTab === 'clips' && 'Clip library'}
+                {activeTab === 'reid' && 'Cross-Camera ReID'}
+                {activeTab === 'ai' && 'Ask Camera AI'}
+                {activeTab === 'map' && 'Premise map'}
+                {activeTab === 'config' && 'Configuration'}
+                {activeTab === 'notifications' && 'Manage Notifications'}
+                {appView === 'settings' && 'Org settings'}
+              </h1>
+              <p className="text-[0.72rem] text-text-muted mt-1 leading-none font-semibold">
+                {activeTab === 'live' && 'Control Room - West Campus'}
+                {activeTab === 'events' && 'All zones · last 24 hours'}
+                {activeTab === 'clips' && 'Recorded & flagged footage'}
+                {activeTab === 'reid' && 'Multi-camera tracking & path analysis'}
+                {activeTab === 'ai' && 'Natural-language video search'}
+                {activeTab === 'map' && 'Interactive camera location mapping'}
+                {activeTab === 'config' && 'Cameras, detection & alert rules'}
+                {activeTab === 'notifications' && 'Alert subscriptions & integrations'}
+                {appView === 'settings' && 'Manage your organization, billing, and team members'}
+              </p>
             </div>
-
-
           </div>
 
-          <SystemStatusLogsDialog
-            open={showSystemLogsDialog}
-            onClose={() => setShowSystemLogsDialog(false)}
-            logs={logs}
-            selectedStreamId={selectedStreamId}
-          />
+          {/* Right Statistics / Time */}
+          <div className="flex items-center gap-5 text-[0.72rem] text-text-muted font-bold">
+            <div className="flex items-center gap-1.5">
+              <span>{devices.filter((d) => d.status !== 'Offline').length} / {devices.length || 1} online</span>
+            </div>
+            <div className="w-[1px] h-3.5 bg-border-glass" />
+            <div className="flex items-center gap-1.5">
+              <span>{unreadNotificationCount} active alerts</span>
+            </div>
+            <div className="w-[1px] h-3.5 bg-border-glass" />
+            <div className="flex items-center gap-1.5 text-text-secondary">
+              <Clock className="w-3.5 h-3.5 animate-pulse" />
+              <span className="font-mono">{cameraTime}</span>
+            </div>
+          </div>
+        </div>
 
-          <DeviceLogsDialog
-            device={deviceLogsDevice}
-            onClose={closeDeviceLogsModal}
-            registerLiveLogSink={registerDeviceLogSink}
-            registerLiveEventSink={registerDeviceEventSink}
-          />
+        {/* Impersonation Banner */}
+        {isImpersonating() && (
+          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
+            <p className="text-[0.85rem] text-amber-200">
+              Super admin impersonation — viewing as <span className="font-semibold">{currentOrg?.name}</span>
+              {currentOrg?.role ? ` (${currentOrg.role})` : ''}
+            </p>
+            <button
+              type="button"
+              onClick={handleExitImpersonation}
+              className="btn btn-secondary py-1.5 px-3 text-[0.8rem]"
+            >
+              Exit to admin console
+            </button>
+          </div>
+        )}
 
-          <DeviceMetricsDialog
-            device={deviceMetricsDevice}
-            onClose={() => setDeviceMetricsDevice(null)}
-          />
+        {/* TAB BODY PANE */}
+        <div className="flex-1 min-h-0 w-full relative">
+          {appView === 'settings' && currentOrg && currentUser ? (
+            <OrgSettingsPage
+              org={currentOrg}
+              currentUserId={currentUser.id}
+              onBack={() => navigate('/app/live')}
+              onSettingsSaved={setOrgSettings}
+            />
+          ) : (
+            <>
+              {activeTab === 'live' && (
+                <LiveWallTab streams={streams} notifications={notifications} />
+              )}
 
-          <StreamConfigDialog
-            open={showConfigDialog}
-            onClose={closeStreamConfigDialog}
-            mode={addingStreamForDeviceId ? 'add' : 'edit'}
-            addDeviceId={addingStreamForDeviceId}
-            streamId={selectedStreamId}
-            streamName={streams.find((s) => s.streamId === selectedStreamId)?.name}
-            initialConfig={config}
-            onSaved={handleStreamConfigSaved}
-          />
+              {activeTab === 'events' && (
+                <EventsTab
+                  ref={eventsTabRef}
+                  devices={devices}
+                  streams={streams}
+                  orgSettings={orgSettings}
+                  onlineDeviceIds={onlineDeviceIds}
+                  hasOnlineDevices={hasOnlineDevices}
+                  isMobileViewport={isMobileViewport}
+                  deviceNameById={deviceNameById}
+                />
+              )}
 
-          <DeviceConfigDialog
-            open={showDeviceConfigDialog}
-            device={devices.find((d) => d.deviceId === deviceConfigDeviceId) ?? null}
-            initialName={deviceConfigName}
-            initialConfig={deviceConfig}
-            onClose={() => {
-              setShowDeviceConfigDialog(false);
-              setDeviceConfigDeviceId(null);
-            }}
-            onSaved={() => { void fetchDevices(); }}
-          />
-        </>
-      )}
+              {activeTab === 'clips' && <ClipLibraryTab />}
+
+              {activeTab === 'reid' && (
+                <ReidTab reid={reidTab} view={reidTab.reidView} />
+              )}
+
+              {activeTab === 'ai' && (
+                <AskCameraAiTab
+                  orgSettings={orgSettings}
+                  streams={streams}
+                />
+              )}
+
+              {activeTab === 'map' && <PremiseMapTab />}
+
+              {activeTab === 'config' && (
+                <ConfigurationTab
+                  devices={devices}
+                  streams={streams}
+                  deviceCommandPending={deviceCommandPending}
+                  logs={logs}
+                  selectedStreamId={selectedStreamId}
+                  orgId={currentOrg?.id ?? ''}
+                  onAddStream={handleAddStream}
+                  onDeleteDevice={handleDeleteDevice}
+                  onDeviceReboot={handleDeviceReboot}
+                  onOpenLogs={openDeviceLogsModal}
+                  onOpenMetrics={openDeviceMetricsModal}
+                  onOpenSettings={openDeviceConfigDialog}
+                  onDeleteStream={handleDeleteStream}
+                  onToggleStreamMonitoring={handleToggleStreamMonitoring}
+                  onOpenSystemLogs={() => setShowSystemLogsDialog(true)}
+                  setSelectedStreamId={setSelectedStreamId}
+                  setSelectedDeviceId={setSelectedDeviceId}
+                  setShowConfigDialog={setShowConfigDialog}
+                  notifications={notifications}
+                  onMarkRead={handleMarkRead}
+                  onNotificationClick={handleNotificationClick}
+                  onDeleteNotification={handleDeleteNotification}
+                  onClearAllNotifications={handleClearAllNotifications}
+                  currentOrg={currentOrg}
+                />
+              )}
+
+              {activeTab === 'notifications' && (
+                <ManageNotificationsTab
+                  notifications={notifications}
+                  onMarkRead={handleMarkRead}
+                  onNotificationClick={handleNotificationClick}
+                  onDeleteNotification={handleDeleteNotification}
+                  onClearAllNotifications={handleClearAllNotifications}
+                  streams={streams}
+                  currentOrg={currentOrg}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* KEEP INTACT AND RENDER ALL DIALOGS / CONFIG MODALS */}
+      <SystemStatusLogsDialog
+        open={showSystemLogsDialog}
+        onClose={() => setShowSystemLogsDialog(false)}
+        logs={logs}
+        selectedStreamId={selectedStreamId}
+      />
+
+      <DeviceLogsDialog
+        device={deviceLogsDevice}
+        onClose={closeDeviceLogsModal}
+        registerLiveLogSink={registerDeviceLogSink}
+        registerLiveEventSink={registerDeviceEventSink}
+      />
+
+      <DeviceMetricsDialog
+        device={deviceMetricsDevice}
+        onClose={() => setDeviceMetricsDevice(null)}
+      />
+
+      <StreamConfigDialog
+        open={showConfigDialog}
+        onClose={closeStreamConfigDialog}
+        mode={addingStreamForDeviceId ? 'add' : 'edit'}
+        addDeviceId={addingStreamForDeviceId}
+        streamId={selectedStreamId}
+        streamName={streams.find((s) => s.streamId === selectedStreamId)?.name}
+        initialConfig={config}
+        onSaved={handleStreamConfigSaved}
+      />
+
+      <DeviceConfigDialog
+        open={showDeviceConfigDialog}
+        device={devices.find((d) => d.deviceId === deviceConfigDeviceId) ?? null}
+        initialName={deviceConfigName}
+        initialConfig={deviceConfig}
+        onClose={() => {
+          setShowDeviceConfigDialog(false);
+          setDeviceConfigDeviceId(null);
+        }}
+        onSaved={() => { void fetchDevices(); }}
+      />
     </div>
   );
 }

@@ -297,3 +297,14 @@ input.filter-field {
     -webkit-mask-image: linear-gradient(to left, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.9) 30%, rgba(0, 0, 0, 0.3) 65%, rgba(0, 0, 0, 0) 90%);
   }
 }
+
+/* Custom range input thumbs */
+input[type="range"]::-webkit-slider-thumb {
+  border: 2px solid var(--color-bg-dark);
+  box-shadow: 0 0 10px var(--color-secondary);
+}
+
+input[type="range"]::-moz-range-thumb {
+  border: 2px solid var(--color-bg-dark);
+  box-shadow: 0 0 10px var(--color-secondary);
+}

@@ -1,6 +1,6 @@
 import type { EffectiveEdgeDeviceConfig } from '../edgeConfig';
 
-export type DashboardTab = 'events' | 'reid' | 'notifications';
+export type DashboardTab = 'live' | 'events' | 'clips' | 'reid' | 'ai' | 'map' | 'config' | 'notifications';
 
 export interface VideoClipDetectedObject {
   trackId: number;
