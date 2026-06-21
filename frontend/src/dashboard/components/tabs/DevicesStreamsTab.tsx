@@ -42,6 +42,7 @@ export function DevicesStreamsTab({
     if (editStreamId) {
       const streamToEdit = streams.find((s) => s.streamId === editStreamId);
       if (streamToEdit) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setSelectedEditStream(streamToEdit);
         setEditStreamOpen(true);
       }
@@ -119,10 +120,10 @@ export function DevicesStreamsTab({
 
       if (res.ok) {
         await fetchDevices();
-        
+
         // Remove from list
         setDiscoveredStreams(prev => prev.filter((_, i) => i !== index));
-        
+
         if (discoveredStreams.length <= 1) {
           setDiscoveryStatus('imported');
           setTimeout(() => setDiscoveryDevice(null), 1000);
@@ -217,9 +218,8 @@ export function DevicesStreamsTab({
                     <div className="min-w-0 flex-1 flex flex-col gap-1.5">
                       <div className="flex items-center gap-2">
                         <span
-                          className={`w-2.5 h-2.5 rounded-full inline-block flex-shrink-0 ${
-                            isOnline ? 'bg-emerald-400' : 'bg-text-muted'
-                          }`}
+                          className={`w-2.5 h-2.5 rounded-full inline-block flex-shrink-0 ${isOnline ? 'bg-emerald-400' : 'bg-text-muted'
+                            }`}
                           style={{
                             boxShadow: isOnline ? '0 0 10px rgba(52,211,153,0.6)' : 'none',
                           }}
@@ -227,9 +227,8 @@ export function DevicesStreamsTab({
                         <h3 className="text-[0.92rem] font-bold text-white truncate leading-none">
                           {dev.name}
                         </h3>
-                        <span className={`text-[0.62rem] font-black tracking-wider px-1.5 py-0.5 rounded leading-none ${
-                          isOnline ? 'bg-emerald-400/10 text-emerald-400' : 'bg-transparent text-text-muted'
-                        }`}>
+                        <span className={`text-[0.62rem] font-black tracking-wider px-1.5 py-0.5 rounded leading-none ${isOnline ? 'bg-emerald-400/10 text-emerald-400' : 'bg-transparent text-text-muted'
+                          }`}>
                           {isOnline ? 'online' : 'offline'}
                         </span>
                       </div>
@@ -313,8 +312,12 @@ export function DevicesStreamsTab({
 
                   return (
                     <tr
+                      onClick={() => {
+                        setSelectedEditStream(stream);
+                        setEditStreamOpen(true);
+                      }}
                       key={stream.streamId}
-                      className="border-b border-[rgba(255,255,255,0.03)] hover:bg-[rgba(255,255,255,0.015)] transition-colors text-[0.82rem] text-text-secondary"
+                      className="border-b cursor-pointer border-[rgba(255,255,255,0.03)] hover:bg-[rgba(255,255,255,0.015)] transition-colors text-[0.82rem] text-text-secondary"
                     >
                       {/* CAMERA name & sub-location */}
                       <td className="py-4 px-5">
@@ -337,12 +340,10 @@ export function DevicesStreamsTab({
                       {/* STATUS Badge */}
                       <td className="py-4 px-4 text-center">
                         <div className="flex items-center justify-center">
-                          <span className={`inline-flex items-center gap-1 text-[0.7rem] font-bold px-2 py-0.5 rounded-full ${
-                            isStreamLive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-[rgba(255,255,255,0.05)] text-text-muted'
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${
-                              isStreamLive ? 'bg-emerald-400 animate-pulse' : 'bg-text-muted'
-                            }`} />
+                          <span className={`inline-flex items-center gap-1 text-[0.7rem] font-bold px-2 py-0.5 rounded-full ${isStreamLive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-[rgba(255,255,255,0.05)] text-text-muted'
+                            }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isStreamLive ? 'bg-emerald-400 animate-pulse' : 'bg-text-muted'
+                              }`} />
                             {isStreamLive ? 'live' : 'offline'}
                           </span>
                         </div>
