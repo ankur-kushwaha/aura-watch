@@ -1129,22 +1129,20 @@ export default function DashboardApp() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-5 text-[0.72rem] text-text-muted font-bold">
-              <div className="flex items-center gap-1.5">
+            <div className="flex items-center divide-x divide-border-glass text-[0.72rem] text-text-muted font-bold">
+              <div className="pr-4 flex items-center gap-1.5">
                 <span>{devices.filter((d) => d.status !== 'Offline').length} / {devices.length || 1} online</span>
               </div>
-              <div className="w-[1px] h-3.5 bg-border-glass" />
               <button
                 type="button"
                 onClick={() => setNotificationsDrawerOpen(true)}
-                className="flex items-center gap-1.5 hover:text-text-primary transition-colors bg-transparent border-none outline-none cursor-pointer text-[0.72rem] text-text-muted font-bold font-sans"
+                className="px-4 flex items-center gap-1.5 hover:text-text-primary transition-colors bg-transparent border-none outline-none cursor-pointer text-[0.72rem] text-text-muted font-bold font-sans"
               >
                 <Bell size={12} className="text-text-muted shrink-0" />
                 <span>{unreadNotificationCount} active alerts</span>
               </button>
-              <div className="w-[1px] h-3.5 bg-border-glass" />
-              <div className="flex items-center gap-1.5 text-text-secondary">
-                <Clock className="w-3.5 h-3.5 animate-pulse" />
+              <div className="pl-4 flex items-center gap-1.5 text-text-secondary">
+                <Clock className="w-3.5 h-3.5 animate-pulse text-text-muted shrink-0" />
                 <span className="font-mono">{cameraTime}</span>
               </div>
             </div>
