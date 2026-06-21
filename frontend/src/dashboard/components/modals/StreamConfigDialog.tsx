@@ -158,31 +158,81 @@ export function StreamConfigDialog({
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
-            <label className="text-[0.78rem] text-text-secondary font-medium">Detect Objects</label>
-            <div className="flex gap-5">
-              <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer select-none">
+          <div className="flex flex-col gap-2.5">
+            <label className="text-[0.78rem] text-text-secondary font-medium">Tracking & Object Detection</label>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-[0.82rem] cursor-pointer select-none">
                 <input
                   type="checkbox"
-                  checked={config.detectPerson}
-                  onChange={(e) => setConfig({ ...config, detectPerson: e.target.checked })}
+                  checked={config.trackingEnabled}
+                  onChange={(e) => setConfig({ ...config, trackingEnabled: e.target.checked })}
                   className="w-4 h-4 accent-[#a78bfa]"
                 />
-                Person
+                Active AI Tracking
               </label>
-              <label className="flex items-center gap-2 text-[0.85rem] cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={config.detectVehicle}
-                  onChange={(e) => setConfig({ ...config, detectVehicle: e.target.checked })}
-                  className="w-4 h-4 accent-[#a78bfa]"
-                />
-                Vehicle
-              </label>
+              <div className="flex gap-5 pl-6">
+                <label className="flex items-center gap-2 text-[0.82rem] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={config.detectPerson}
+                    onChange={(e) => setConfig({ ...config, detectPerson: e.target.checked })}
+                    className="w-4 h-4 accent-[#a78bfa]"
+                  />
+                  Person
+                </label>
+                <label className="flex items-center gap-2 text-[0.82rem] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={config.detectVehicle}
+                    onChange={(e) => setConfig({ ...config, detectVehicle: e.target.checked })}
+                    className="w-4 h-4 accent-[#a78bfa]"
+                  />
+                  Vehicle
+                </label>
+              </div>
             </div>
             <p className="text-[0.72rem] text-text-muted leading-relaxed">
-              Vehicle includes cars, trucks, buses, motorcycles, and bicycles.
+              Enable Active AI tracking and choose object classes to monitor.
             </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5 text-left">
+              <div className="flex justify-between items-center">
+                <label className="text-[0.78rem] text-text-secondary font-medium">Motion Threshold</label>
+                <span className="text-[0.72rem] text-[var(--color-primary)] font-mono font-bold">
+                  {config.motionThreshold !== undefined ? config.motionThreshold : 25}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={config.motionThreshold !== undefined ? config.motionThreshold : 25}
+                onChange={(e) => setConfig({ ...config, motionThreshold: Number(e.target.value) })}
+                className="w-full h-1 bg-[rgba(255,255,255,0.15)] rounded-lg appearance-none cursor-pointer accent-[#a78bfa] outline-none"
+              />
+              <p className="text-[0.65rem] text-text-muted leading-tight mt-0.5">Lower value triggers motion more easily.</p>
+            </div>
+
+            <div className="flex flex-col gap-1.5 text-left">
+              <div className="flex justify-between items-center">
+                <label className="text-[0.78rem] text-text-secondary font-medium">Pixel Threshold</label>
+                <span className="text-[0.72rem] text-[var(--color-primary)] font-mono font-bold">
+                  {config.pixelChangeThreshold !== undefined ? Math.round(config.pixelChangeThreshold * 100) : 2}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="20"
+                step="0.5"
+                value={config.pixelChangeThreshold !== undefined ? config.pixelChangeThreshold * 100 : 2}
+                onChange={(e) => setConfig({ ...config, pixelChangeThreshold: Number(e.target.value) / 100 })}
+                className="w-full h-1 bg-[rgba(255,255,255,0.15)] rounded-lg appearance-none cursor-pointer accent-[#a78bfa] outline-none"
+              />
+              <p className="text-[0.65rem] text-text-muted leading-tight mt-0.5">Percent of changed pixels required.</p>
+            </div>
           </div>
 
           <div className="flex gap-2.5 justify-end pt-1">

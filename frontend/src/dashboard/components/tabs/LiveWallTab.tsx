@@ -1,73 +1,8 @@
 import { useState, useEffect } from 'react';
-import { ShieldAlert, Video } from 'lucide-react';
-import type { CameraStream, Notification } from '../../types';
+import { SlidersHorizontal, Settings, Video } from 'lucide-react';
+import type { CameraStream } from '../../types';
 
-interface AlertItem {
-  id: string;
-  type: string;
-  cameraCode: string;
-  cameraName: string;
-  detail: string;
-  time: string;
-  severity: 'high' | 'medium' | 'low';
-}
 
-const initialAlerts: AlertItem[] = [
-  {
-    id: '1',
-    type: 'Tailgating detected',
-    cameraCode: 'C-01',
-    cameraName: 'Main Entrance',
-    detail: '2 persons · 1 badge scan',
-    time: '14:32:01',
-    severity: 'high',
-  },
-  {
-    id: '2',
-    type: 'Line crossing',
-    cameraCode: 'C-31',
-    cameraName: 'Perimeter Gate',
-    detail: 'Restricted zone breach',
-    time: '14:28:44',
-    severity: 'high',
-  },
-  {
-    id: '3',
-    type: 'Person loitering',
-    cameraCode: 'C-07',
-    cameraName: 'Loading Dock',
-    detail: 'Dwell 4m 12s',
-    time: '14:21:10',
-    severity: 'medium',
-  },
-  {
-    id: '4',
-    type: 'Unattended object',
-    cameraCode: 'C-04',
-    cameraName: 'Lobby',
-    detail: 'Bag · stationary 8m',
-    time: '14:14:33',
-    severity: 'medium',
-  },
-  {
-    id: '5',
-    type: 'Motion after hours',
-    cameraCode: 'C-18',
-    cameraName: 'Server Room',
-    detail: 'Restricted · no badge',
-    time: '14:08:02',
-    severity: 'low',
-  },
-  {
-    id: '6',
-    type: 'Crowd forming',
-    cameraCode: 'C-24',
-    cameraName: 'Cafeteria',
-    detail: '8 persons · gathering',
-    time: '13:56:47',
-    severity: 'medium',
-  },
-];
 
 interface CameraFeed {
   code: string;
@@ -155,12 +90,12 @@ const cameras: CameraFeed[] = [
 
 interface LiveWallTabProps {
   streams?: CameraStream[];
-  notifications?: Notification[];
+  onEditStream?: (streamId: string) => void;
 }
 
-export function LiveWallTab({ streams = [], notifications = [] }: LiveWallTabProps) {
+export function LiveWallTab({ streams = [], onEditStream }: LiveWallTabProps) {
   const [selectedZone, setSelectedZone] = useState<'All' | 'Exterior' | 'Restricted'>('All');
-  const [activeAlertCamera, setActiveAlertCamera] = useState<string | null>(null);
+  const [selectedCameraCode, setSelectedCameraCode] = useState<string | null>(null);
   const [cameraTime, setCameraTime] = useState('14:32:08');
 
   // Derive actual camera feeds from backend streams
@@ -187,33 +122,7 @@ export function LiveWallTab({ streams = [], notifications = [] }: LiveWallTabPro
       })
     : cameras.map(c => ({ ...c, isOnline: true }));
 
-  // Derive alert stream items from notifications
-  const alerts = (notifications && notifications.length > 0)
-    ? notifications.map((n) => {
-        const matchingStreamIdx = streams.findIndex((s) => s.streamId === n.streamId);
-        const cameraCode = matchingStreamIdx !== -1 ? `C-${String(matchingStreamIdx + 1).padStart(2, '0')}` : 'C-01';
-        const cameraName = streams.find((s) => s.streamId === n.streamId)?.name || 'Unknown Camera';
-        
-        let timeStr = '12:00:00';
-        try {
-          const d = new Date(n.createdAt);
-          const formatNum = (x: number) => String(x).padStart(2, '0');
-          timeStr = `${formatNum(d.getHours())}:${formatNum(d.getMinutes())}:${formatNum(d.getSeconds())}`;
-        } catch {
-          // Fallback
-        }
 
-        return {
-          id: n.id,
-          type: n.title,
-          cameraCode,
-          cameraName,
-          detail: n.body,
-          time: timeStr,
-          severity: n.riskLevel === 'high' ? ('high' as const) : n.riskLevel === 'medium' ? ('medium' as const) : ('low' as const),
-        };
-      })
-    : initialAlerts;
 
   // Keep camera feed clock ticking
   useEffect(() => {
@@ -231,10 +140,8 @@ export function LiveWallTab({ streams = [], notifications = [] }: LiveWallTabPro
     return feed.zone === selectedZone;
   });
 
-  const handleAlertClick = (alert: AlertItem) => {
-    setActiveAlertCamera(alert.cameraCode);
-    setTimeout(() => setActiveAlertCamera(null), 3000);
-  };
+  const selectedFeed = actualCameras.find((c) => c.code === selectedCameraCode) || null;
+  const selectedStream = selectedFeed && streams ? streams.find((s) => s.streamId === selectedFeed.streamId) : null;
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 animate-[slideUp_0.3s_ease-out] w-full min-h-[calc(100vh-140px)]">
@@ -265,14 +172,15 @@ export function LiveWallTab({ streams = [], notifications = [] }: LiveWallTabPro
         {/* Video Feeds Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
           {filteredFeeds.map((feed) => {
-            const isHighlighted = activeAlertCamera === feed.code;
+            const isSelected = selectedCameraCode === feed.code;
             return (
               <div
                 key={feed.code}
+                onClick={() => setSelectedCameraCode(feed.code)}
                 className={`glass-panel overflow-hidden relative group flex flex-col cursor-pointer transition-all duration-300 ${
-                  isHighlighted
-                    ? 'border-[rgba(244,63,94,0.6)] shadow-[0_0_24px_rgba(244,63,94,0.35)] scale-[1.01]'
-                    : 'border-border-glass'
+                  isSelected
+                    ? 'border-[var(--color-secondary)] shadow-[0_0_20px_rgba(6,182,212,0.25)] scale-[1.01]'
+                    : 'border-border-glass hover:border-[rgba(255,255,255,0.1)]'
                 }`}
                 style={{ aspectRatio: '4/3' }}
               >
@@ -334,7 +242,7 @@ export function LiveWallTab({ streams = [], notifications = [] }: LiveWallTabPro
                   {/* Blinking REC Status indicator */}
                   <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-[rgba(9,13,22,0.65)] px-2.5 py-0.5 rounded border border-[rgba(255,255,255,0.05)] select-none z-10">
                     <span className={`w-1.5 h-1.5 rounded-full inline-block ${feed.isOnline ? 'bg-[var(--color-danger)] animate-[pulse-danger_1.2s_infinite]' : 'bg-text-muted'}`} />
-                    <span className="text-[0.6rem] font-bold tracking-wider text-white">REC</span>
+                    <span className="text-[0.65rem] font-bold tracking-wider text-white">REC</span>
                   </div>
 
                   {/* Interactive stream play icons / overlays on hover */}
@@ -358,62 +266,163 @@ export function LiveWallTab({ streams = [], notifications = [] }: LiveWallTabPro
         </div>
       </div>
 
-      {/* RIGHT PANEL: Live Alert Stream */}
+      {/* RIGHT PANEL: Camera Properties */}
       <div className="xl:col-span-3 flex flex-col gap-4">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between border-b border-border-glass pb-3">
           <h2 className="text-[1.1rem] font-bold flex items-center gap-2">
-            <ShieldAlert size={18} className="text-[var(--color-danger)]" /> Alert stream
+            <SlidersHorizontal size={18} className="text-[var(--color-secondary)]" /> Camera properties
           </h2>
-          <div className="flex items-center gap-1.5 bg-[rgba(244,63,94,0.1)] px-2.5 py-0.5 rounded-full border border-[rgba(244,63,94,0.25)] select-none">
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-danger)] inline-block animate-[pulse-danger_0.8s_infinite]" />
-            <span className="text-[0.65rem] font-extrabold tracking-wider text-[var(--color-danger)]">LIVE</span>
-          </div>
+          {selectedFeed && (
+            <span className="text-[0.7rem] font-extrabold bg-[rgba(6,182,212,0.1)] text-[var(--color-secondary)] px-2 py-0.5 rounded border border-[rgba(6,182,212,0.25)] select-none">
+              {selectedFeed.code}
+            </span>
+          )}
         </div>
 
-        {/* Alert Cards Container */}
-        <div className="flex flex-col gap-3 overflow-y-auto max-h-[calc(100vh-200px)] pr-1 flex-1">
-          {alerts.map((alert) => {
-            const isHigh = alert.severity === 'high';
-            const isMed = alert.severity === 'medium';
-            const borderGlowColor = isHigh
-              ? 'border-l-[var(--color-danger)]'
-              : isMed
-              ? 'border-l-[var(--color-warning)]'
-              : 'border-l-[var(--color-secondary)]';
-
-            return (
-              <div
-                key={alert.id}
-                onClick={() => handleAlertClick(alert)}
-                className={`glass-panel interactive cursor-pointer p-4 rounded-xl border-l-[3px] ${borderGlowColor} bg-[rgba(15,23,42,0.45)] hover:bg-[rgba(30,41,59,0.55)] transition-all duration-200 flex flex-col gap-1.5`}
-              >
-                {/* Header info */}
-                <div className="flex justify-between items-start gap-2">
-                  <h3 className="text-[0.88rem] font-bold text-text-primary leading-tight">
-                    {alert.type}
-                  </h3>
-                  <span className="text-[0.68rem] text-text-muted font-mono whitespace-nowrap">
-                    {alert.time}
+        {/* Selected Camera Details */}
+        {selectedFeed ? (
+          <div className="flex flex-col gap-4 flex-1 overflow-y-auto max-h-[calc(100vh-200px)] pr-1 animate-[fadeIn_0.2s_ease-out]">
+            {/* Camera Status Card */}
+            <div className="glass-panel p-4 rounded-xl bg-[rgba(15,23,42,0.45)] border border-border-glass flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <span className="text-[0.75rem] text-text-muted font-semibold">Status</span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full inline-block ${
+                    selectedFeed.isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
+                  }`} />
+                  <span className="text-[0.75rem] font-bold capitalize">
+                    {selectedFeed.status || (selectedFeed.isOnline ? 'online' : 'offline')}
                   </span>
                 </div>
-
-                {/* Details */}
-                <div className="flex flex-wrap items-center gap-x-2 text-[0.72rem] text-text-secondary leading-normal">
-                  <span className="font-bold text-[var(--color-secondary)]">
-                    {alert.cameraCode}
-                  </span>
-                  <span className="text-text-muted font-semibold">·</span>
-                  <span className="text-text-muted truncate">{alert.cameraName}</span>
-                </div>
-
-                <p className="text-[0.75rem] text-text-muted leading-relaxed truncate">
-                  {alert.detail}
-                </p>
               </div>
-            );
-          })}
-        </div>
+              <div className="flex justify-between items-center text-[0.75rem]">
+                <span className="text-text-muted font-semibold">Zone</span>
+                <span className="text-text-secondary font-bold">{selectedFeed.zone}</span>
+              </div>
+            </div>
+
+            {/* General Settings */}
+            <div className="flex flex-col gap-2.5">
+              <span className="text-[0.72rem] text-text-muted font-extrabold uppercase tracking-wider select-none">
+                General details
+              </span>
+              <div className="glass-panel p-4 rounded-xl bg-[rgba(15,23,42,0.3)] border border-border-glass flex flex-col gap-3 text-left">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] text-text-muted font-bold">Camera Name</span>
+                  <span className="text-[0.82rem] font-bold text-text-primary">{selectedFeed.name}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] text-text-muted font-bold">Source Connection</span>
+                  <span className="text-[0.82rem] font-semibold text-text-secondary">
+                    {selectedStream ? (selectedStream.cameraType === 'rtsp' ? 'RTSP Network Stream' : 'Local Camera / Webcam') : 'Mock / Demo Feed'}
+                  </span>
+                </div>
+                {selectedFeed.streamUrl && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[0.65rem] text-text-muted font-bold">RTSP URL</span>
+                    <span className="text-[0.72rem] font-mono text-text-muted break-all bg-[rgba(0,0,0,0.25)] p-1.5 rounded border border-white/5">
+                      {selectedFeed.streamUrl}
+                    </span>
+                  </div>
+                )}
+                {selectedStream?.streamHost && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[0.65rem] text-text-muted font-bold">Stream Host</span>
+                    <span className="text-[0.75rem] font-mono text-text-secondary">{selectedStream.streamHost}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* AI Analysis Properties */}
+            <div className="flex flex-col gap-2.5">
+              <span className="text-[0.72rem] text-text-muted font-extrabold uppercase tracking-wider select-none">
+                AI Detection & Rules
+              </span>
+              <div className="glass-panel p-4 rounded-xl bg-[rgba(15,23,42,0.3)] border border-border-glass flex flex-col gap-3 text-left">
+                <div className="flex justify-between items-center text-[0.78rem]">
+                  <span className="text-text-secondary font-medium">Tracking Status</span>
+                  <span className={`px-2 py-0.5 rounded text-[0.65rem] font-extrabold ${
+                    selectedStream ? (selectedStream.trackingEnabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-text-muted border border-white/5') : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25'
+                  }`}>
+                    {selectedStream ? (selectedStream.trackingEnabled ? 'MONITORING' : 'IDLE') : 'ACTIVE'}
+                  </span>
+                </div>
+                <div className="h-px bg-[rgba(255,255,255,0.05)]" />
+                <div className="flex flex-col gap-2">
+                  <span className="text-[0.65rem] text-text-muted font-bold">Active Detections</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {((selectedStream ? selectedStream.detectPerson : true) || selectedFeed.hasTracker) && (
+                      <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-purple-500/10 text-purple-300 border border-purple-500/25">
+                        Person
+                      </span>
+                    )}
+                    {((selectedStream ? selectedStream.detectVehicle : true) || selectedFeed.hasTracker) && (
+                      <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-blue-500/10 text-blue-300 border border-blue-500/25">
+                        Vehicle
+                      </span>
+                    )}
+                    {selectedFeed.hasTracker && (
+                      <>
+                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                          Loitering alert
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                          Cross-camera ReID
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Motion & Tuning */}
+            <div className="flex flex-col gap-2.5">
+              <span className="text-[0.72rem] text-text-muted font-extrabold uppercase tracking-wider select-none">
+                Motion Tuning
+              </span>
+              <div className="glass-panel p-4 rounded-xl bg-[rgba(15,23,42,0.3)] border border-border-glass grid grid-cols-2 gap-3 text-left">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] text-text-muted font-bold">Motion Threshold</span>
+                  <span className="text-[0.82rem] font-mono font-bold text-text-primary">
+                    {selectedStream ? `${selectedStream.motionThreshold}%` : '25%'}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[0.65rem] text-text-muted font-bold">Pixel Threshold</span>
+                  <span className="text-[0.82rem] font-mono font-bold text-text-primary">
+                    {selectedStream ? `${Math.round(selectedStream.pixelChangeThreshold * 100)}%` : '2%'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Settings Button */}
+            {selectedFeed.streamId && onEditStream && (
+              <button
+                type="button"
+                onClick={() => onEditStream && selectedFeed.streamId && onEditStream(selectedFeed.streamId)}
+                className="w-full btn btn-primary py-2.5 rounded-xl flex items-center justify-center gap-2 text-[0.8rem] font-bold cursor-pointer transition-all duration-200 mt-2 border-none"
+              >
+                <Settings size={14} /> Edit stream configuration
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-6 border border-dashed border-border-glass rounded-2xl bg-[rgba(255,255,255,0.01)] text-text-muted gap-3 min-h-[300px]">
+            <div className="w-12 h-12 rounded-full bg-[rgba(255,255,255,0.03)] border border-border-glass flex items-center justify-center">
+              <Video size={20} className="opacity-40" />
+            </div>
+            <div>
+              <p className="text-[0.88rem] font-bold text-text-secondary">No camera selected</p>
+              <p className="text-[0.75rem] text-text-muted mt-1 max-w-[200px] leading-relaxed">
+                Click on any camera feed in the grid to view its live properties and AI configurations.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

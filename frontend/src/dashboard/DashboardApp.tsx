@@ -1044,9 +1044,14 @@ export default function DashboardApp() {
               <span>{devices.filter((d) => d.status !== 'Offline').length} / {devices.length || 1} online</span>
             </div>
             <div className="w-[1px] h-3.5 bg-border-glass" />
-            <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setNotificationsDrawerOpen(true)}
+              className="flex items-center gap-1.5 hover:text-text-primary transition-colors bg-transparent border-none outline-none cursor-pointer text-[0.72rem] text-text-muted font-bold font-sans"
+            >
+              <Bell size={12} className="text-text-muted shrink-0" />
               <span>{unreadNotificationCount} active alerts</span>
-            </div>
+            </button>
             <div className="w-[1px] h-3.5 bg-border-glass" />
             <div className="flex items-center gap-1.5 text-text-secondary">
               <Clock className="w-3.5 h-3.5 animate-pulse" />
@@ -1084,7 +1089,28 @@ export default function DashboardApp() {
           ) : (
             <>
               {activeTab === 'live' && (
-                <LiveWallTab streams={streams} notifications={notifications} />
+                <LiveWallTab
+                  streams={streams}
+                  onEditStream={(streamId) => {
+                    const stream = streams.find((s) => s.streamId === streamId);
+                    if (stream) {
+                      setSelectedStreamId(streamId);
+                      setSelectedDeviceId(stream.deviceId);
+                      setConfig({
+                        name: stream.name,
+                        type: stream.cameraType,
+                        streamUrl: stream.streamUrl,
+                        trackingEnabled: stream.trackingEnabled,
+                        motionThreshold: stream.motionThreshold,
+                        pixelChangeThreshold: stream.pixelChangeThreshold,
+                        detectPerson: stream.detectPerson ?? true,
+                        detectVehicle: stream.detectVehicle ?? true,
+                      });
+                      setAddingStreamForDeviceId(null);
+                      setShowConfigDialog(true);
+                    }
+                  }}
+                />
               )}
 
               {activeTab === 'events' && (
