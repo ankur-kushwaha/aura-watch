@@ -269,7 +269,7 @@ export function AskCameraAiTab({ orgSettings, streams }: AskCameraAiTabProps) {
         )}
 
         {/* Input Bar */}
-        <div className="relative flex items-center bg-[rgba(15,23,42,0.45)] border border-border-glass rounded-2xl p-2.5 focus-within:border-[var(--color-primary)] transition-all duration-300 shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
+        <div className="relative flex items-center bg-[rgba(15,23,42,0.45)] border border-border-glass rounded-2xl p-2.5 focus-within:border-[var(--color-primary)] focus-within:shadow-[0_0_16px_var(--color-primary-glow)] transition-all duration-300 shadow-[0_4px_24px_rgba(0,0,0,0.2)]">
           <ArrowRight className="text-[var(--color-secondary)] w-5 h-5 ml-2.5 shrink-0" />
           <input
             type="text"
@@ -277,7 +277,7 @@ export function AskCameraAiTab({ orgSettings, streams }: AskCameraAiTabProps) {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch(query)}
             placeholder="Ask AI anything about the camera footage..."
-            className="flex-1 bg-transparent border-none outline-none text-[0.95rem] text-text-primary px-3 py-1.5 focus:ring-0 placeholder:text-text-muted font-medium"
+            className="flex-1 bg-transparent border-none outline-none text-[0.95rem] text-text-primary px-3 py-1.5 focus:ring-0 placeholder:text-text-muted font-medium no-focus-style"
           />
           <button
             onClick={() => handleSearch(query)}
