@@ -13,7 +13,6 @@ import {
   Clock,
   Server,
   ChevronLeft,
-  ChevronRight,
 } from 'lucide-react';
 import {
   apiFetch,
