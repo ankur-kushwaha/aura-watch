@@ -83,6 +83,8 @@ export function buildConfigurePayload(
       pixelChangeThreshold: stream.pixelChangeThreshold,
       detectPerson: stream.detectPerson,
       detectVehicle: stream.detectVehicle,
+      crossCameraReid: stream.crossCameraReid,
+      aiSummaryEnabled: stream.aiSummaryEnabled,
     })),
   };
 }

@@ -92,9 +92,54 @@ const cameras: CameraFeed[] = [
 interface LiveWallTabProps {
   streams?: CameraStream[];
   onEditStream?: (streamId: string) => void;
+  onUpdateStreamConfig?: (streamId: string, patch: Partial<CameraStream>) => Promise<void>;
 }
 
-export function LiveWallTab({ streams = [], onEditStream }: LiveWallTabProps) {
+const getStatusLabelAndColor = (status: string | undefined, isOnline: boolean) => {
+  if (!isOnline) {
+    return {
+      label: 'OFFLINE',
+      dotClass: 'bg-slate-500',
+      bgClass: 'bg-[#090d16]/95 border border-slate-700 text-slate-400 font-bold'
+    };
+  }
+  const s = status?.toLowerCase() || '';
+  if (s === 'recording') {
+    return {
+      label: 'REC',
+      dotClass: 'bg-[var(--color-danger)] animate-[pulse-danger_1.2s_infinite]',
+      bgClass: 'bg-[#090d16]/95 border border-[var(--color-danger)]/60 text-[var(--color-danger)] font-black'
+    };
+  }
+  if (s === 'processing' || s === 'processingvideo') {
+    return {
+      label: 'SUMMARIZING',
+      dotClass: 'bg-[var(--color-secondary)] animate-pulse',
+      bgClass: 'bg-[#090d16]/95 border border-[var(--color-secondary)]/60 text-[var(--color-secondary)] font-black'
+    };
+  }
+  if (s === 'monitoring') {
+    return {
+      label: 'MONITORING',
+      dotClass: 'bg-emerald-400 animate-[pulse-success_2s_infinite]',
+      bgClass: 'bg-[#090d16]/95 border border-emerald-500/50 text-emerald-400 font-bold'
+    };
+  }
+  if (s === 'error') {
+    return {
+      label: 'ERROR',
+      dotClass: 'bg-[var(--color-danger)] animate-pulse',
+      bgClass: 'bg-[#090d16]/95 border border-rose-500/60 text-rose-400 font-bold'
+    };
+  }
+  return {
+    label: 'IDLE',
+    dotClass: 'bg-slate-400',
+    bgClass: 'bg-[#090d16]/95 border border-slate-600 text-slate-200 font-bold'
+  };
+};
+
+export function LiveWallTab({ streams = [], onEditStream, onUpdateStreamConfig }: LiveWallTabProps) {
   const [selectedZone, setSelectedZone] = useState<'All' | 'Exterior' | 'Restricted'>('All');
   const [selectedCameraCode, setSelectedCameraCode] = useState<string | null>(null);
   const [cameraTime, setCameraTime] = useState('14:32:08');
@@ -254,10 +299,15 @@ export function LiveWallTab({ streams = [], onEditStream }: LiveWallTabProps) {
                   </div>
 
                   {/* Blinking REC Status indicator */}
-                  <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-[rgba(9,13,22,0.65)] px-2.5 py-0.5 rounded border border-[rgba(255,255,255,0.05)] select-none z-10">
-                    <span className={`w-1.5 h-1.5 rounded-full inline-block ${feed.isOnline ? 'bg-[var(--color-danger)] animate-[pulse-danger_1.2s_infinite]' : 'bg-text-muted'}`} />
-                    <span className="text-[0.65rem] font-bold tracking-wider text-white">REC</span>
-                  </div>
+                  {(() => {
+                    const statusMeta = getStatusLabelAndColor(feed.status, feed.isOnline ?? false);
+                    return (
+                      <div className={`absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-0.5 rounded select-none z-10 font-bold text-[0.65rem] tracking-wider ${statusMeta.bgClass}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full inline-block ${statusMeta.dotClass}`} />
+                        <span>{statusMeta.label}</span>
+                      </div>
+                    );
+                  })()}
 
                   {/* Interactive stream play icons / overlays on hover */}
                   {(!feed.streamId || !feed.isOnline) && (
@@ -382,10 +432,31 @@ export function LiveWallTab({ streams = [], onEditStream }: LiveWallTabProps) {
                         Loitering alert
                       </span>
                     )}
-                    {selectedFeed && (!selectedFeed.streamId || getStreamMeta(selectedFeed.streamId).crossCameraReid !== false) && (
-                      <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
-                        Cross-camera ReID
-                      </span>
+                    {selectedStream ? (
+                      selectedStream.crossCameraReid !== false && (
+                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                          Cross-camera ReID
+                        </span>
+                      )
+                    ) : (
+                      selectedFeed && (!selectedFeed.streamId || getStreamMeta(selectedFeed.streamId).crossCameraReid !== false) && (
+                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                          Cross-camera ReID
+                        </span>
+                      )
+                    )}
+                    {selectedStream ? (
+                      selectedStream.aiSummaryEnabled !== false && (
+                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/25">
+                          AI Summaries
+                        </span>
+                      )
+                    ) : (
+                      selectedFeed && (!selectedFeed.streamId || getStreamMeta(selectedFeed.streamId).aiSummaryEnabled !== false) && (
+                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/25">
+                          AI Summaries
+                        </span>
+                      )
                     )}
                     {selectedFeed && (!selectedFeed.streamId || getStreamMeta(selectedFeed.streamId).plateRecognition !== false) && (
                       <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
@@ -404,6 +475,71 @@ export function LiveWallTab({ streams = [], onEditStream }: LiveWallTabProps) {
                 </div>
               </div>
             </div>
+
+            {/* Quick Stream Controls */}
+            {selectedStream && onUpdateStreamConfig && (
+              <div className="flex flex-col gap-2.5">
+                <span className="text-[0.72rem] text-text-muted font-extrabold uppercase tracking-wider select-none">
+                  Quick Controls
+                </span>
+                <div className="glass-panel p-4 rounded-xl bg-[rgba(15,23,42,0.3)] border border-border-glass flex flex-col gap-3.5 text-left">
+                  {/* Toggle 1: Object Tracking */}
+                  <div className="flex justify-between items-center">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[0.78rem] font-bold text-text-secondary">Object Tracking</span>
+                      <span className="text-[0.65rem] text-text-muted">Edge YOLO detection pipeline</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={selectedStream.trackingEnabled}
+                        onChange={(e) => onUpdateStreamConfig(selectedStream.streamId, { trackingEnabled: e.target.checked })}
+                      />
+                      <div className="w-9 h-5 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
+                    </label>
+                  </div>
+
+                  <div className="h-px bg-[rgba(255,255,255,0.05)]" />
+
+                  {/* Toggle 2: AI Summaries */}
+                  <div className="flex justify-between items-center">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[0.78rem] font-bold text-text-secondary">AI Summaries</span>
+                      <span className="text-[0.65rem] text-text-muted">Gemini clip analysis on event</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={selectedStream.aiSummaryEnabled !== false}
+                        onChange={(e) => onUpdateStreamConfig(selectedStream.streamId, { aiSummaryEnabled: e.target.checked })}
+                      />
+                      <div className="w-9 h-5 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
+                    </label>
+                  </div>
+
+                  <div className="h-px bg-[rgba(255,255,255,0.05)]" />
+
+                  {/* Toggle 3: ReID Detections */}
+                  <div className="flex justify-between items-center">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[0.78rem] font-bold text-text-secondary">ReID Detections</span>
+                      <span className="text-[0.65rem] text-text-muted">Cross-camera identity tracking</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={selectedStream.crossCameraReid !== false}
+                        onChange={(e) => onUpdateStreamConfig(selectedStream.streamId, { crossCameraReid: e.target.checked })}
+                      />
+                      <div className="w-9 h-5 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Motion & Tuning */}
             <div className="flex flex-col gap-2.5">

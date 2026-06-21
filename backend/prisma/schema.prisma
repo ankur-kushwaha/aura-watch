@@ -146,6 +146,7 @@ model CameraStream {
   zone                 String?
   loiteringAlert       Boolean         @default(true)
   crossCameraReid      Boolean         @default(true)
+  aiSummaryEnabled     Boolean         @default(true)
   plateRecognition     Boolean         @default(true)
   streamHost           String          @default("")
   lastHeartbeat        DateTime        @default(now())

@@ -144,6 +144,7 @@ export interface CameraStream {
   zone?: string | null;
   loiteringAlert?: boolean | null;
   crossCameraReid?: boolean | null;
+  aiSummaryEnabled?: boolean | null;
   plateRecognition?: boolean | null;
 }
 

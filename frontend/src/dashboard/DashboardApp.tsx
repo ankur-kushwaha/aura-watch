@@ -522,6 +522,8 @@ export default function DashboardApp() {
                       detectPerson: data.cameraConfig.detectPerson ?? true,
                       detectVehicle: data.cameraConfig.detectVehicle ?? true,
                       streamHost: data.cameraConfig.streamHost,
+                      crossCameraReid: data.cameraConfig.crossCameraReid ?? true,
+                      aiSummaryEnabled: data.cameraConfig.aiSummaryEnabled ?? true,
                     } : {})
                   }
                   : s
@@ -749,6 +751,35 @@ export default function DashboardApp() {
       fetchDevices();
     } catch (err) {
       console.error('Failed to toggle monitoring', err);
+    }
+  };
+
+  const handleUpdateStreamConfig = async (streamId: string, patch: Partial<CameraStream>) => {
+    const stream = streams.find((s) => s.streamId === streamId);
+    if (!stream) return;
+
+    try {
+      await apiFetch(`/streams/${streamId}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (streamId === selectedStreamId) {
+        setConfig((prev) => ({
+          ...prev,
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.cameraType !== undefined ? { type: patch.cameraType } : {}),
+          ...(patch.streamUrl !== undefined ? { streamUrl: patch.streamUrl } : {}),
+          ...(patch.trackingEnabled !== undefined ? { trackingEnabled: patch.trackingEnabled } : {}),
+          ...(patch.motionThreshold !== undefined ? { motionThreshold: patch.motionThreshold } : {}),
+          ...(patch.pixelChangeThreshold !== undefined ? { pixelChangeThreshold: patch.pixelChangeThreshold } : {}),
+          ...(patch.detectPerson !== undefined ? { detectPerson: patch.detectPerson } : {}),
+          ...(patch.detectVehicle !== undefined ? { detectVehicle: patch.detectVehicle } : {}),
+        }));
+      }
+      fetchDevices();
+    } catch (err) {
+      console.error('Failed to update stream configuration', err);
     }
   };
 
@@ -1154,6 +1185,7 @@ export default function DashboardApp() {
                   onEditStream={(streamId) => {
                     navigate(`/app/devices?editStreamId=${streamId}`);
                   }}
+                  onUpdateStreamConfig={handleUpdateStreamConfig}
                 />
               )}
 

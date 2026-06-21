@@ -125,6 +125,7 @@ router.post('/', async (req: Request, res: Response) => {
     zone,
     loiteringAlert,
     crossCameraReid,
+    aiSummaryEnabled,
     plateRecognition,
   } = req.body;
 
@@ -162,6 +163,7 @@ router.post('/', async (req: Request, res: Response) => {
         zone: zone ? String(zone).trim() : null,
         loiteringAlert: loiteringAlert !== undefined ? Boolean(loiteringAlert) : true,
         crossCameraReid: crossCameraReid !== undefined ? Boolean(crossCameraReid) : true,
+        aiSummaryEnabled: aiSummaryEnabled !== undefined ? Boolean(aiSummaryEnabled) : true,
         plateRecognition: plateRecognition !== undefined ? Boolean(plateRecognition) : true,
         streamHost: '',
       },
@@ -202,6 +204,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
     zone,
     loiteringAlert,
     crossCameraReid,
+    aiSummaryEnabled,
     plateRecognition,
   } = req.body;
 
@@ -237,6 +240,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
         zone: zone !== undefined ? (zone ? String(zone).trim() : null) : existing.zone,
         loiteringAlert: loiteringAlert !== undefined ? Boolean(loiteringAlert) : existing.loiteringAlert,
         crossCameraReid: crossCameraReid !== undefined ? Boolean(crossCameraReid) : existing.crossCameraReid,
+        aiSummaryEnabled: aiSummaryEnabled !== undefined ? Boolean(aiSummaryEnabled) : existing.aiSummaryEnabled,
         plateRecognition: plateRecognition !== undefined ? Boolean(plateRecognition) : existing.plateRecognition,
       },
     });

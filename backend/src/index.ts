@@ -544,7 +544,7 @@ async function processVideoClipInBackground(
       trackEventCount: trackEvents.length,
     });
     const reidFromClipPromise =
-      orgSettings?.reidProcessing !== false && trackEvents.length > 0
+      orgSettings?.reidProcessing !== false && stream?.crossCameraReid !== false && trackEvents.length > 0
         ? processReidTrackEventsFromClip(
             filepath,
             deviceId,
@@ -587,6 +587,8 @@ async function processVideoClipInBackground(
 
     if (orgSettings?.reidProcessing === false && trackEvents.length > 0) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] ReID processing disabled for this organization.`);
+    } else if (stream?.crossCameraReid === false && trackEvents.length > 0) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] ReID processing disabled for this camera stream.`);
     }
 
     const reidLogEntries: ClipReidLogEntry[] = [];
@@ -594,6 +596,12 @@ async function processVideoClipInBackground(
       reidLogEntries.push({
         level: 'info',
         message: 'ReID processing is disabled in organization settings.',
+      });
+    }
+    if (stream?.crossCameraReid === false) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'ReID processing is disabled on this camera stream.',
       });
     }
     if (!stream?.trackingEnabled) {
@@ -719,6 +727,7 @@ async function processVideoClipInBackground(
     let clipForBroadcast = clipDb;
     if (
       orgSettings?.videoSummary !== false &&
+      stream?.aiSummaryEnabled !== false &&
       trackEvents.length > 0 &&
       fs.existsSync(filepath)
     ) {
@@ -738,6 +747,8 @@ async function processVideoClipInBackground(
           `[${cameraName}] AI summary generation failed for ${filename}: ${err.message}`,
         );
       }
+    } else if (stream?.aiSummaryEnabled === false && trackEvents.length > 0) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generation disabled for this camera stream.`);
     }
 
     if (orgSettings?.semanticSearch === false) {
