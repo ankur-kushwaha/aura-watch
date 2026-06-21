@@ -6,11 +6,11 @@ import {
   Settings,
   SlidersHorizontal,
   Fingerprint,
-  AlertTriangle,
+  // AlertTriangle,
   Bell,
   Film,
   Monitor,
-  Map as MapIcon,
+  // Map as MapIcon,
   Clock,
 } from 'lucide-react';
 import {
