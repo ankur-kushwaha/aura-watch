@@ -9,7 +9,7 @@ import {
 import { apiFetch } from '../../api';
 import { buildInstallCmd } from '../utils/media';
 
-export function DeviceInstallTooltip({ orgId, showAsButton }: { orgId: string; showAsButton?: boolean }) {
+export function DeviceInstallTooltip({ orgId, showAsButton, children }: { orgId: string; showAsButton?: boolean; children?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
@@ -43,7 +43,11 @@ export function DeviceInstallTooltip({ orgId, showAsButton }: { orgId: string; s
 
   return (
     <>
-      {showAsButton ? (
+      {children ? (
+        <span onClick={() => setOpen(true)}>
+          {children}
+        </span>
+      ) : showAsButton ? (
         <button
           type="button"
           onClick={() => setOpen(true)}

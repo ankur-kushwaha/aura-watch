@@ -4,7 +4,6 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Camera,
   Settings,
-  SlidersHorizontal,
   Fingerprint,
   // AlertTriangle,
   Bell,
@@ -12,6 +11,7 @@ import {
   Monitor,
   // Map as MapIcon,
   Clock,
+  Server,
 } from 'lucide-react';
 import {
   apiFetch,
@@ -46,7 +46,7 @@ import { fetchNotifications, fetchUnreadCount, markNotificationsRead, deleteNoti
 
 
 import { dashboardTabFromPath } from './utils/routing';
-import { EventsTab, type EventsTabRef, ReidTab } from './components/tabs';
+import { EventsTab, type EventsTabRef, ReidTab, DevicesStreamsTab } from './components/tabs';
 import { ManageNotificationsTab } from './components/tabs/ManageNotificationsTab';
 import { LiveWallTab } from './components/tabs/LiveWallTab';
 import { ClipLibraryTab } from './components/tabs/ClipLibraryTab';
@@ -126,6 +126,20 @@ export default function DashboardApp() {
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const [currentDateTimeStr, setCurrentDateTimeStr] = useState('');
+  useEffect(() => {
+    const updateDateTime = () => {
+      const now = new Date();
+      const datePart = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const timePart = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      setCurrentDateTimeStr(`${datePart}, ${timePart}`);
+    };
+    updateDateTime();
+    const interval = setInterval(updateDateTime, 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -916,7 +930,7 @@ export default function DashboardApp() {
               { tab: 'reid' as const, icon: Fingerprint, title: 'Cross-Camera ReID' },
               { tab: 'ai' as const, icon: Monitor, title: 'Ask Camera AI' },
               // { tab: 'map' as const, icon: MapIcon, title: 'Premise map' },
-              { tab: 'config' as const, icon: SlidersHorizontal, title: 'Configuration' },
+              { tab: 'devices' as const, icon: Server, title: 'Devices & Streams' },
             ].map(({ tab, icon: Icon, title, hasBadge }) => {
               const isSelected = activeTab === tab;
               return (
@@ -1003,13 +1017,17 @@ export default function DashboardApp() {
         {/* TOP STATUS BAR */}
         <div className="flex flex-wrap justify-between items-center gap-4 pb-4 border-b border-border-glass mb-6 shrink-0 select-none text-left">
           <div className="flex items-center gap-3">
-            {/* Pulsing armed badge */}
-            <div className="flex items-center gap-2 bg-[rgba(52,211,153,0.08)] px-3 py-1 rounded-full border border-[rgba(52,211,153,0.22)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
-              <span className="text-[0.65rem] font-black tracking-widest text-emerald-400 uppercase">SYSTEM ARMED</span>
-            </div>
+            {activeTab !== 'devices' && (
+              <>
+                {/* Pulsing armed badge */}
+                <div className="flex items-center gap-2 bg-[rgba(52,211,153,0.08)] px-3 py-1 rounded-full border border-[rgba(52,211,153,0.22)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                  <span className="text-[0.65rem] font-black tracking-widest text-emerald-400 uppercase">SYSTEM ARMED</span>
+                </div>
 
-            <div className="w-[1px] h-4 bg-border-glass" />
+                <div className="w-[1px] h-4 bg-border-glass" />
+              </>
+            )}
 
             {/* Dynamic Active Tab Name & Subtitle */}
             <div className="flex flex-col">
@@ -1020,44 +1038,86 @@ export default function DashboardApp() {
                 {activeTab === 'reid' && 'Cross-Camera ReID'}
                 {activeTab === 'ai' && 'Ask Camera AI'}
                 {activeTab === 'map' && 'Premise map'}
-                {activeTab === 'config' && 'Configuration'}
+                {activeTab === 'devices' && (
+                  <span className="flex items-center gap-2 flex-wrap">
+                    <span>Devices & Streams</span>
+                    <span className="text-text-muted font-bold">·</span>
+                    <span className="text-[0.8rem] text-text-muted font-bold font-sans mt-0.5 normal-case">
+                      {currentOrg?.name || 'Petrol Station Complex, Sector 57, Gurgaon'}
+                    </span>
+                  </span>
+                )}
                 {activeTab === 'notifications' && 'Manage Notifications'}
                 {appView === 'settings' && 'Org settings'}
               </h1>
-              <p className="text-[0.72rem] text-text-muted mt-1 leading-none font-semibold">
-                {activeTab === 'live' && 'Control Room - West Campus'}
-                {activeTab === 'events' && 'All zones · last 24 hours'}
-                {activeTab === 'clips' && 'Recorded & flagged footage'}
-                {activeTab === 'reid' && 'Multi-camera tracking & path analysis'}
-                {activeTab === 'ai' && 'Natural-language video search'}
-                {activeTab === 'map' && 'Interactive camera location mapping'}
-                {activeTab === 'config' && 'Cameras, detection & alert rules'}
-                {activeTab === 'notifications' && 'Alert subscriptions & integrations'}
-                {appView === 'settings' && 'Manage your organization, billing, and team members'}
-              </p>
+              {activeTab !== 'devices' && (
+                <p className="text-[0.72rem] text-text-muted mt-1 leading-none font-semibold">
+                  {activeTab === 'live' && 'Control Room - West Campus'}
+                  {activeTab === 'events' && 'All zones · last 24 hours'}
+                  {activeTab === 'clips' && 'Recorded & flagged footage'}
+                  {activeTab === 'reid' && 'Multi-camera tracking & path analysis'}
+                  {activeTab === 'ai' && 'Natural-language video search'}
+                  {activeTab === 'map' && 'Interactive camera location mapping'}
+                  {activeTab === 'notifications' && 'Alert subscriptions & integrations'}
+                  {appView === 'settings' && 'Manage your organization, billing, and team members'}
+                </p>
+              )}
             </div>
           </div>
 
           {/* Right Statistics / Time */}
-          <div className="flex items-center gap-5 text-[0.72rem] text-text-muted font-bold">
-            <div className="flex items-center gap-1.5">
-              <span>{devices.filter((d) => d.status !== 'Offline').length} / {devices.length || 1} online</span>
+          {activeTab === 'devices' ? (
+            <div className="flex items-center gap-3">
+              {unreadNotificationCount > 0 ? (
+                <div className="flex items-center gap-1.5 bg-[#EF4444]/10 border border-[#EF4444]/20 px-2.5 py-1 rounded-full text-[#EF4444] text-[0.68rem] font-bold tracking-wider leading-none">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] animate-pulse" />
+                  THREAT ACTIVE
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-[rgba(255,255,255,0.02)] border border-border-glass px-2.5 py-1 rounded-full text-text-muted text-[0.68rem] font-bold tracking-wider leading-none">
+                  <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
+                  NO THREATS
+                </div>
+              )}
+
+              {streams.some(s => s.trackingEnabled) ? (
+                <div className="flex items-center gap-1.5 bg-[#06B6D4]/10 border border-[#06B6D4]/20 px-2.5 py-1 rounded-full text-[#06B6D4] text-[0.68rem] font-bold tracking-wider leading-none">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#06B6D4] animate-pulse" />
+                  AI ACTIVE
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-[rgba(255,255,255,0.02)] border border-border-glass px-2.5 py-1 rounded-full text-text-muted text-[0.68rem] font-bold tracking-wider leading-none">
+                  <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
+                  AI INACTIVE
+                </div>
+              )}
+
+              <div className="w-[1px] h-3.5 bg-border-glass" />
+              <div className="text-[0.75rem] text-text-secondary font-mono tracking-wider font-semibold">
+                {currentDateTimeStr || cameraTime}
+              </div>
             </div>
-            <div className="w-[1px] h-3.5 bg-border-glass" />
-            <button
-              type="button"
-              onClick={() => setNotificationsDrawerOpen(true)}
-              className="flex items-center gap-1.5 hover:text-text-primary transition-colors bg-transparent border-none outline-none cursor-pointer text-[0.72rem] text-text-muted font-bold font-sans"
-            >
-              <Bell size={12} className="text-text-muted shrink-0" />
-              <span>{unreadNotificationCount} active alerts</span>
-            </button>
-            <div className="w-[1px] h-3.5 bg-border-glass" />
-            <div className="flex items-center gap-1.5 text-text-secondary">
-              <Clock className="w-3.5 h-3.5 animate-pulse" />
-              <span className="font-mono">{cameraTime}</span>
+          ) : (
+            <div className="flex items-center gap-5 text-[0.72rem] text-text-muted font-bold">
+              <div className="flex items-center gap-1.5">
+                <span>{devices.filter((d) => d.status !== 'Offline').length} / {devices.length || 1} online</span>
+              </div>
+              <div className="w-[1px] h-3.5 bg-border-glass" />
+              <button
+                type="button"
+                onClick={() => setNotificationsDrawerOpen(true)}
+                className="flex items-center gap-1.5 hover:text-text-primary transition-colors bg-transparent border-none outline-none cursor-pointer text-[0.72rem] text-text-muted font-bold font-sans"
+              >
+                <Bell size={12} className="text-text-muted shrink-0" />
+                <span>{unreadNotificationCount} active alerts</span>
+              </button>
+              <div className="w-[1px] h-3.5 bg-border-glass" />
+              <div className="flex items-center gap-1.5 text-text-secondary">
+                <Clock className="w-3.5 h-3.5 animate-pulse" />
+                <span className="font-mono">{cameraTime}</span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Impersonation Banner */}
@@ -1092,23 +1152,7 @@ export default function DashboardApp() {
                 <LiveWallTab
                   streams={streams}
                   onEditStream={(streamId) => {
-                    const stream = streams.find((s) => s.streamId === streamId);
-                    if (stream) {
-                      setSelectedStreamId(streamId);
-                      setSelectedDeviceId(stream.deviceId);
-                      setConfig({
-                        name: stream.name,
-                        type: stream.cameraType,
-                        streamUrl: stream.streamUrl,
-                        trackingEnabled: stream.trackingEnabled,
-                        motionThreshold: stream.motionThreshold,
-                        pixelChangeThreshold: stream.pixelChangeThreshold,
-                        detectPerson: stream.detectPerson ?? true,
-                        detectVehicle: stream.detectVehicle ?? true,
-                      });
-                      setAddingStreamForDeviceId(null);
-                      setShowConfigDialog(true);
-                    }
+                    navigate(`/app/devices?editStreamId=${streamId}`);
                   }}
                 />
               )}
@@ -1167,6 +1211,18 @@ export default function DashboardApp() {
                   onDeleteNotification={handleDeleteNotification}
                   onClearAllNotifications={handleClearAllNotifications}
                   currentOrg={currentOrg}
+                />
+              )}
+
+              {activeTab === 'devices' && (
+                <DevicesStreamsTab
+                  devices={devices}
+                  streams={streams}
+                  orgId={currentOrg?.id ?? ''}
+                  onOpenSettings={openDeviceConfigDialog}
+                  onDeleteDevice={handleDeleteDevice}
+                  onDeleteStream={handleDeleteStream}
+                  fetchDevices={fetchDevices}
                 />
               )}
 

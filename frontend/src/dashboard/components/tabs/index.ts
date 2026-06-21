@@ -6,4 +6,6 @@ export { ReidTab } from './ReidTab';
 export type { ReidTabProps } from './ReidTab';
 export { ManageNotificationsTab } from './ManageNotificationsTab';
 export type { ManageNotificationsTabProps } from './ManageNotificationsTab';
+export { DevicesStreamsTab } from './DevicesStreamsTab';
+export type { DevicesStreamsTabProps } from './DevicesStreamsTab';
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { SlidersHorizontal, Settings, Video } from 'lucide-react';
 import type { CameraStream } from '../../types';
+import { fetchAlertRules, type AlertRule } from '../../../alertRulesApi';
 
 
 
@@ -97,6 +98,19 @@ export function LiveWallTab({ streams = [], onEditStream }: LiveWallTabProps) {
   const [selectedZone, setSelectedZone] = useState<'All' | 'Exterior' | 'Restricted'>('All');
   const [selectedCameraCode, setSelectedCameraCode] = useState<string | null>(null);
   const [cameraTime, setCameraTime] = useState('14:32:08');
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
+
+  useEffect(() => {
+    fetchAlertRules()
+      .then((data) => setAlertRules(data.rules))
+      .catch((err) => console.error('Failed to fetch alert rules in LiveWallTab', err));
+  }, []);
+
+  const getStreamMeta = (streamId: string) => {
+    const metaKey = 'aura_watch_streams_metadata';
+    const metadata = JSON.parse(localStorage.getItem(metaKey) || '{}');
+    return metadata[streamId] || {};
+  };
 
   // Derive actual camera feeds from backend streams
   const actualCameras: CameraFeed[] = (streams && streams.length > 0)
@@ -353,26 +367,39 @@ export function LiveWallTab({ streams = [], onEditStream }: LiveWallTabProps) {
                 <div className="flex flex-col gap-2">
                   <span className="text-[0.65rem] text-text-muted font-bold">Active Detections</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {((selectedStream ? selectedStream.detectPerson : true) || selectedFeed.hasTracker) && (
+                    {(!selectedStream || selectedStream.detectPerson) && (
                       <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-purple-500/10 text-purple-300 border border-purple-500/25">
                         Person
                       </span>
                     )}
-                    {((selectedStream ? selectedStream.detectVehicle : true) || selectedFeed.hasTracker) && (
+                    {(!selectedStream || selectedStream.detectVehicle) && (
                       <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-blue-500/10 text-blue-300 border border-blue-500/25">
                         Vehicle
                       </span>
                     )}
-                    {selectedFeed.hasTracker && (
-                      <>
-                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/25">
-                          Loitering alert
-                        </span>
-                        <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
-                          Cross-camera ReID
-                        </span>
-                      </>
+                    {selectedFeed && (!selectedFeed.streamId || getStreamMeta(selectedFeed.streamId).loiteringAlert !== false) && (
+                      <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                        Loitering alert
+                      </span>
                     )}
+                    {selectedFeed && (!selectedFeed.streamId || getStreamMeta(selectedFeed.streamId).crossCameraReid !== false) && (
+                      <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                        Cross-camera ReID
+                      </span>
+                    )}
+                    {selectedFeed && (!selectedFeed.streamId || getStreamMeta(selectedFeed.streamId).plateRecognition !== false) && (
+                      <span className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
+                        Plate recognition
+                      </span>
+                    )}
+                    {selectedFeed?.streamId && alertRules
+                      .filter(rule => rule.isActive && (rule.allStreams || rule.streamIds.includes(selectedFeed.streamId!)))
+                      .map(rule => (
+                        <span key={rule.id} className="px-2 py-0.5 rounded text-[0.68rem] font-bold bg-[#7C3AED]/10 text-purple-200 border border-[#7C3AED]/25">
+                          {rule.name}
+                        </span>
+                      ))
+                    }
                   </div>
                 </div>
               </div>
