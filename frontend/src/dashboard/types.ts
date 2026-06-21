@@ -138,6 +138,13 @@ export interface CameraStream {
   detectPerson: boolean;
   detectVehicle: boolean;
   streamHost: string;
+  resolution?: string | null;
+  fps?: string | null;
+  codec?: string | null;
+  zone?: string | null;
+  loiteringAlert?: boolean | null;
+  crossCameraReid?: boolean | null;
+  plateRecognition?: boolean | null;
 }
 
 export interface CameraConfig {

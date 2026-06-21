@@ -25,7 +25,7 @@ export default function Login() {
         orgName: session.org?.name
       });
       trackEvent('user_logged_in', { orgId: session.org?.id });
-      navigate('/app/events', { replace: true });
+      navigate('/app/live', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Invalid email or password.');
       setSubmitting(false);

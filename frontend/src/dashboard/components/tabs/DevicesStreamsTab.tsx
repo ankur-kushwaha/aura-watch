@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Server, Cpu, Plus, Trash2, Loader2, Network, X } from 'lucide-react';
 import type { EdgeDevice, CameraStream } from '../../types';
-import { AddDeviceModal } from '../modals/AddDeviceModal';
+import { DeviceInstallTooltip } from '../DeviceInstallTooltip';
 import { AddStreamModal } from '../modals/AddStreamModal';
 import { EditStreamModal } from '../modals/EditStreamModal';
 import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
@@ -28,7 +28,6 @@ export function DevicesStreamsTab({
   fetchDevices,
 }: DevicesStreamsTabProps) {
   // Modal states
-  const [addDeviceOpen, setAddDeviceOpen] = useState(false);
   const [addStreamOpen, setAddStreamOpen] = useState(false);
   const [editStreamOpen, setEditStreamOpen] = useState(false);
   const [selectedEditStream, setSelectedEditStream] = useState<CameraStream | null>(null);
@@ -108,24 +107,17 @@ export function DevicesStreamsTab({
           pixelChangeThreshold: 0.02,
           detectPerson: true,
           detectVehicle: true,
-        }),
-      });
-
-      if (res.ok) {
-        const newStream = await res.json();
-        const streamId = newStream.streamId;
-
-        // Save mock metadata to LocalStorage
-        const metaKey = 'aura_watch_streams_metadata';
-        const existingMeta = JSON.parse(localStorage.getItem(metaKey) || '{}');
-        existingMeta[streamId] = {
           resolution: mockStream.res,
           fps: mockStream.fps,
           codec: mockStream.codec,
           zone: mockStream.zone,
-        };
-        localStorage.setItem(metaKey, JSON.stringify(existingMeta));
+          loiteringAlert: true,
+          crossCameraReid: true,
+          plateRecognition: true,
+        }),
+      });
 
+      if (res.ok) {
         await fetchDevices();
         
         // Remove from list
@@ -172,15 +164,11 @@ export function DevicesStreamsTab({
 
   // Helper to retrieve custom stream metadata (resolution, codec, zone, etc.)
   const getStreamMeta = (stream: CameraStream) => {
-    const metaKey = 'aura_watch_streams_metadata';
-    const metadata = JSON.parse(localStorage.getItem(metaKey) || '{}');
-    const streamMeta = metadata[stream.streamId] || {};
-
     return {
-      resolution: streamMeta.resolution || '4MP',
-      fps: streamMeta.fps || '25',
-      codec: streamMeta.codec || 'H.264',
-      zone: streamMeta.zone || 'Entrance',
+      resolution: stream.resolution || '4MP',
+      fps: stream.fps || '25',
+      codec: stream.codec || 'H.264',
+      zone: stream.zone || 'Entrance',
     };
   };
 
@@ -190,23 +178,24 @@ export function DevicesStreamsTab({
       <div className="flex flex-col gap-4 text-left">
         <div className="flex justify-between items-center pb-2 border-b border-border-glass">
           <div>
-            <h2 className="text-[1.3rem] font-bold text-white tracking-tight">Devices</h2>
+            <h2 className="text-[1.3rem] font-bold text-white tracking-tight">Streaming Devices</h2>
             <p className="text-[0.8rem] text-text-muted mt-1 font-medium">
               NVRs, DVRs, and standalone cameras on your network
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setAddDeviceOpen(true)}
-            className="btn py-2.5 px-4 text-[0.82rem] font-bold text-white bg-[#7C3AED] hover:bg-[#6d28d9] rounded-xl flex items-center gap-1.5 shadow-[0_4px_12px_rgba(124,58,237,0.25)] transition-all cursor-pointer"
-          >
-            <Plus size={16} /> Add device
-          </button>
+          <DeviceInstallTooltip orgId={orgId}>
+            <button
+              type="button"
+              className="btn py-2.5 px-4 text-[0.82rem] font-bold text-white bg-[#7C3AED] hover:bg-[#6d28d9] rounded-xl flex items-center gap-1.5 shadow-[0_4px_12px_rgba(124,58,237,0.25)] transition-all cursor-pointer"
+            >
+              <Plus size={16} /> Add streaming device
+            </button>
+          </DeviceInstallTooltip>
         </div>
 
         {devices.length === 0 ? (
           <div className="text-text-muted text-[0.88rem] text-center p-12 border border-dashed border-border-glass rounded-2xl bg-[rgba(15,23,42,0.25)]">
-            No devices configured. Click '+ Add device' to register an edge device or camera bridge.
+            No streaming devices configured. Click '+ Add streaming device' to register a streaming device.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -286,7 +275,7 @@ export function DevicesStreamsTab({
       <div className="flex flex-col gap-4 text-left">
         <div className="flex justify-between items-center pb-2 border-b border-border-glass">
           <div>
-            <h2 className="text-[1.3rem] font-bold text-white tracking-tight">Streams</h2>
+            <h2 className="text-[1.3rem] font-bold text-white tracking-tight">IP Cameras</h2>
             <p className="text-[0.8rem] text-text-muted mt-1 font-medium">
               Individual camera channels being monitored by AI
             </p>
@@ -296,13 +285,13 @@ export function DevicesStreamsTab({
             onClick={() => setAddStreamOpen(true)}
             className="btn py-2.5 px-4 text-[0.82rem] font-bold text-white bg-transparent border border-border-glass hover:bg-[rgba(255,255,255,0.03)] rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
           >
-            <Plus size={16} /> Add stream
+            <Plus size={16} /> Add IP camera
           </button>
         </div>
 
         {streams.length === 0 ? (
           <div className="text-text-muted text-[0.88rem] text-center p-12 border border-dashed border-border-glass rounded-2xl bg-[rgba(15,23,42,0.25)]">
-            No camera streams added yet. Register streams to configure active AI tracking.
+            No IP cameras configured yet. Register IP cameras to configure active AI tracking.
           </div>
         ) : (
           <div className="glass-panel overflow-hidden border border-border-glass bg-[rgba(15,23,42,0.35)] rounded-2xl shadow-xl">
@@ -310,11 +299,8 @@ export function DevicesStreamsTab({
               <thead>
                 <tr className="border-b border-border-glass bg-[rgba(0,0,0,0.15)] text-[0.7rem] font-black uppercase tracking-wider text-text-muted select-none">
                   <th className="py-3.5 px-5">Camera</th>
-                  <th className="py-3.5 px-4">Device</th>
+                  <th className="py-3.5 px-4">Streaming Device</th>
                   <th className="py-3.5 px-4">RTSP URL</th>
-                  <th className="py-3.5 px-4">Resolution</th>
-                  <th className="py-3.5 px-4 text-center">FPS</th>
-                  <th className="py-3.5 px-4">Codec</th>
                   <th className="py-3.5 px-4 text-center">Status</th>
                   <th className="py-3.5 px-5 text-right">Actions</th>
                 </tr>
@@ -347,15 +333,6 @@ export function DevicesStreamsTab({
                       <td className="py-4 px-4 font-mono text-[0.75rem] text-text-muted truncate max-w-[200px]" title={stream.streamUrl}>
                         {stream.streamUrl}
                       </td>
-
-                      {/* RESOLUTION */}
-                      <td className="py-4 px-4 font-medium">{meta.resolution}</td>
-
-                      {/* FPS */}
-                      <td className="py-4 px-4 text-center font-semibold font-mono">{meta.fps}</td>
-
-                      {/* CODEC */}
-                      <td className="py-4 px-4 font-medium text-text-muted">{meta.codec}</td>
 
                       {/* STATUS Badge */}
                       <td className="py-4 px-4 text-center">
@@ -401,12 +378,6 @@ export function DevicesStreamsTab({
       </div>
 
       {/* ALL MODALS RENDERED HERE */}
-      <AddDeviceModal
-        open={addDeviceOpen}
-        orgId={orgId}
-        onClose={() => setAddDeviceOpen(false)}
-        onSaved={fetchDevices}
-      />
 
       <AddStreamModal
         open={addStreamOpen}
@@ -442,7 +413,7 @@ export function DevicesStreamsTab({
           <div className="flex items-center justify-between">
             <div className="text-left flex items-center gap-2">
               <Network size={18} className="text-secondary animate-pulse" />
-              <DialogTitle className="text-[1.1rem] font-bold text-white">RTSP Stream Scanner</DialogTitle>
+              <DialogTitle className="text-[1.1rem] font-bold text-white">RTSP IP Camera Scanner</DialogTitle>
             </div>
             <button
               onClick={() => setDiscoveryDevice(null)}
@@ -459,7 +430,7 @@ export function DevicesStreamsTab({
               <Loader2 size={36} className="animate-spin text-primary" />
               <div className="flex flex-col gap-1">
                 <p className="text-[0.9rem] font-semibold text-white">Scanning Network Ports</p>
-                <p className="text-[0.72rem] text-text-muted">Searching for active RTSP channels on {discoveryDevice?.name}...</p>
+                <p className="text-[0.72rem] text-text-muted">Searching for active RTSP IP cameras on {discoveryDevice?.name}...</p>
               </div>
             </div>
           )}
@@ -467,7 +438,7 @@ export function DevicesStreamsTab({
           {discoveryStatus === 'results' && (
             <div className="flex flex-col gap-4 text-left">
               <p className="text-[0.78rem] text-text-secondary font-semibold">
-                Complete. Discovered {discoveredStreams.length} streams on local subnet:
+                Complete. Discovered {discoveredStreams.length} IP cameras on local subnet:
               </p>
               <div className="flex flex-col gap-3.5 max-h-[220px] overflow-y-auto">
                 {discoveredStreams.map((stream, idx) => (
@@ -478,9 +449,6 @@ export function DevicesStreamsTab({
                     <div className="min-w-0 flex-1 flex flex-col">
                       <span className="text-[0.8rem] font-bold text-white">{stream.name}</span>
                       <span className="text-[0.68rem] text-text-muted font-mono truncate mt-0.5">{stream.url}</span>
-                      <span className="text-[0.62rem] text-text-secondary mt-1 font-bold">
-                        {stream.res} · {stream.fps} FPS · {stream.codec}
-                      </span>
                     </div>
                     <button
                       onClick={() => handleImportStream(idx)}
@@ -501,7 +469,7 @@ export function DevicesStreamsTab({
                 <Cpu size={24} />
               </div>
               <p className="text-[0.88rem] font-bold text-white">Import Successful</p>
-              <p className="text-[0.72rem] text-text-muted">Streams have been added and registered for Active AI monitoring.</p>
+              <p className="text-[0.72rem] text-text-muted">IP cameras have been added and registered for Active AI monitoring.</p>
             </div>
           )}
         </DialogContent>

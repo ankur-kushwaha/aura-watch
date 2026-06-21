@@ -930,7 +930,7 @@ export default function DashboardApp() {
               { tab: 'reid' as const, icon: Fingerprint, title: 'Cross-Camera ReID' },
               { tab: 'ai' as const, icon: Monitor, title: 'Ask Camera AI' },
               // { tab: 'map' as const, icon: MapIcon, title: 'Premise map' },
-              { tab: 'devices' as const, icon: Server, title: 'Devices & Streams' },
+              { tab: 'devices' as const, icon: Server, title: 'Streaming Devices & IP Cameras' },
             ].map(({ tab, icon: Icon, title, hasBadge }) => {
               const isSelected = activeTab === tab;
               return (
@@ -1040,7 +1040,7 @@ export default function DashboardApp() {
                 {activeTab === 'map' && 'Premise map'}
                 {activeTab === 'devices' && (
                   <span className="flex items-center gap-2 flex-wrap">
-                    <span>Devices & Streams</span>
+                    <span>Streaming Devices & IP Cameras</span>
                     <span className="text-text-muted font-bold">·</span>
                     <span className="text-[0.8rem] text-text-muted font-bold font-sans mt-0.5 normal-case">
                       {currentOrg?.name || 'Petrol Station Complex, Sector 57, Gurgaon'}

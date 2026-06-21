@@ -213,6 +213,13 @@ function DeviceConfigDialogBody({
   const [name, setName] = useState(resolvedName);
   const [config, setConfig] = useState(resolvedConfig);
 
+  // Load custom fields from LocalStorage
+  const metaKey = 'aura_watch_devices_metadata';
+  const existingMeta = JSON.parse(localStorage.getItem(metaKey) || '{}');
+  const deviceMeta = existingMeta[deviceId] || {};
+
+  const [location, setLocation] = useState(deviceMeta.location ?? '');
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -227,6 +234,14 @@ function DeviceConfigDialogBody({
         alert(data.error || 'Failed to update device configuration');
         return;
       }
+
+      // Save custom fields locally in browser
+      const existingMetaUpdate = JSON.parse(localStorage.getItem(metaKey) || '{}');
+      existingMetaUpdate[deviceId] = {
+        location: location.trim(),
+      };
+      localStorage.setItem(metaKey, JSON.stringify(existingMetaUpdate));
+
       onSaved();
       onClose();
     } catch (err) {
@@ -268,7 +283,7 @@ function DeviceConfigDialogBody({
   };
 
   return (
-    <DialogContent className="max-w-[720px] p-6 flex flex-col gap-5 max-h-[90vh]">
+    <DialogContent className="max-w-[720px] p-6 flex flex-col gap-5 max-h-[90vh] overflow-hidden">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="bg-[rgba(124,58,237,0.15)] p-2 rounded-lg">
@@ -290,23 +305,36 @@ function DeviceConfigDialogBody({
 
       <div className="h-px bg-[rgba(255,255,255,0.07)]" />
 
-      <form onSubmit={(e) => { void handleSubmit(e); }} className="flex flex-col gap-4 min-h-0">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-[0.78rem] text-text-secondary font-medium">Device Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
+      <form onSubmit={(e) => { void handleSubmit(e); }} className="flex flex-col gap-4 min-h-0 text-left flex-1 overflow-hidden">
+        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[0.78rem] text-text-secondary font-medium">Device Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[0.78rem] text-text-secondary font-medium">Location</label>
+              <input
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="e.g. Main entrance"
+              />
+            </div>
+          </div>
+
+          <DeviceConfigFields config={config} onChange={setConfig} />
+
+          {/* WiFi config panel */}
+          <WifiConfigPanel device={device} />
         </div>
 
-        <DeviceConfigFields config={config} onChange={setConfig} />
-
-        {/* WiFi config panel */}
-        <WifiConfigPanel device={device} />
-
-        <div className="flex gap-2.5 justify-between pt-1">
+        <div className="flex gap-2.5 justify-between pt-3 border-t border-[rgba(255,255,255,0.07)] shrink-0">
           <button
             type="button"
             onClick={() => { void handleResetToDefaults(); }}

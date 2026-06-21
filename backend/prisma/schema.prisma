@@ -140,6 +140,13 @@ model CameraStream {
   pixelChangeThreshold Float           @default(0.02)
   detectPerson         Boolean         @default(true)
   detectVehicle        Boolean         @default(true)
+  resolution           String?
+  fps                  String?
+  codec                String?
+  zone                 String?
+  loiteringAlert       Boolean         @default(true)
+  crossCameraReid      Boolean         @default(true)
+  plateRecognition     Boolean         @default(true)
   streamHost           String          @default("")
   lastHeartbeat        DateTime        @default(now())
   clips                VideoClip[]

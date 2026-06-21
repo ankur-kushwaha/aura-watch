@@ -55,31 +55,10 @@ export function DeviceConfigFields({
   };
 
   return (
-    <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto pr-1">
+    <div className="flex flex-col gap-3 pr-1">
       <p className="text-[0.72rem] text-text-muted leading-relaxed">
         Values are stored in the cloud and pushed to the edge device. Unset fields on the device still fall back to its local <code>.env</code> file.
       </p>
-
-      <Section title="Capture">
-        <NumberField label="Width (px)" value={config.cameraWidth} onChange={(v) => set('cameraWidth', v)} min={160} max={3840} />
-        <NumberField label="Height (px)" value={config.cameraHeight} onChange={(v) => set('cameraHeight', v)} min={120} max={2160} />
-        <NumberField
-          label="FPS"
-          value={config.cameraFps}
-          onChange={(v) => set('cameraFps', v)}
-          min={1}
-          max={60}
-          hint="Capture and clip encode rate. Match what the camera delivers; lower is fine."
-        />
-        <NumberField
-          label="Reconnect if no frames (sec)"
-          value={config.cameraStallTimeoutSec}
-          onChange={(v) => set('cameraStallTimeoutSec', v)}
-          min={5}
-          max={300}
-          hint="Reconnect camera/RTSP when no frames arrive for this long."
-        />
-      </Section>
 
       <Section title="YOLO / Detection">
         <NumberField label="Confidence" value={config.yoloConfidence} onChange={(v) => set('yoloConfidence', v)} min={0.05} max={1} step={0.05} />
@@ -94,19 +73,6 @@ export function DeviceConfigFields({
         </div>
         <NumberField label="Image size" value={config.yoloImgsz} onChange={(v) => set('yoloImgsz', v)} min={320} max={1280} step={32} />
         <NumberField label="Detect interval (frames)" value={config.yoloDetectInterval} onChange={(v) => set('yoloDetectInterval', v)} min={1} max={30} />
-      </Section>
-
-      <Section title="Preview">
-        <NumberField label="Stream FPS" value={config.frameStreamFps} onChange={(v) => set('frameStreamFps', v)} min={1} max={30} step={0.5} />
-        <NumberField label="JPEG quality" value={config.previewJpegQuality} onChange={(v) => set('previewJpegQuality', v)} min={30} max={95} />
-        <NumberField
-          label="Report frozen preview after (sec)"
-          value={config.previewStallTimeoutSec}
-          onChange={(v) => set('previewStallTimeoutSec', v)}
-          min={1}
-          max={60}
-          hint="Alert the dashboard when live preview frames stop updating."
-        />
       </Section>
 
       <Section title="Recording">

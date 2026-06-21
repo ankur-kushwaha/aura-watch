@@ -56,6 +56,13 @@ export function AddStreamModal({ open, devices, onClose, onSaved }: AddStreamMod
           pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
           detectPerson: DEFAULT_STREAM_CONFIG.detectPerson,
           detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
+          resolution,
+          fps,
+          codec,
+          zone: zone.trim() || 'Entrance',
+          loiteringAlert: true,
+          crossCameraReid: true,
+          plateRecognition: true,
         }),
       });
 
@@ -68,17 +75,6 @@ export function AddStreamModal({ open, devices, onClose, onSaved }: AddStreamMod
 
       const newStream = await res.json();
       const streamId = newStream.streamId;
-
-      // Save custom fields (resolution, fps, codec, zone) to LocalStorage persistently
-      const metaKey = 'aura_watch_streams_metadata';
-      const existingMeta = JSON.parse(localStorage.getItem(metaKey) || '{}');
-      existingMeta[streamId] = {
-        resolution,
-        fps,
-        codec,
-        zone: zone.trim() || 'Entrance',
-      };
-      localStorage.setItem(metaKey, JSON.stringify(existingMeta));
 
       onSaved({ streamId });
       onClose();
@@ -103,8 +99,8 @@ export function AddStreamModal({ open, devices, onClose, onSaved }: AddStreamMod
         {/* Header */}
         <div className="flex items-start justify-between">
           <div className="text-left">
-            <DialogTitle className="text-[1.2rem] font-bold tracking-tight text-white">Add stream</DialogTitle>
-            <p className="text-[0.78rem] text-text-muted mt-1">Configure a camera channel for AI monitoring</p>
+            <DialogTitle className="text-[1.2rem] font-bold tracking-tight text-white">Add IP camera</DialogTitle>
+            <p className="text-[0.78rem] text-text-muted mt-1">Configure an IP camera for AI monitoring</p>
           </div>
           <button
             type="button"
@@ -134,7 +130,7 @@ export function AddStreamModal({ open, devices, onClose, onSaved }: AddStreamMod
 
           {/* Device selection dropdown */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">Device</label>
+            <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">Streaming Device</label>
             <select
               value={deviceId}
               onChange={(e) => setDeviceId(e.target.value)}
@@ -166,45 +162,7 @@ export function AddStreamModal({ open, devices, onClose, onSaved }: AddStreamMod
             />
           </div>
 
-          {/* Resolution, FPS, Codec selectors */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">Resolution</label>
-              <select
-                value={resolution}
-                onChange={(e) => setResolution(e.target.value)}
-                className="bg-[rgba(15,23,42,0.4)] border border-border-glass text-[0.88rem] px-3.5 py-2.5 rounded-lg focus:border-primary text-white outline-none w-full"
-              >
-                <option value="2MP">2MP</option>
-                <option value="4MP">4MP</option>
-                <option value="8MP">8MP</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">FPS</label>
-              <select
-                value={fps}
-                onChange={(e) => setFps(e.target.value)}
-                className="bg-[rgba(15,23,42,0.4)] border border-border-glass text-[0.88rem] px-3.5 py-2.5 rounded-lg focus:border-primary text-white outline-none w-full"
-              >
-                <option value="15">15</option>
-                <option value="20">20</option>
-                <option value="25">25</option>
-                <option value="30">30</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">Codec</label>
-              <select
-                value={codec}
-                onChange={(e) => setCodec(e.target.value)}
-                className="bg-[rgba(15,23,42,0.4)] border border-border-glass text-[0.88rem] px-3.5 py-2.5 rounded-lg focus:border-primary text-white outline-none w-full"
-              >
-                <option value="H.264">H.264</option>
-                <option value="H.265">H.265</option>
-              </select>
-            </div>
-          </div>
+
 
           {/* Zone / Area Label */}
           <div className="flex flex-col gap-1.5">
@@ -241,7 +199,7 @@ export function AddStreamModal({ open, devices, onClose, onSaved }: AddStreamMod
               disabled={submitting}
               className="btn btn-primary py-2 px-5 text-[0.82rem] rounded-lg cursor-pointer transition-colors bg-primary"
             >
-              {submitting ? 'Adding...' : 'Add stream'}
+              {submitting ? 'Adding...' : 'Add IP camera'}
             </button>
           </div>
         </form>

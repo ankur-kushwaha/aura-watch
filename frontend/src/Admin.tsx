@@ -339,7 +339,7 @@ function AdminOrgDetail() {
                   <button
                     type="button"
                     disabled={impersonating}
-                    onClick={() => openAsAdmin('/app/events')}
+                    onClick={() => openAsAdmin('/app/live')}
                     className="btn btn-primary py-2 px-4 text-[0.85rem] flex items-center gap-2"
                   >
                     {impersonating ? (

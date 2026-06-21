@@ -27,7 +27,7 @@ export default function Register() {
         orgName: session.org?.name
       });
       trackEvent('user_registered', { orgId: session.org?.id, orgName: session.org?.name });
-      navigate('/app/events', { replace: true });
+      navigate('/app/live', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Registration failed.');
       setSubmitting(false);

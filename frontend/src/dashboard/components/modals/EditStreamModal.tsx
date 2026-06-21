@@ -43,18 +43,13 @@ export function EditStreamModal({ open, stream, allStreamIds = [], onClose, onSa
       setPersonDetection(stream.detectPerson ?? true);
       setVehicleDetection(stream.detectVehicle ?? true);
 
-      // Load custom properties from LocalStorage
-      const metaKey = 'aura_watch_streams_metadata';
-      const existingMeta = JSON.parse(localStorage.getItem(metaKey) || '{}');
-      const meta = existingMeta[stream.streamId] || {};
-
-      setResolution(meta.resolution || '4MP');
-      setFps(meta.fps || '25');
-      setCodec(meta.codec || 'H.264');
-      setZone(meta.zone || 'Entrance');
-      setLoiteringAlert(meta.loiteringAlert !== undefined ? meta.loiteringAlert : true);
-      setCrossCameraReid(meta.crossCameraReid !== undefined ? meta.crossCameraReid : true);
-      setPlateRecognition(meta.plateRecognition !== undefined ? meta.plateRecognition : true);
+      setResolution(stream.resolution || '4MP');
+      setFps(stream.fps || '25');
+      setCodec(stream.codec || 'H.264');
+      setZone(stream.zone || 'Entrance');
+      setLoiteringAlert(stream.loiteringAlert !== undefined && stream.loiteringAlert !== null ? stream.loiteringAlert : true);
+      setCrossCameraReid(stream.crossCameraReid !== undefined && stream.crossCameraReid !== null ? stream.crossCameraReid : true);
+      setPlateRecognition(stream.plateRecognition !== undefined && stream.plateRecognition !== null ? stream.plateRecognition : true);
 
       // Fetch org-wide alert rules
       fetchAlertRules()
@@ -109,6 +104,13 @@ export function EditStreamModal({ open, stream, allStreamIds = [], onClose, onSa
           pixelChangeThreshold: stream.pixelChangeThreshold,
           detectPerson: personDetection,
           detectVehicle: vehicleDetection,
+          resolution,
+          fps,
+          codec,
+          zone: zone.trim() || 'Entrance',
+          loiteringAlert,
+          crossCameraReid,
+          plateRecognition,
         }),
       });
 
@@ -118,20 +120,6 @@ export function EditStreamModal({ open, stream, allStreamIds = [], onClose, onSa
         setSubmitting(false);
         return;
       }
-
-      // 2. Save mockup metadata persistently in LocalStorage
-      const metaKey = 'aura_watch_streams_metadata';
-      const existingMeta = JSON.parse(localStorage.getItem(metaKey) || '{}');
-      existingMeta[stream.streamId] = {
-        resolution,
-        fps,
-        codec,
-        zone: zone.trim() || 'Entrance',
-        loiteringAlert,
-        crossCameraReid,
-        plateRecognition,
-      };
-      localStorage.setItem(metaKey, JSON.stringify(existingMeta));
 
       // 3. Update alert rules configurations in database
       await Promise.all(
@@ -209,7 +197,7 @@ export function EditStreamModal({ open, stream, allStreamIds = [], onClose, onSa
         {/* Header */}
         <div className="flex items-start justify-between">
           <div className="text-left">
-            <DialogTitle className="text-[1.2rem] font-bold tracking-tight text-white">Stream settings</DialogTitle>
+            <DialogTitle className="text-[1.2rem] font-bold tracking-tight text-white">IP Camera settings</DialogTitle>
             <p className="text-[0.78rem] text-text-muted mt-1">{stream?.name}</p>
           </div>
           <button
@@ -249,45 +237,7 @@ export function EditStreamModal({ open, stream, allStreamIds = [], onClose, onSa
             />
           </div>
 
-          {/* Resolution, FPS, Codec selectors */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">Resolution</label>
-              <select
-                value={resolution}
-                onChange={(e) => setResolution(e.target.value)}
-                className="bg-[rgba(15,23,42,0.4)] border border-border-glass text-[0.88rem] px-3.5 py-2.5 rounded-lg focus:border-primary text-white outline-none w-full"
-              >
-                <option value="2MP">2MP</option>
-                <option value="4MP">4MP</option>
-                <option value="8MP">8MP</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">FPS</label>
-              <select
-                value={fps}
-                onChange={(e) => setFps(e.target.value)}
-                className="bg-[rgba(15,23,42,0.4)] border border-border-glass text-[0.88rem] px-3.5 py-2.5 rounded-lg focus:border-primary text-white outline-none w-full"
-              >
-                <option value="15">15</option>
-                <option value="20">20</option>
-                <option value="25">25</option>
-                <option value="30">30</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[0.72rem] font-bold uppercase tracking-wider text-text-muted">Codec</label>
-              <select
-                value={codec}
-                onChange={(e) => setCodec(e.target.value)}
-                className="bg-[rgba(15,23,42,0.4)] border border-border-glass text-[0.88rem] px-3.5 py-2.5 rounded-lg focus:border-primary text-white outline-none w-full"
-              >
-                <option value="H.264">H.264</option>
-                <option value="H.265">H.265</option>
-              </select>
-            </div>
-          </div>
+
 
           {/* Zone */}
           <div className="flex flex-col gap-1.5">

@@ -16,7 +16,7 @@ import posthog from 'posthog-js';
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   if (isLoggedIn()) {
-    return <Navigate to="/app/events" replace />;
+    return <Navigate to="/app/live" replace />;
   }
   return children;
 }

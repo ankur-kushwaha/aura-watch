@@ -119,6 +119,13 @@ router.post('/', async (req: Request, res: Response) => {
     pixelChangeThreshold,
     detectPerson,
     detectVehicle,
+    resolution,
+    fps,
+    codec,
+    zone,
+    loiteringAlert,
+    crossCameraReid,
+    plateRecognition,
   } = req.body;
 
   if (!deviceId || !name) {
@@ -149,6 +156,13 @@ router.post('/', async (req: Request, res: Response) => {
         pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : STREAM_CONFIG_DEFAULTS.pixelChangeThreshold,
         detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : STREAM_CONFIG_DEFAULTS.detectPerson,
         detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : STREAM_CONFIG_DEFAULTS.detectVehicle,
+        resolution: resolution ? String(resolution).trim() : null,
+        fps: fps ? String(fps).trim() : null,
+        codec: codec ? String(codec).trim() : null,
+        zone: zone ? String(zone).trim() : null,
+        loiteringAlert: loiteringAlert !== undefined ? Boolean(loiteringAlert) : true,
+        crossCameraReid: crossCameraReid !== undefined ? Boolean(crossCameraReid) : true,
+        plateRecognition: plateRecognition !== undefined ? Boolean(plateRecognition) : true,
         streamHost: '',
       },
     });
@@ -182,6 +196,13 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
     detectVehicle,
     status,
     streamHost,
+    resolution,
+    fps,
+    codec,
+    zone,
+    loiteringAlert,
+    crossCameraReid,
+    plateRecognition,
   } = req.body;
 
   if (!req.auth) {
@@ -210,6 +231,13 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
         detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : existing.detectVehicle,
         status: status !== undefined ? status : existing.status,
         streamHost: streamHost !== undefined ? streamHost : existing.streamHost,
+        resolution: resolution !== undefined ? (resolution ? String(resolution).trim() : null) : existing.resolution,
+        fps: fps !== undefined ? (fps ? String(fps).trim() : null) : existing.fps,
+        codec: codec !== undefined ? (codec ? String(codec).trim() : null) : existing.codec,
+        zone: zone !== undefined ? (zone ? String(zone).trim() : null) : existing.zone,
+        loiteringAlert: loiteringAlert !== undefined ? Boolean(loiteringAlert) : existing.loiteringAlert,
+        crossCameraReid: crossCameraReid !== undefined ? Boolean(crossCameraReid) : existing.crossCameraReid,
+        plateRecognition: plateRecognition !== undefined ? Boolean(plateRecognition) : existing.plateRecognition,
       },
     });
 
