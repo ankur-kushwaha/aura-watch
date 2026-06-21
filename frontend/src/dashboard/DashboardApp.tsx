@@ -1010,6 +1010,7 @@ export default function DashboardApp() {
               { tab: 'ai' as const, icon: Monitor, title: 'Ask Camera AI' },
               // { tab: 'map' as const, icon: MapIcon, title: 'Premise map' },
               { tab: 'devices' as const, icon: Server, title: 'Streaming Devices' },
+              { tab: 'notifications' as const, icon: Bell, title: 'Custom Alerts' },
             ].map(({ tab, icon: Icon, title, hasBadge }) => {
               const isSelected = activeTab === tab;
               return (
