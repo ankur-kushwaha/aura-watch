@@ -411,10 +411,18 @@ class _FfmpegRawPipeReader:
     def _read_frame(self, blocking: bool) -> Optional[np.ndarray]:
         if not self.process or not self.process.stdout:
             return None
+        if blocking:
+            import select
+            fd = self.process.stdout.fileno()
+            ready, _, _ = select.select([fd], [], [], 5.0)
+            if not ready:
+                self.last_error = "Timeout waiting for frame from pipe"
+                return None
         raw = self.process.stdout.read(self._frame_size) if blocking else self._read_available()
         if not raw or len(raw) != self._frame_size:
             return None
         return np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
+
 
     def _read_available(self) -> bytes:
         if not self.process or not self.process.stdout:
@@ -581,13 +589,12 @@ class _RpicamFrameReader:
         if not self.process or not self.process.stdout:
             return None
 
-        if not blocking:
-            import select
-
-            fd = self.process.stdout.fileno()
-            ready, _, _ = select.select([fd], [], [], 0.2)
-            if not ready:
-                return None
+        import select
+        fd = self.process.stdout.fileno()
+        timeout = 5.0 if blocking else 0.2
+        ready, _, _ = select.select([fd], [], [], timeout)
+        if not ready:
+            return None
 
         raw = self.process.stdout.read(self._yuv_size)
         if not raw or len(raw) != self._yuv_size:
@@ -735,6 +742,13 @@ class _FfmpegFrameReader:
     def _read_frame(self, blocking: bool) -> Optional[np.ndarray]:
         if not self.process or not self.process.stdout:
             return None
+        if blocking:
+            import select
+            fd = self.process.stdout.fileno()
+            ready, _, _ = select.select([fd], [], [], 5.0)
+            if not ready:
+                self.last_error = "Timeout waiting for frame from pipe"
+                return None
 
         raw = self.process.stdout.read(self._frame_size) if blocking else self._read_available()
         if not raw or len(raw) != self._frame_size:
