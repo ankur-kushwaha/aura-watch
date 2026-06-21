@@ -232,6 +232,7 @@ export function LiveWallTab({ streams = [], onEditStream, onUpdateStreamConfig }
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
           {filteredFeeds.map((feed) => {
             const isSelected = selectedCameraCode === feed.code;
+            const stream = feed.streamId ? streams.find((s) => s.streamId === feed.streamId) : undefined;
             return (
               <div
                 key={feed.code}
@@ -245,6 +246,8 @@ export function LiveWallTab({ streams = [], onEditStream, onUpdateStreamConfig }
               >
                 {/* Camera stream body */}
                 <div className="flex-1 relative bg-gradient-to-br from-[#0c121e] to-[#060a12] w-full overflow-hidden select-none">
+                  {/* Transparent overlay to capture clicks instead of letting the iframe intercept them */}
+                  <div className="absolute inset-0 z-10 cursor-pointer" />
                   {feed.streamId && feed.isOnline && feed.streamUrl ? (
                     <iframe
                       src={getWebRtcPreviewUrl(streams.find((s) => s.streamId === feed.streamId)!)!}
@@ -320,8 +323,42 @@ export function LiveWallTab({ streams = [], onEditStream, onUpdateStreamConfig }
                 </div>
 
                 {/* Footer bar */}
-                <div className="h-10 border-t border-border-glass bg-[rgba(9,13,22,0.6)] backdrop-blur px-3 flex justify-between items-center select-none shrink-0 text-text-secondary">
+                <div className="h-12 border-t border-border-glass bg-[rgba(9,13,22,0.6)] backdrop-blur px-3 flex justify-between items-center select-none shrink-0 text-text-secondary" onClick={(e) => e.stopPropagation()}>
                   <span className="text-[0.75rem] font-semibold">{feed.name}</span>
+                  {stream && onUpdateStreamConfig && (
+                    <div className="flex items-center gap-4">
+                      {/* Object Tracking */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[0.68rem] font-bold text-text-secondary">Tracking</span>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={stream.trackingEnabled}
+                            onChange={(e) => onUpdateStreamConfig(stream.streamId, { trackingEnabled: e.target.checked })}
+                          />
+                          <div className="w-8 h-4 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
+                        </label>
+                      </div>
+
+                      <div className="w-px h-3 bg-[rgba(255,255,255,0.15)]" />
+
+                      {/* AI Summaries */}
+                      <div className={`flex items-center gap-1.5 transition-opacity duration-200 ${!stream.trackingEnabled ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''}`}>
+                        <span className="text-[0.68rem] font-bold text-text-secondary">Summaries</span>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            disabled={!stream.trackingEnabled}
+                            checked={stream.trackingEnabled && stream.aiSummaryEnabled !== false}
+                            onChange={(e) => onUpdateStreamConfig(stream.streamId, { aiSummaryEnabled: e.target.checked })}
+                          />
+                          <div className="w-8 h-4 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
                   <span className="text-[0.7rem] font-mono text-text-muted">{cameraTime}</span>
                 </div>
               </div>
@@ -476,91 +513,8 @@ export function LiveWallTab({ streams = [], onEditStream, onUpdateStreamConfig }
               </div>
             </div>
 
-            {/* Quick Stream Controls */}
-            {selectedStream && onUpdateStreamConfig && (
-              <div className="flex flex-col gap-2.5">
-                <span className="text-[0.72rem] text-text-muted font-extrabold uppercase tracking-wider select-none">
-                  Quick Controls
-                </span>
-                <div className="glass-panel p-4 rounded-xl bg-[rgba(15,23,42,0.3)] border border-border-glass flex flex-col gap-3.5 text-left">
-                  {/* Toggle 1: Object Tracking */}
-                  <div className="flex justify-between items-center">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[0.78rem] font-bold text-text-secondary">Object Tracking</span>
-                      <span className="text-[0.65rem] text-text-muted">Edge YOLO detection pipeline</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        className="sr-only peer"
-                        checked={selectedStream.trackingEnabled}
-                        onChange={(e) => onUpdateStreamConfig(selectedStream.streamId, { trackingEnabled: e.target.checked })}
-                      />
-                      <div className="w-9 h-5 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
-                    </label>
-                  </div>
 
-                  <div className="h-px bg-[rgba(255,255,255,0.05)]" />
 
-                  {/* Toggle 2: AI Summaries */}
-                  <div className="flex justify-between items-center">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[0.78rem] font-bold text-text-secondary">AI Summaries</span>
-                      <span className="text-[0.65rem] text-text-muted">Gemini clip analysis on event</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        className="sr-only peer"
-                        checked={selectedStream.aiSummaryEnabled !== false}
-                        onChange={(e) => onUpdateStreamConfig(selectedStream.streamId, { aiSummaryEnabled: e.target.checked })}
-                      />
-                      <div className="w-9 h-5 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
-                    </label>
-                  </div>
-
-                  <div className="h-px bg-[rgba(255,255,255,0.05)]" />
-
-                  {/* Toggle 3: ReID Detections */}
-                  <div className="flex justify-between items-center">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[0.78rem] font-bold text-text-secondary">ReID Detections</span>
-                      <span className="text-[0.65rem] text-text-muted">Cross-camera identity tracking</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        className="sr-only peer"
-                        checked={selectedStream.crossCameraReid !== false}
-                        onChange={(e) => onUpdateStreamConfig(selectedStream.streamId, { crossCameraReid: e.target.checked })}
-                      />
-                      <div className="w-9 h-5 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Motion & Tuning */}
-            <div className="flex flex-col gap-2.5">
-              <span className="text-[0.72rem] text-text-muted font-extrabold uppercase tracking-wider select-none">
-                Motion Tuning
-              </span>
-              <div className="glass-panel p-4 rounded-xl bg-[rgba(15,23,42,0.3)] border border-border-glass grid grid-cols-2 gap-3 text-left">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] text-text-muted font-bold">Motion Threshold</span>
-                  <span className="text-[0.82rem] font-mono font-bold text-text-primary">
-                    {selectedStream ? `${selectedStream.motionThreshold}%` : '25%'}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[0.65rem] text-text-muted font-bold">Pixel Threshold</span>
-                  <span className="text-[0.82rem] font-mono font-bold text-text-primary">
-                    {selectedStream ? `${Math.round(selectedStream.pixelChangeThreshold * 100)}%` : '2%'}
-                  </span>
-                </div>
-              </div>
-            </div>
 
             {/* Settings Button */}
             {selectedFeed.streamId && onEditStream && (
