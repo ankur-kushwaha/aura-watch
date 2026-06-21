@@ -12,6 +12,8 @@ import {
   // Map as MapIcon,
   Clock,
   Server,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   apiFetch,
@@ -113,6 +115,22 @@ export default function DashboardApp() {
   const location = useLocation();
   const appView = location.pathname.startsWith('/app/settings') ? 'settings' : 'dashboard';
   const activeTab = dashboardTabFromPath(location.pathname) ?? 'live';
+
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('sidebar-expanded');
+      return stored === null ? true : stored === 'true';
+    }
+    return true;
+  });
+
+  const toggleSidebar = () => {
+    setIsSidebarExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem('sidebar-expanded', String(next));
+      return next;
+    });
+  };
 
   const [cameraTime, setCameraTime] = useState('');
   useEffect(() => {
@@ -938,22 +956,52 @@ export default function DashboardApp() {
   return (
     <div className="flex min-h-screen bg-[var(--color-bg-dark)] text-[var(--color-text-primary)] w-full">
       {/* LEFT NARROW SIDEBAR */}
-      <div className="w-16 md:w-20 bg-[#070b13] border-r border-border-glass flex flex-col justify-between items-center py-6 shrink-0 z-50 select-none">
+      <div
+        className={`bg-[#070b13] border-r border-border-glass flex flex-col justify-between py-6 shrink-0 z-50 select-none transition-all duration-300 ease-in-out ${isSidebarExpanded ? 'w-64 px-4' : 'w-16 md:w-20 px-2'
+          }`}
+      >
         <div className="flex flex-col gap-6 items-center w-full">
-          {/* Logo */}
-          <div className="p-2 bg-[rgba(255,255,255,0.02)] border border-border-glass rounded-xl shadow-inner select-none cursor-pointer flex items-center justify-center">
-            <svg viewBox="0 0 24 24" className="w-6 h-6 text-[var(--color-secondary)] fill-none stroke-current stroke-2">
-              <rect x="2" y="2" width="20" height="20" rx="6" />
-              <circle cx="12" cy="12" r="5" />
-              <circle cx="12" cy="12" r="1.5" className="fill-current" />
-            </svg>
+          {/* Logo & Toggle Header */}
+          <div
+            className={`flex items-center w-full ${isSidebarExpanded ? 'justify-between px-2' : 'justify-center'
+              }`}
+          >
+            <div
+              onClick={toggleSidebar}
+              className="flex items-center gap-3 cursor-pointer group"
+              title={isSidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+            >
+              <div className="p-2 bg-[rgba(255,255,255,0.02)] border border-border-glass rounded-xl shadow-inner select-none flex items-center justify-center group-hover:border-[var(--color-secondary)] transition-colors duration-200">
+                <svg viewBox="0 0 24 24" className="w-6 h-6 text-[var(--color-secondary)] fill-none stroke-current stroke-2">
+                  <rect x="2" y="2" width="20" height="20" rx="6" />
+                  <circle cx="12" cy="12" r="5" />
+                  <circle cx="12" cy="12" r="1.5" className="fill-current" />
+                </svg>
+              </div>
+              {isSidebarExpanded && (
+                <span className="font-heading font-extrabold text-[0.95rem] tracking-wider bg-gradient-to-r from-white via-text-secondary to-[var(--color-secondary)] bg-clip-text text-transparent animate-[fadeIn_0.2s_ease-out] whitespace-nowrap">
+                  AURA WATCH
+                </span>
+              )}
+            </div>
+            {isSidebarExpanded && (
+              <button
+                onClick={toggleSidebar}
+                className="p-1.5 rounded-lg hover:bg-[rgba(255,255,255,0.05)] text-text-muted hover:text-white border-none outline-none cursor-pointer transition-colors"
+                title="Collapse sidebar"
+              >
+                <ChevronLeft size={16} />
+              </button>
+            )}
           </div>
 
           {/* Divider */}
-          <div className="w-8 h-[1px] bg-border-glass shrink-0" />
+          <div className="w-full px-2">
+            <div className="h-[1px] bg-border-glass w-full" />
+          </div>
 
           {/* Tab buttons */}
-          <div className="flex flex-col gap-3 items-center w-full px-2">
+          <div className="flex flex-col gap-3 w-full">
             {[
               { tab: 'live' as const, icon: Camera, title: 'Live wall' },
               { tab: 'events' as const, icon: Film, title: 'Event archive', hasBadge: true },
@@ -961,27 +1009,41 @@ export default function DashboardApp() {
               { tab: 'reid' as const, icon: Fingerprint, title: 'Cross-Camera ReID' },
               { tab: 'ai' as const, icon: Monitor, title: 'Ask Camera AI' },
               // { tab: 'map' as const, icon: MapIcon, title: 'Premise map' },
-              { tab: 'devices' as const, icon: Server, title: 'Streaming Devices & IP Cameras' },
+              { tab: 'devices' as const, icon: Server, title: 'Streaming Devices' },
             ].map(({ tab, icon: Icon, title, hasBadge }) => {
               const isSelected = activeTab === tab;
               return (
                 <button
                   key={tab}
                   onClick={() => navigate(`/app/${tab}`)}
-                  title={title}
-                  className={`relative p-3 rounded-xl transition-all duration-200 border-none outline-none cursor-pointer group flex items-center justify-center ${isSelected
-                    ? 'bg-[rgba(6,182,212,0.1)] text-[var(--color-secondary)] border border-[rgba(6,182,212,0.2)]'
-                    : 'text-text-muted hover:text-text-secondary hover:bg-[rgba(255,255,255,0.02)]'
+                  title={isSidebarExpanded ? undefined : title}
+                  className={`relative p-3 rounded-xl transition-all duration-200 border-none outline-none cursor-pointer group flex items-center ${isSidebarExpanded ? 'justify-start gap-3 w-full px-4' : 'justify-center'
+                    } ${isSelected
+                      ? 'bg-[rgba(6,182,212,0.1)] text-[var(--color-secondary)] border border-[rgba(6,182,212,0.2)]'
+                      : 'text-text-muted hover:text-text-secondary hover:bg-[rgba(255,255,255,0.02)]'
                     }`}
                 >
-                  <Icon size={20} className={isSelected ? 'stroke-[2.5px]' : 'stroke-2'} />
+                  <Icon size={20} className={`shrink-0 ${isSelected ? 'stroke-[2.5px]' : 'stroke-2'}`} />
+                  {isSidebarExpanded && (
+                    <span className="text-[0.85rem] font-semibold tracking-wide whitespace-nowrap animate-[fadeIn_0.2s_ease-out]">
+                      {title}
+                    </span>
+                  )}
                   {hasBadge && unreadNotificationCount > 0 && (
-                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[var(--color-danger)] animate-pulse" />
+                    isSidebarExpanded ? (
+                      <span className="ml-auto px-2 py-0.5 text-[0.65rem] font-bold rounded-full bg-[var(--color-danger)] text-white">
+                        {unreadNotificationCount}
+                      </span>
+                    ) : (
+                      <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[var(--color-danger)] animate-pulse" />
+                    )
                   )}
                   {/* Tooltip on hover */}
-                  <div className="absolute left-16 px-2.5 py-1 rounded bg-[rgba(9,13,22,0.9)] border border-border-glass shadow-lg pointer-events-none select-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap z-50 text-[0.75rem] font-bold text-white">
-                    {title}
-                  </div>
+                  {!isSidebarExpanded && (
+                    <div className="absolute left-16 px-2.5 py-1 rounded bg-[rgba(9,13,22,0.9)] border border-border-glass shadow-lg pointer-events-none select-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap z-50 text-[0.75rem] font-bold text-white">
+                      {title}
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -989,41 +1051,76 @@ export default function DashboardApp() {
         </div>
 
         {/* User initials & notifications bell */}
-        <div className="flex flex-col gap-4 items-center px-2 w-full">
+        <div className={`flex flex-col gap-4 w-full ${isSidebarExpanded ? 'items-stretch' : 'items-center'}`}>
           {/* Notifications Drawer Toggle */}
           <button
             onClick={() => setNotificationsDrawerOpen((prev) => !prev)}
-            className="p-3 rounded-xl transition-all duration-200 border-none outline-none cursor-pointer hover:bg-[rgba(255,255,255,0.02)] text-text-muted hover:text-text-secondary relative flex items-center justify-center"
-            title="Notifications drawer"
+            className={`rounded-xl transition-all duration-200 border-none outline-none cursor-pointer hover:bg-[rgba(255,255,255,0.02)] text-text-muted hover:text-text-secondary relative flex items-center ${isSidebarExpanded ? 'justify-start gap-3 w-full px-4 py-3' : 'justify-center p-3'
+              }`}
+            title={isSidebarExpanded ? undefined : "Notifications drawer"}
           >
-            <Bell size={20} />
-            {unreadNotificationCount > 0 && (
-              <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-[var(--color-danger)] text-[0.55rem] font-bold text-white leading-none scale-90">
-                {unreadNotificationCount}
+            <Bell size={20} className="shrink-0" />
+            {isSidebarExpanded && (
+              <span className="text-[0.85rem] font-semibold tracking-wide whitespace-nowrap animate-[fadeIn_0.2s_ease-out]">
+                Notifications
               </span>
+            )}
+            {unreadNotificationCount > 0 && (
+              isSidebarExpanded ? (
+                <span className="ml-auto px-2 py-0.5 text-[0.65rem] font-bold rounded-full bg-[var(--color-danger)] text-white">
+                  {unreadNotificationCount}
+                </span>
+              ) : (
+                <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-[var(--color-danger)] text-[0.55rem] font-bold text-white leading-none scale-90">
+                  {unreadNotificationCount}
+                </span>
+              )
             )}
           </button>
 
           {/* Switch Org/Org Settings Option if settings tab isn't open */}
           <button
             onClick={() => navigate('/app/settings')}
-            className={`p-3 rounded-xl transition-all duration-200 border-none outline-none cursor-pointer hover:bg-[rgba(255,255,255,0.02)] text-text-muted hover:text-text-secondary flex items-center justify-center ${appView === 'settings' ? 'text-[var(--color-primary)] bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)]' : ''
+            className={`rounded-xl transition-all duration-200 border-none outline-none cursor-pointer hover:bg-[rgba(255,255,255,0.02)] text-text-muted hover:text-text-secondary flex items-center ${isSidebarExpanded ? 'justify-start gap-3 w-full px-4 py-3' : 'justify-center p-3'
+              } ${appView === 'settings'
+                ? 'text-[var(--color-primary)] bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)]'
+                : ''
               }`}
-            title="Organization settings"
+            title={isSidebarExpanded ? undefined : "Organization settings"}
           >
-            <Settings size={20} />
+            <Settings size={20} className="shrink-0" />
+            {isSidebarExpanded && (
+              <span className="text-[0.85rem] font-semibold tracking-wide whitespace-nowrap animate-[fadeIn_0.2s_ease-out]">
+                Org Settings
+              </span>
+            )}
           </button>
 
           {/* Divider */}
-          <div className="w-8 h-[1px] bg-border-glass shrink-0" />
+          <div className="w-full px-2">
+            <div className="h-[1px] bg-border-glass w-full" />
+          </div>
 
           {/* User profile initials circle */}
           <div
             onClick={handleLogout}
             title="Sign out"
-            className="w-9 h-9 rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-secondary)] text-white font-extrabold text-[0.8rem] flex items-center justify-center shadow-[0_0_12px_var(--color-primary-glow)] cursor-pointer hover:scale-105 active:scale-95 transition-all duration-200 select-none"
+            className={`flex items-center gap-3 w-full rounded-xl cursor-pointer transition-all duration-200 select-none ${isSidebarExpanded ? 'hover:bg-[rgba(255,255,255,0.02)] p-2' : 'justify-center'
+              }`}
           >
-            {currentUser?.name?.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase() || 'JM'}
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-secondary)] text-white font-extrabold text-[0.8rem] flex items-center justify-center shadow-[0_0_12px_var(--color-primary-glow)] shrink-0 hover:scale-105 active:scale-95 transition-all duration-200">
+              {currentUser?.name?.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase() || 'JM'}
+            </div>
+            {isSidebarExpanded && (
+              <div className="flex flex-col text-left overflow-hidden animate-[fadeIn_0.2s_ease-out]">
+                <span className="text-[0.8rem] font-bold text-text-primary truncate">
+                  {currentUser?.name || 'User'}
+                </span>
+                <span className="text-[0.65rem] text-text-muted truncate">
+                  Sign out
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1071,7 +1168,7 @@ export default function DashboardApp() {
                 {activeTab === 'map' && 'Premise map'}
                 {activeTab === 'devices' && (
                   <span className="flex items-center gap-2 flex-wrap">
-                    <span>Streaming Devices & IP Cameras</span>
+                    <span>Streaming Devices</span>
                     <span className="text-text-muted font-bold">·</span>
                     <span className="text-[0.8rem] text-text-muted font-bold font-sans mt-0.5 normal-case">
                       {currentOrg?.name || 'Petrol Station Complex, Sector 57, Gurgaon'}
