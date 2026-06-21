@@ -10,15 +10,12 @@ import {
   Activity,
   Cpu,
   Terminal,
-  Video,
   Plus,
   X,
   Power,
   ScrollText,
-  AlertTriangle,
   SlidersHorizontal,
   Maximize2,
-  RefreshCw,
 } from 'lucide-react';
 import {
   apiFetch,
@@ -39,7 +36,7 @@ import {
   DEFAULT_STREAM_CONFIG,
   type EffectiveEdgeDeviceConfig,
 } from '../edgeConfig';
-import { LIVE_PREVIEW_ENABLED, PREVIEW_STALL_MS, STREAM_INIT_TIMEOUT_MS, STREAM_REFRESH_COOLDOWN_MS, WS_BASE } from './constants';
+import { WS_BASE } from './constants';
 import type {
   CameraConfig,
   CameraStream,
@@ -52,13 +49,7 @@ import type {
 import { NotificationDrawer } from './components';
 import { fetchNotifications, fetchUnreadCount, markNotificationsRead, deleteNotification, clearAllNotifications } from '../notificationsApi';
 
-import {
-  findLatestStreamError,
-  getStreamErrorHint,
-  getStreamErrorTitle,
-  parseStreamErrorFromLog,
-  type StreamErrorState,
-} from './utils/streamErrors';
+
 import { dashboardTabFromPath } from './utils/routing';
 import { copyMacVlcTerminalCommand } from './utils/vlc';
 import { DashboardHeader, DashboardPlaceholder, DeviceInstallTooltip } from './components';
@@ -267,8 +258,6 @@ export default function DashboardApp() {
     detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
   });
   const [status, setStatus] = useState<string>('Offline');
-  const [motionActive, setMotionActive] = useState<boolean>(false);
-  const [motionRatio, setMotionRatio] = useState<number>(0);
   const [logs, setLogs] = useState<{ message: string; timestamp: string }[]>([]);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState<boolean>(false);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(
@@ -296,26 +285,16 @@ export default function DashboardApp() {
     }
   }, [isMobileViewport]);
 
-  // Live Camera Feed Video States
-  const [liveFeedOpen, setLiveFeedOpen] = useState<boolean>(true);
-  const liveFeedOpenRef = useRef(liveFeedOpen);
-  useEffect(() => {
-    liveFeedOpenRef.current = liveFeedOpen;
-  }, [liveFeedOpen]);
-  const [streamLoading, setStreamLoading] = useState<boolean>(true);
-  const [streamInitTimedOut, setStreamInitTimedOut] = useState<boolean>(false);
-  const [streamError, setStreamError] = useState<StreamErrorState | null>(null);
-  const [liveFrame, setLiveFrame] = useState<string | null>(null);
-  const [previewFrozen, setPreviewFrozen] = useState<boolean>(false);
-  const [, setVlcLaunchHint] = useState<'idle' | 'opened' | 'failed'>('idle');
-  const lastFrameAtRef = useRef<number>(0);
-  const lastStreamRefreshAtRef = useRef<number>(0);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [showInlineWebRtc, setShowInlineWebRtc] = useState<boolean>(true);
+  const showInlineWebRtcRef = useRef(showInlineWebRtc);
   useEffect(() => {
     setShowInlineWebRtc(true);
   }, [selectedStreamId]);
+  useEffect(() => {
+    showInlineWebRtcRef.current = showInlineWebRtc;
+  }, [showInlineWebRtc]);
 
   // WebSocket Ref
   const wsRef = useRef<WebSocket | null>(null);
@@ -339,32 +318,6 @@ export default function DashboardApp() {
     [streams, selectedStreamId],
   );
 
-  const usesWebPreview = LIVE_PREVIEW_ENABLED && selectedStream?.cameraType !== 'rtsp';
-  const usesRtspExternal = selectedStream?.cameraType === 'rtsp';
-  const usesExternalView = !usesWebPreview;
-  const usesWebPreviewRef = useRef(usesWebPreview);
-  useEffect(() => {
-    usesWebPreviewRef.current = usesWebPreview;
-  }, [usesWebPreview]);
-
-  const activeStreamError = useMemo<StreamErrorState | null>(() => {
-    if (streamError) return streamError;
-
-    const fromLogs = findLatestStreamError(logs, selectedStream?.name);
-    if (fromLogs) return fromLogs;
-
-    if (status === 'Error') {
-      const rtsp = selectedStream?.streamUrl;
-      return {
-        errorType: 'camera_error',
-        message: rtsp
-          ? `Cannot connect to camera at ${rtsp}`
-          : 'Camera connection failed. See System Status Logs below.',
-      };
-    }
-    return null;
-  }, [streamError, status, logs, selectedStream?.name, selectedStream?.streamUrl]);
-
   const appendLog = useCallback((message: string) => {
     const logEntry = { message, timestamp: new Date().toISOString() };
     setLogs((prev) => {
@@ -376,30 +329,7 @@ export default function DashboardApp() {
     });
   }, []);
 
-  const refreshStreamPreview = useCallback((reason: string) => {
-    const streamId = selectedStreamIdRef.current;
-    if (!streamId || !liveFeedOpenRef.current || !usesWebPreviewRef.current) return;
 
-    const now = Date.now();
-    if (now - lastStreamRefreshAtRef.current < STREAM_REFRESH_COOLDOWN_MS) {
-      return;
-    }
-    lastStreamRefreshAtRef.current = now;
-
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'refresh_stream', streamId }));
-      appendLog(`[Dashboard] Auto-recovery: ${reason}`);
-    }
-  }, [appendLog]);
-
-  const appendLogRef = useRef(appendLog);
-  const refreshStreamPreviewRef = useRef(refreshStreamPreview);
-
-  useEffect(() => {
-    appendLogRef.current = appendLog;
-    refreshStreamPreviewRef.current = refreshStreamPreview;
-  }, [appendLog, refreshStreamPreview]);
 
   useEffect(() => {
     selectedStreamIdRef.current = selectedStreamId;
@@ -534,7 +464,7 @@ export default function DashboardApp() {
     ws.onopen = () => {
       console.log('WebSocket open. Subscribing to selected stream...');
       const currentStreamId = selectedStreamIdRef.current;
-      if (currentStreamId && liveFeedOpenRef.current && usesWebPreviewRef.current) {
+      if (currentStreamId && showInlineWebRtcRef.current) {
         ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: currentStreamId }));
       }
       const deviceId = selectedStreamDeviceIdRef.current;
@@ -618,8 +548,6 @@ export default function DashboardApp() {
           }
           break;
         case 'motion_state':
-          setMotionActive(data.active);
-          setMotionRatio(data.ratio);
           break;
         case 'device_event': {
           const modalDevice = deviceLogsDeviceRef.current;
@@ -643,17 +571,6 @@ export default function DashboardApp() {
             }
             return [...prev, logEntry];
           });
-          const parsed = parseStreamErrorFromLog(data.message);
-          if (parsed) {
-            setStreamError(parsed);
-            setStreamLoading(false);
-            setStreamInitTimedOut(false);
-          } else if (
-            data.message.includes('Started YOLO+ByteTrack pipeline') ||
-            data.message.includes('Live preview streaming enabled')
-          ) {
-            setStreamError(null);
-          }
           if (deviceLogSinkRef.current) {
             deviceLogSinkRef.current(logEntry);
           }
@@ -673,24 +590,9 @@ export default function DashboardApp() {
           triggerReidRefreshRef.current();
           break;
         case 'frame':
-          if (data.image && data.streamId === selectedStreamIdRef.current) {
-            lastFrameAtRef.current = Date.now();
-            setLiveFrame(`data:image/jpeg;base64,${data.image}`);
-            setStreamLoading(false);
-            setStreamInitTimedOut(false);
-            setStreamError(null);
-            setPreviewFrozen(false);
-          }
           break;
         case 'stream_error':
           if (data.streamId === selectedStreamIdRef.current) {
-            setStreamError({
-              errorType: data.errorType || 'camera_error',
-              message: data.message || 'Camera connection failed',
-              retryInSec: data.retryInSec,
-            });
-            setStreamLoading(false);
-            setStreamInitTimedOut(false);
             setStatus('Error');
           }
           if (data.streamId) {
@@ -703,7 +605,6 @@ export default function DashboardApp() {
           break;
         case 'stream_error_cleared':
           if (data.streamId === selectedStreamIdRef.current) {
-            setStreamError(null);
             if (data.status) {
               setStatus(data.status);
             }
@@ -716,22 +617,6 @@ export default function DashboardApp() {
                   : s,
               ),
             );
-          }
-          break;
-        case 'preview_stall':
-          if (data.streamId === selectedStreamIdRef.current) {
-            setPreviewFrozen(true);
-            if (typeof data.stalledForSec === 'number') {
-              appendLogRef.current(
-                `[Dashboard] Live preview stalled (no frames for ${data.stalledForSec}s). Attempting recovery...`,
-              );
-            }
-            refreshStreamPreviewRef.current('preview stall detected');
-          }
-          break;
-        case 'preview_resumed':
-          if (data.streamId === selectedStreamIdRef.current) {
-            setPreviewFrozen(false);
           }
           break;
         case 'devices_changed':
@@ -752,7 +637,6 @@ export default function DashboardApp() {
       }
       const wsStillNeeded =
         !!selectedStreamIdRef.current ||
-        (liveFeedOpenRef.current && !!selectedStreamIdRef.current) ||
         !!deviceLogsDeviceRef.current;
       if (!wsStillNeeded) {
         return;
@@ -795,32 +679,6 @@ export default function DashboardApp() {
     }
   }, [selectedStreamId, streams]);
 
-  const openStreamFeed = useCallback((stream: CameraStream) => {
-    setSelectedStreamId(stream.streamId);
-    setSelectedDeviceId(stream.deviceId);
-    setLiveFeedOpen(true);
-    setStreamError(null);
-    setPreviewFrozen(false);
-    setLiveFrame(null);
-    setVlcLaunchHint('idle');
-    lastFrameAtRef.current = 0;
-
-    if (stream.cameraType === 'rtsp' && stream.streamUrl) {
-      setStreamLoading(false);
-      setStreamInitTimedOut(false);
-      return;
-    }
-
-    if (!LIVE_PREVIEW_ENABLED) {
-      setStreamLoading(false);
-      setStreamInitTimedOut(false);
-      return;
-    }
-
-    setStreamLoading(true);
-    setStreamInitTimedOut(false);
-  }, []);
-
   const handleCopyMacVlcCommand = useCallback(async (url?: string) => {
     const targetUrl = url || selectedStream?.streamUrl;
     if (!targetUrl) return;
@@ -832,29 +690,17 @@ export default function DashboardApp() {
     );
   }, [appendLog, selectedStream?.streamUrl]);
 
-  // Subscribe/unsubscribe live preview when the feed panel is toggled (webcam only)
+  // Subscribe/unsubscribe live preview when a stream is selected and inline preview is active
   useEffect(() => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !selectedStreamId) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    if (liveFeedOpen && usesWebPreview) {
-      setStreamLoading(true);
-      setStreamInitTimedOut(false);
-      setLiveFrame(null);
-      lastFrameAtRef.current = 0;
+    if (selectedStreamId && showInlineWebRtc) {
       ws.send(JSON.stringify({ type: 'subscribe_stream', streamId: selectedStreamId }));
     } else {
       ws.send(JSON.stringify({ type: 'unsubscribe_stream' }));
-      if (!liveFeedOpen || !usesWebPreview) {
-        setStreamLoading(false);
-        setStreamInitTimedOut(false);
-        setPreviewFrozen(false);
-        if (!usesWebPreview) {
-          setLiveFrame(null);
-        }
-      }
     }
-  }, [liveFeedOpen, selectedStreamId, usesWebPreview]);
+  }, [selectedStreamId, showInlineWebRtc]);
 
   // Sync WS device subscription when stream changes
   useEffect(() => {
@@ -865,8 +711,6 @@ export default function DashboardApp() {
       if (deviceId) {
         wsRef.current.send(JSON.stringify({ type: 'subscribe_device', deviceId }));
       }
-      setMotionActive(false);
-      setMotionRatio(0);
     }
   }, [selectedStreamId, selectedStream?.deviceId]);
 
@@ -875,16 +719,6 @@ export default function DashboardApp() {
       terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
     }
   }, [logs]);
-
-  // Surface the latest camera error from buffered logs when opening a stream
-  useEffect(() => {
-    if (!selectedStreamId || !liveFeedOpen) return;
-    const parsed = findLatestStreamError(logs, selectedStream?.name);
-    if (parsed) {
-      setStreamError(parsed);
-      setStreamLoading(false);
-    }
-  }, [selectedStreamId, selectedStream?.name, liveFeedOpen, logs]);
 
   const wsNeeded = !!selectedStreamId || !!deviceLogsDevice;
   useEffect(() => {
@@ -898,85 +732,12 @@ export default function DashboardApp() {
     };
   }, [wsNeeded, connectWS, disconnectWS]);
 
-  const closeLiveFeed = useCallback(() => {
-    setLiveFeedOpen(false);
-    setLiveFrame(null);
-    setStreamLoading(false);
-    setStreamInitTimedOut(false);
-    setStreamError(null);
-    setPreviewFrozen(false);
-    setVlcLaunchHint('idle');
-    setMotionActive(false);
-    setMotionRatio(0);
-    lastFrameAtRef.current = 0;
-  }, []);
-
   useEffect(() => {
     const intervalId = setInterval(() => {
       fetchDevices();
     }, 30_000);
     return () => clearInterval(intervalId);
   }, [fetchDevices]);
-
-  // Reset stream loading only when switching streams (not on Recording/Processing status)
-  useEffect(() => {
-    if (!liveFeedOpen || !usesWebPreview) return;
-    Promise.resolve().then(() => {
-      setStreamLoading(true);
-      setStreamInitTimedOut(false);
-      setLiveFrame(null);
-      setPreviewFrozen(false);
-      lastFrameAtRef.current = 0;
-      lastStreamRefreshAtRef.current = 0;
-    });
-  }, [selectedStreamId, liveFeedOpen, usesWebPreview]);
-
-  // Detect frozen preview when WS frames stop arriving (webcam only)
-  useEffect(() => {
-    if (!liveFeedOpen || !selectedStreamId || !usesWebPreview || status === 'Offline') {
-      setPreviewFrozen(false);
-      return;
-    }
-
-    const intervalId = setInterval(() => {
-      const lastFrameAt = lastFrameAtRef.current;
-      if (!lastFrameAt) return;
-      const frozen = Date.now() - lastFrameAt > PREVIEW_STALL_MS;
-      setPreviewFrozen(frozen);
-      if (frozen) {
-        refreshStreamPreview('no frames received in dashboard');
-      }
-    }, 1000);
-
-    return () => clearInterval(intervalId);
-  }, [selectedStreamId, status, liveFeedOpen, usesWebPreview, refreshStreamPreview]);
-
-  // Auto-recover when the live feed never receives its first frame (webcam only)
-  useEffect(() => {
-    if (!liveFeedOpen || !selectedStreamId || !usesWebPreview || status === 'Offline' || !streamLoading) {
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      if (!lastFrameAtRef.current) {
-        setStreamInitTimedOut(true);
-        appendLog(
-          '[Dashboard] Live stream initialization timed out. Check edge logs below and retrying preview...',
-        );
-        refreshStreamPreview('stream init timeout');
-      }
-    }, STREAM_INIT_TIMEOUT_MS);
-
-    return () => clearTimeout(timeoutId);
-  }, [
-    selectedStreamId,
-    status,
-    liveFeedOpen,
-    usesWebPreview,
-    streamLoading,
-    appendLog,
-    refreshStreamPreview,
-  ]);
 
   const handleToggleStreamMonitoring = async (streamId: string, currentTrackingEnabled: boolean) => {
     const stream = streams.find((s) => s.streamId === streamId);
@@ -1073,7 +834,6 @@ export default function DashboardApp() {
     if (result?.streamId) {
       trackEvent('save_stream_config', { streamId: result.streamId });
       setSelectedStreamId(result.streamId);
-      setLiveFeedOpen(true);
     }
   };
 
@@ -1382,14 +1142,8 @@ export default function DashboardApp() {
                                   >
                                     <div
                                       onClick={() => {
-                                        if (stream.cameraType === 'rtsp') {
-                                          setSelectedStreamId((prev) => (prev === stream.streamId ? '' : stream.streamId));
-                                          setSelectedDeviceId(stream.deviceId);
-                                          setLiveFeedOpen(false);
-                                          setVlcLaunchHint('idle');
-                                        } else {
-                                          openStreamFeed(stream);
-                                        }
+                                        setSelectedStreamId((prev) => (prev === stream.streamId ? '' : stream.streamId));
+                                        setSelectedDeviceId(stream.deviceId);
                                       }}
                                       className={`glass-panel interactive flex items-center justify-between gap-3 cursor-pointer py-2 px-3 rounded-lg text-left transition-all duration-200 ${isSelected
                                         ? 'active border-primary/50 bg-[rgba(124,58,237,0.08)] shadow-[0_0_12px_rgba(124,58,237,0.15)]'
@@ -1596,246 +1350,7 @@ export default function DashboardApp() {
                 )}
               </div>
 
-              {/* CAMERA FEED */}
-              {(liveFeedOpen || selectedStreamId) && !usesRtspExternal && (
-                <div className="glass-panel p-5 relative">
-                  <div className={`flex justify-between items-center gap-2 flex-wrap ${liveFeedOpen ? 'mb-4' : ''}`}>
-                    <h2 className="text-[1.1rem] flex items-center gap-2">
-                      <Video size={18} color="var(--color-secondary)" />
-                      {usesWebPreview ? 'Live Camera Feed' : 'Camera Stream'}
-                    </h2>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {liveFeedOpen && status === 'Error' && (
-                        <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
-                          <AlertTriangle size={11} />
-                          Camera error
-                        </div>
-                      )}
-                      {liveFeedOpen && status === 'Recording' && (
-                        <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(244,63,94,0.15)] text-danger border border-[rgba(244,63,94,0.35)]">
-                          <span className="w-1.5 h-1.5 rounded-full bg-danger inline-block animate-[pulse-danger_0.8s_infinite]"></span>
-                          Recording clip
-                        </div>
-                      )}
-                      {liveFeedOpen && (status === 'Processing Video' || status === 'Processing') && (
-                        <div className="text-[0.7rem] font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[rgba(124,58,237,0.15)] text-[#a78bfa] border border-[rgba(124,58,237,0.35)]">
-                          <RefreshCw size={11} className="animate-spin" />
-                          Summarizing clip
-                        </div>
-                      )}
-                      {liveFeedOpen && motionActive && (
-                        <div className="text-danger text-[0.8rem] font-semibold flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-current inline-block animate-[pulse-danger_0.5s_infinite]"></span>
-                          MOTION DETECTED: {(motionRatio * 100).toFixed(1)}%
-                        </div>
-                      )}
-                      {liveFeedOpen ? (
-                        <button
-                          type="button"
-                          onClick={closeLiveFeed}
-                          className="btn p-1.5 bg-transparent text-text-muted hover:text-danger border-none shrink-0 transition-colors duration-200"
-                          title="Close live feed"
-                          aria-label="Close live feed"
-                        >
-                          <X size={16} />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => selectedStream && openStreamFeed(selectedStream)}
-                          disabled={!selectedStream}
-                          className="btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                        >
-                          <Play size={12} />
-                          Open Feed
-                        </button>
-                      )}
-                    </div>
-                  </div>
 
-                  {liveFeedOpen && (
-                    <div className={`bg-[#090d16] rounded-xl w-full relative border border-[rgba(255,255,255,0.05)] ${activeStreamError && !liveFrame && usesWebPreview ? 'min-h-0' : 'min-h-[200px] overflow-hidden'}`}>
-
-                      {selectedStreamId && status !== 'Offline' ? (
-                        usesExternalView ? (
-                          <div className="w-full p-4 sm:p-6 min-h-[200px] flex flex-col items-center justify-center text-center">
-                            <div className="bg-[rgba(124,58,237,0.12)] p-3 rounded-xl mb-4">
-                              <Activity size={28} className="text-[#a78bfa]" />
-                            </div>
-                            <p className="text-[0.95rem] font-semibold text-text-primary">
-                              {status === 'Recording' ? 'Recording motion clip' : status === 'Monitoring' ? 'Monitoring for motion' : status}
-                            </p>
-                            <p className="text-[0.78rem] text-text-muted mt-2 max-w-md leading-relaxed">
-                              Live browser preview is disabled to reduce edge CPU and bandwidth. Motion detection,
-                              clip recording, and hub commands still run normally.
-                            </p>
-                            {motionActive && (
-                              <p className="text-[0.75rem] text-danger mt-3 font-semibold">
-                                Motion detected: {(motionRatio * 100).toFixed(1)}%
-                              </p>
-                            )}
-                            {activeStreamError && (
-                              <div className="w-full mt-5 text-left bg-[rgba(244,63,94,0.08)] border border-[rgba(244,63,94,0.35)] rounded-xl p-4 max-w-lg">
-                                <p className="text-[0.85rem] font-semibold text-danger">
-                                  {getStreamErrorTitle(activeStreamError.errorType)}
-                                </p>
-                                <p className="text-[0.78rem] text-text-muted mt-2 leading-relaxed">
-                                  {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
-                                </p>
-                              </div>
-                            )}
-                            <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
-                              <button
-                                type="button"
-                                onClick={() => setShowConfigDialog(true)}
-                                className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                              >
-                                <Settings size={12} />
-                                Stream Settings
-                              </button>
-                            </div>
-                          </div>
-                        ) : activeStreamError && !liveFrame ? (
-                          <div className="w-full p-4 sm:p-5">
-                            <div className="bg-[rgba(244,63,94,0.08)] border border-[rgba(244,63,94,0.35)] rounded-xl p-4 sm:p-5">
-                              <div className="flex items-start gap-3 mb-3">
-                                <div className="bg-[rgba(244,63,94,0.15)] p-2 rounded-lg shrink-0">
-                                  <AlertTriangle size={18} className="text-danger" />
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-[0.95rem] font-semibold text-danger leading-snug">
-                                    {getStreamErrorTitle(activeStreamError.errorType)}
-                                  </p>
-                                  {selectedStream?.streamUrl && selectedStream.cameraType === 'rtsp' && (
-                                    <p className="text-[0.7rem] text-text-muted mt-1 break-all">
-                                      RTSP: {selectedStream.streamUrl}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="bg-[rgba(0,0,0,0.35)] rounded-lg px-3 py-2.5 mb-3 border border-[rgba(255,255,255,0.06)]">
-                                <p className="text-[0.72rem] uppercase tracking-wide text-text-muted mb-1">Error detail</p>
-                                <p className="text-[0.8rem] text-text-primary leading-relaxed break-words">
-                                  {activeStreamError.message}
-                                </p>
-                              </div>
-
-                              <p className="text-[0.78rem] text-amber-300/90 leading-relaxed mb-3">
-                                {getStreamErrorHint(activeStreamError.errorType, activeStreamError.message)}
-                              </p>
-
-                              {activeStreamError.retryInSec != null && activeStreamError.retryInSec > 0 && (
-                                <p className="text-[0.72rem] text-text-muted mb-4">
-                                  Edge agent will retry automatically in ~{Math.ceil(activeStreamError.retryInSec)}s.
-                                </p>
-                              )}
-
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setShowConfigDialog(true)}
-                                  className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                                >
-                                  <Settings size={12} />
-                                  Check Stream Settings
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => refreshStreamPreview('manual retry after error')}
-                                  className="btn btn-secondary py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                                >
-                                  <RefreshCw size={12} />
-                                  Retry Now
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="w-full relative min-h-[200px]">
-                            {liveFrame && (
-                              <img
-                                src={liveFrame}
-                                alt="Live camera preview"
-                                className="w-full h-auto block"
-                              />
-                            )}
-
-                            {liveFrame && !previewFrozen && (
-                              <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(16,185,129,0.2)] text-emerald-400 border border-[rgba(16,185,129,0.35)]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-[pulse-danger_0.8s_infinite]"></span>
-                                LIVE
-                              </div>
-                            )}
-
-                            {liveFrame && previewFrozen && (
-                              <div className="absolute top-2 left-2 text-[0.65rem] font-semibold flex items-center gap-1.5 py-1 px-2 rounded-full bg-[rgba(245,158,11,0.2)] text-amber-400 border border-[rgba(245,158,11,0.35)]">
-                                <AlertTriangle size={10} />
-                                FROZEN
-                              </div>
-                            )}
-
-                            {previewFrozen && (
-                              <div className="absolute inset-0 border-2 border-amber-500/60 pointer-events-none rounded-xl z-10" />
-                            )}
-
-                            {streamLoading && !activeStreamError && (
-                              <div className="text-center text-text-muted absolute inset-0 flex flex-col justify-center items-center bg-[#090d16]/80 px-4">
-                                <div className="animate-[spin_4s_linear_infinite] mb-3 inline-block">
-                                  <RefreshCw size={36} color="var(--color-primary)" />
-                                </div>
-                                {streamInitTimedOut ? (
-                                  <>
-                                    <p className="text-[0.9rem] text-amber-400">Live stream stalled</p>
-                                    <p className="text-[0.75rem] mt-1 max-w-md">
-                                      No frames received from the edge device. Check System Status Logs below for
-                                      camera or WebSocket errors. Recovery is retrying automatically.
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={() => refreshStreamPreview('manual retry')}
-                                      className="btn btn-secondary mt-3 py-1.5 px-3 text-[0.75rem] rounded-md flex items-center gap-1.5"
-                                    >
-                                      <RefreshCw size={12} />
-                                      Retry Preview Now
-                                    </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <p className="text-[0.9rem]">Initializing Live Stream...</p>
-                                    <p className="text-[0.75rem] mt-1">Connecting to edge camera (WebSocket)</p>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      ) : selectedStreamId ? (
-                        <div className="text-center text-text-muted min-h-[200px] flex flex-col justify-center items-center py-8">
-                          <Camera size={36} className="text-text-muted mb-3 mx-auto" />
-                          <p className="text-[0.9rem]">Camera Stream Offline</p>
-                          <p className="text-[0.75rem] mt-1">
-                            Start the edge agent to connect
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="text-center text-text-muted min-h-[200px] flex flex-col justify-center items-center py-8">
-                          <Camera size={36} className="text-text-muted mb-3 mx-auto" />
-                          <p className="text-[0.9rem]">No Camera Stream Selected</p>
-                          <p className="text-[0.75rem] mt-1">
-                            Select or create a camera stream to view live feed
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Dynamic Overlay HUD when motion occurs */}
-                      {motionActive && (
-                        <div className="absolute inset-0 border-2 border-danger pointer-events-none shadow-[inset_0_0_30px_rgba(244,63,94,0.25)] rounded-xl z-20" />
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
 
 
 
