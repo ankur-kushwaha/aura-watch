@@ -25,7 +25,7 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
     try {
       const [resMetrics, resEvents] = await Promise.all([
         apiFetch(`/devices/${deviceId}/metrics`),
-        apiFetch(`/devices/${deviceId}/events?limit=100`)
+        apiFetch(`/devices/${deviceId}/events?limit=300`)
       ]);
 
       const latency = Date.now() - startTime;
@@ -82,23 +82,37 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
         return d >= hourStart && d <= hourEnd;
       });
 
+      const healthEvents = slotEvents.filter(e => e.eventType === 'health_check');
+      const otherEvents = slotEvents.filter(e => e.eventType !== 'health_check');
+
       // Determine state
       let status: 'online' | 'warning' | 'offline' = 'online';
       let message = 'Healthy connection, no incidents';
       
-      const hasOffline = slotEvents.some(e => 
+      const hasOffline = otherEvents.some(e => 
         /disconnect|offline|heartbeat timed out/i.test(e.message) || e.eventType === 'websocket_error'
-      );
-      const hasRecovery = slotEvents.some(e => 
+      ) || (healthEvents.length > 0 && healthEvents.every(e => e.detail?.ws === 'down'));
+      const hasRecovery = otherEvents.some(e => 
         /reconnect|connected|recovered/i.test(e.message)
       );
+
+      // Average CPU in this hour slot
+      let avgCpu = 0;
+      if (healthEvents.length > 0) {
+        const cpus = healthEvents.map(e => e.detail?.cpu).filter((c): c is number => typeof c === 'number');
+        if (cpus.length > 0) {
+          avgCpu = Math.round(cpus.reduce((a, b) => a + b, 0) / cpus.length);
+        }
+      }
 
       if (hasOffline) {
         status = 'offline';
         message = 'Connection lost / offline event';
-      } else if (slotEvents.some(e => e.severity === 'warn') || (hasRecovery && slotEvents.length > 1)) {
+      } else if (otherEvents.some(e => e.severity === 'warn' || e.severity === 'error') || (hasRecovery && otherEvents.length > 1) || (healthEvents.some(e => e.severity === 'warn'))) {
         status = 'warning';
-        message = 'High jitter / connection unstable';
+        message = avgCpu > 0 ? `Unstable • Avg CPU: ${avgCpu}%` : 'High jitter / connection unstable';
+      } else if (avgCpu > 0) {
+        message = `Healthy • Avg CPU: ${avgCpu}%`;
       }
 
       slots.push({
@@ -116,7 +130,7 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
   const healthyCount = timelineSlots.filter(s => s.status === 'online').length;
   const uptimePercentage = Math.round((healthyCount / 24) * 100);
 
-  // Generate coordinates for SVG Latency Chart
+  // Generate coordinates for SVG CPU Usage Chart
   const generateSvgChartPoints = () => {
     const width = 480;
     const height = 80;
@@ -126,21 +140,21 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
 
     const points = timelineSlots.map((slot, idx) => {
       const x = padding + idx * step;
-      let latencyValue = 25; // default base healthy ping
+      let cpuValue = 0;
 
-      if (slot.status === 'offline') {
-        latencyValue = 0; // offline
-      } else if (slot.status === 'warning') {
-        latencyValue = 180 + Math.random() * 80; // spike
-      } else {
-        // healthy random variance
-        latencyValue = 30 + (idx % 3 === 0 ? 15 : idx % 2 === 0 ? -8 : 2);
+      // Find average CPU for this slot from events
+      const healthEvents = slot.events.filter(e => e.eventType === 'health_check');
+      if (healthEvents.length > 0) {
+        const cpus = healthEvents.map(e => e.detail?.cpu).filter((c): c is number => typeof c === 'number');
+        if (cpus.length > 0) {
+          cpuValue = cpus.reduce((a, b) => a + b, 0) / cpus.length;
+        }
       }
 
-      // Map latency (0 to 300ms) to Y coordinate (height - padding to padding)
-      const maxVal = 300;
-      const y = height - padding - (latencyValue / maxVal) * (height - padding * 2);
-      return { x, y, value: latencyValue, slot };
+      // Map CPU (0 to 100%) to Y coordinate (height - padding to padding)
+      const maxVal = 100;
+      const y = height - padding - (cpuValue / maxVal) * (height - padding * 2);
+      return { x, y, value: cpuValue, slot };
     });
 
     const pathData = points.reduce((acc, p, idx) => {
@@ -282,11 +296,11 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
               </div>
             </div>
 
-            {/* SVG Latency Chart */}
+            {/* SVG CPU Trend Chart */}
             <div className="rounded-xl border border-border-glass bg-[rgba(15,23,42,0.45)] p-4 flex flex-col gap-3">
               <div className="flex justify-between items-center">
-                <h4 className="text-[0.8rem] font-bold text-white">Ping Latency Trend (ms)</h4>
-                <span className="text-[0.68rem] text-text-muted font-semibold">Max 300ms</span>
+                <h4 className="text-[0.8rem] font-bold text-white">CPU Usage Trend (%)</h4>
+                <span className="text-[0.68rem] text-text-muted font-semibold">Max 100%</span>
               </div>
               <div className="w-full bg-[rgba(0,0,0,0.15)] rounded-lg overflow-hidden border border-[rgba(255,255,255,0.02)]">
                 <svg viewBox="0 0 480 80" className="w-full h-20">
@@ -331,7 +345,7 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
                         strokeWidth="1"
                         className="hover:r-4 transition-all cursor-crosshair"
                       >
-                        <title>{`${p.slot.label} - ${p.value.toFixed(0)}ms`}</title>
+                        <title>{`${p.slot.label} - CPU ${p.value.toFixed(1)}%`}</title>
                       </circle>
                     )
                   ))}

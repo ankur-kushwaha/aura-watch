@@ -156,11 +156,51 @@ export function parseNetworkEventFromLog(message: string): Omit<RecordDeviceEven
     };
   }
 
+  if (message.startsWith('[Health]')) {
+    const detail: any = { raw: message };
+    const pidMatch = message.match(/pid=(\d+)/);
+    if (pidMatch) detail.pid = parseInt(pidMatch[1], 10);
+    const wsMatch = message.match(/ws=(\w+)/);
+    if (wsMatch) detail.ws = wsMatch[1];
+    const streamsMatch = message.match(/streams=(\d+)/);
+    if (streamsMatch) detail.streams = parseInt(streamsMatch[1], 10);
+    const cpuMatch = message.match(/cpu=([\d.]+)/);
+    if (cpuMatch) detail.cpu = parseFloat(cpuMatch[1]);
+    const queueLenMatch = message.match(/queue_len=(\d+)/);
+    if (queueLenMatch) detail.queueLen = parseInt(queueLenMatch[1], 10);
+    
+    const bracketMatch = message.match(/\[([^\]]*?)\]$/);
+    if (bracketMatch) {
+      const streamsStr = bracketMatch[1];
+      if (streamsStr && streamsStr !== 'none') {
+        detail.streamStates = streamsStr.split(';').map(s => s.trim());
+      }
+    }
+
+    let severity: DeviceEventSeverity = 'info';
+    if (detail.ws === 'down') {
+      severity = 'error';
+    } else if (detail.streamStates?.some((s: string) => s.includes('camera=down'))) {
+      severity = 'warn';
+    }
+
+    return {
+      streamId: null,
+      category: 'device',
+      severity,
+      eventType: 'health_check',
+      message,
+      detail,
+      dedupeWindowMs: 0,
+    };
+  }
+
   return null;
 }
 
 export function shouldPersistHubLog(message: string): boolean {
   return (
+    message.startsWith('[Health]') ||
     /Failed to open camera/i.test(message) ||
     /Camera opened but no frames/i.test(message) ||
     /\[Detector Error\]/i.test(message) ||

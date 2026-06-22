@@ -177,155 +177,180 @@ const getStatusLabelAndColor = (status: string | undefined, isOnline: boolean) =
           </div>
 
           {/* Video Feeds Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
-            {filteredFeeds.map((feed) => {
-              const isSelected = selectedCameraCode === feed.code;
-              const stream = feed.streamId ? streams.find((s) => s.streamId === feed.streamId) : undefined;
-              return (
-                <div
-                  key={feed.code}
-                  onClick={() => setSelectedCameraCode(feed.code)}
-                  className={`glass-panel overflow-hidden relative group flex flex-col cursor-pointer transition-all duration-300 ${isSelected
-                    ? 'border-[var(--color-secondary)] shadow-[0_0_20px_rgba(6,182,212,0.25)] scale-[1.01]'
-                    : 'border-border-glass hover:border-[rgba(255,255,255,0.1)]'
-                    }`}
-                  style={{ aspectRatio: '4/3' }}
+          {filteredFeeds.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-12 border border-dashed border-border-glass rounded-2xl bg-[rgba(255,255,255,0.01)] text-text-muted gap-4 min-h-[400px] w-full">
+              <div className="w-16 h-16 rounded-full bg-[rgba(255,255,255,0.03)] border border-border-glass flex items-center justify-center">
+                <Video size={28} className="opacity-40" />
+              </div>
+              <div>
+                <p className="text-[1rem] font-bold text-text-secondary">No camera streams available</p>
+                <p className="text-[0.8rem] text-text-muted mt-1 max-w-[280px] leading-relaxed">
+                  {selectedZone !== 'All' 
+                    ? `There are no camera streams registered in the ${selectedZone} zone.`
+                    : 'Get started by registering a streaming device or IP camera.'}
+                </p>
+              </div>
+              {selectedZone === 'All' && (
+                <button
+                  onClick={() => navigate('/app/devices')}
+                  className="py-2.5 px-5 rounded-xl text-[0.82rem] font-bold text-white bg-[#7C3AED] hover:bg-[#6d28d9] shadow-[0_4px_12px_rgba(124,58,237,0.25)] transition-all cursor-pointer flex items-center gap-2 border-none outline-none"
                 >
-                  {/* Camera stream body */}
-                  <div className="flex-1 relative bg-gradient-to-br from-[#0c121e] to-[#060a12] w-full overflow-hidden select-none">
-                    {/* Transparent overlay to capture clicks instead of letting the iframe intercept them */}
-                    <div className="absolute inset-0 z-10 cursor-pointer" />
-                    {feed.streamId && feed.isOnline && feed.streamUrl ? (
-                      <iframe
-                        key={`${feed.streamId}-${refreshKeys[feed.streamId] || 0}`}
-                        src={getWebRtcPreviewUrl(streams.find((s) => s.streamId === feed.streamId)!)!}
-                        title={`Live Stream ${feed.name}`}
-                        className="w-full h-full border-0 rounded-lg block bg-[#090d16]"
-                        allow="autoplay; fullscreen"
-                      />
-                    ) : feed.streamId ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted bg-[#090d16]">
-                        <Video className="w-8 h-8 opacity-40 animate-pulse" />
-                        <span className="text-[0.8rem] font-bold">Stream Offline</span>
-                      </div>
-                    ) : (
-                      <>
-                        {/* Grid layout lines */}
-                        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:20px_20px] pointer-events-none" />
+                  <Server size={15} />
+                  Add your first device
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
+              {filteredFeeds.map((feed) => {
+                const isSelected = selectedCameraCode === feed.code;
+                const stream = feed.streamId ? streams.find((s) => s.streamId === feed.streamId) : undefined;
+                return (
+                  <div
+                    key={feed.code}
+                    onClick={() => setSelectedCameraCode(feed.code)}
+                    className={`glass-panel overflow-hidden relative group flex flex-col cursor-pointer transition-all duration-300 ${isSelected
+                      ? 'border-[var(--color-secondary)] shadow-[0_0_20px_rgba(6,182,212,0.25)] scale-[1.01]'
+                      : 'border-border-glass hover:border-[rgba(255,255,255,0.1)]'
+                      }`}
+                    style={{ aspectRatio: '4/3' }}
+                  >
+                    {/* Camera stream body */}
+                    <div className="flex-1 relative bg-gradient-to-br from-[#0c121e] to-[#060a12] w-full overflow-hidden select-none">
+                      {/* Transparent overlay to capture clicks instead of letting the iframe intercept them */}
+                      <div className="absolute inset-0 z-10 cursor-pointer" />
+                      {feed.streamId && feed.isOnline && feed.streamUrl ? (
+                        <iframe
+                          key={`${feed.streamId}-${refreshKeys[feed.streamId] || 0}`}
+                          src={getWebRtcPreviewUrl(streams.find((s) => s.streamId === feed.streamId)!)!}
+                          title={`Live Stream ${feed.name}`}
+                          className="w-full h-full border-0 rounded-lg block bg-[#090d16]"
+                          allow="autoplay; fullscreen"
+                        />
+                      ) : feed.streamId ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted bg-[#090d16]">
+                          <Video className="w-8 h-8 opacity-40 animate-pulse" />
+                          <span className="text-[0.8rem] font-bold">Stream Offline</span>
+                        </div>
+                      ) : (
+                        <>
+                          {/* Grid layout lines */}
+                          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:20px_20px] pointer-events-none" />
 
-                        {/* Scanlines Effect */}
-                        <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%)] bg-[size:100%_4px] pointer-events-none opacity-40" />
+                          {/* Scanlines Effect */}
+                          <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%)] bg-[size:100%_4px] pointer-events-none opacity-40" />
 
-                        {/* Static Noise Overlay */}
-                        <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[radial-gradient(circle,rgba(255,255,255,0.8)_1px,transparent_1px)] bg-[size:6px_6px] animate-[pulse_8s_infinite]" />
+                          {/* Static Noise Overlay */}
+                          <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[radial-gradient(circle,rgba(255,255,255,0.8)_1px,transparent_1px)] bg-[size:6px_6px] animate-[pulse_8s_infinite]" />
 
-                        {/* Bounding Box Trackers */}
-                        {feed.hasTracker && feed.trackerBox && (
-                          <div
-                            className="absolute border-2 rounded transition-all duration-300"
-                            style={{
-                              borderColor: feed.trackerColor,
-                              top: feed.trackerBox.top,
-                              left: feed.trackerBox.left,
-                              width: feed.trackerBox.width,
-                              height: feed.trackerBox.height,
-                              boxShadow: `0 0 12px ${feed.trackerColor}40, inset 0 0 12px ${feed.trackerColor}20`,
-                            }}
-                          >
-                            {/* Bounding Box Label */}
+                          {/* Bounding Box Trackers */}
+                          {feed.hasTracker && feed.trackerBox && (
                             <div
-                              className="absolute -top-6 left-0 px-2 py-0.5 rounded text-[0.65rem] font-bold text-white uppercase tracking-wider shadow-md select-none pointer-events-none"
-                              style={{ backgroundColor: feed.trackerColor }}
+                              className="absolute border-2 rounded transition-all duration-300"
+                              style={{
+                                borderColor: feed.trackerColor,
+                                top: feed.trackerBox.top,
+                                left: feed.trackerBox.left,
+                                width: feed.trackerBox.width,
+                                height: feed.trackerBox.height,
+                                boxShadow: `0 0 12px ${feed.trackerColor}40, inset 0 0 12px ${feed.trackerColor}20`,
+                              }}
                             >
-                              {feed.trackerLabel}
+                              {/* Bounding Box Label */}
+                              <div
+                                className="absolute -top-6 left-0 px-2 py-0.5 rounded text-[0.65rem] font-bold text-white uppercase tracking-wider shadow-md select-none pointer-events-none"
+                                style={{ backgroundColor: feed.trackerColor }}
+                              >
+                                {feed.trackerLabel}
+                              </div>
                             </div>
-                          </div>
-                        )}
-                      </>
-                    )}
+                          )}
+                        </>
+                      )}
 
-                    {/* Camera Code Overlay & Refresh Button */}
-                    <div className="absolute top-3 left-3 flex items-center gap-1.5 z-20">
-                      <div className="text-[0.72rem] font-extrabold text-text-secondary bg-[rgba(9,13,22,0.65)] px-2 py-0.5 rounded border border-[rgba(255,255,255,0.05)] select-none">
-                        {feed.code}
+                      {/* Camera Code Overlay & Refresh Button */}
+                      <div className="absolute top-3 left-3 flex items-center gap-1.5 z-20">
+                        <div className="text-[0.72rem] font-extrabold text-text-secondary bg-[rgba(9,13,22,0.65)] px-2 py-0.5 rounded border border-[rgba(255,255,255,0.05)] select-none">
+                          {feed.code}
+                        </div>
+                        {feed.streamId && feed.isOnline && feed.streamUrl && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRefreshStream(feed.streamId!);
+                            }}
+                            title="Refresh Stream"
+                            className="p-1 rounded bg-[rgba(9,13,22,0.65)] border border-[rgba(255,255,255,0.05)] hover:border-[rgba(255,255,255,0.25)] hover:bg-[rgba(255,255,255,0.05)] text-text-secondary hover:text-white transition-all cursor-pointer flex items-center justify-center"
+                          >
+                            <RefreshCw size={11} />
+                          </button>
+                        )}
                       </div>
-                      {feed.streamId && feed.isOnline && feed.streamUrl && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRefreshStream(feed.streamId!);
-                          }}
-                          title="Refresh Stream"
-                          className="p-1 rounded bg-[rgba(9,13,22,0.65)] border border-[rgba(255,255,255,0.05)] hover:border-[rgba(255,255,255,0.25)] hover:bg-[rgba(255,255,255,0.05)] text-text-secondary hover:text-white transition-all cursor-pointer flex items-center justify-center"
-                        >
-                          <RefreshCw size={11} />
-                        </button>
+
+                      {/* Blinking REC Status indicator */}
+                      {(() => {
+                        const statusMeta = getStatusLabelAndColor(feed.status, feed.isOnline ?? false);
+                        return (
+                          <div className={`absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-0.5 rounded select-none z-10 font-bold text-[0.65rem] tracking-wider ${statusMeta.bgClass}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full inline-block ${statusMeta.dotClass}`} />
+                            <span>{statusMeta.label}</span>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Interactive stream play icons / overlays on hover */}
+                      {(!feed.streamId || !feed.isOnline) && (
+                        <div className="absolute inset-0 bg-[rgba(9,13,22,0.4)] opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center pointer-events-none">
+                          <div className="bg-[rgba(255,255,255,0.06)] backdrop-blur p-3 rounded-full border border-border-glass">
+                            <Video className="text-white w-5 h-5 animate-pulse" />
+                          </div>
+                        </div>
                       )}
                     </div>
 
-                    {/* Blinking REC Status indicator */}
-                    {(() => {
-                      const statusMeta = getStatusLabelAndColor(feed.status, feed.isOnline ?? false);
-                      return (
-                        <div className={`absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-0.5 rounded select-none z-10 font-bold text-[0.65rem] tracking-wider ${statusMeta.bgClass}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full inline-block ${statusMeta.dotClass}`} />
-                          <span>{statusMeta.label}</span>
-                        </div>
-                      );
-                    })()}
+                    {/* Footer bar */}
+                    <div className="h-12 border-t border-border-glass bg-[rgba(9,13,22,0.6)] backdrop-blur px-3 flex justify-between items-center select-none shrink-0 text-text-secondary" onClick={(e) => e.stopPropagation()}>
+                      <span className="text-[0.75rem] font-semibold">{feed.name}</span>
+                      {stream && onUpdateStreamConfig && (
+                        <div className="flex items-center gap-4">
+                          {/* Object Tracking */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[0.68rem] font-bold text-text-secondary">Tracking</span>
+                            <label className="relative inline-flex items-center cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={stream.trackingEnabled}
+                                onChange={(e) => onUpdateStreamConfig(stream.streamId, { trackingEnabled: e.target.checked })}
+                              />
+                              <div className="w-8 h-4 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
+                            </label>
+                          </div>
 
-                    {/* Interactive stream play icons / overlays on hover */}
-                    {(!feed.streamId || !feed.isOnline) && (
-                      <div className="absolute inset-0 bg-[rgba(9,13,22,0.4)] opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center pointer-events-none">
-                        <div className="bg-[rgba(255,255,255,0.06)] backdrop-blur p-3 rounded-full border border-border-glass">
-                          <Video className="text-white w-5 h-5 animate-pulse" />
+                          <div className="w-px h-3 bg-[rgba(255,255,255,0.15)]" />
+
+                          {/* AI Summaries */}
+                          <div className={`flex items-center gap-1.5 transition-opacity duration-200 ${!stream.trackingEnabled ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''}`}>
+                            <span className="text-[0.68rem] font-bold text-text-secondary">AI Summary</span>
+                            <label className="relative inline-flex items-center cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                disabled={!stream.trackingEnabled}
+                                checked={stream.trackingEnabled && stream.aiSummaryEnabled !== false}
+                                onChange={(e) => onUpdateStreamConfig(stream.streamId, { aiSummaryEnabled: e.target.checked })}
+                              />
+                              <div className="w-8 h-4 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
+                            </label>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
-
-                  {/* Footer bar */}
-                  <div className="h-12 border-t border-border-glass bg-[rgba(9,13,22,0.6)] backdrop-blur px-3 flex justify-between items-center select-none shrink-0 text-text-secondary" onClick={(e) => e.stopPropagation()}>
-                    <span className="text-[0.75rem] font-semibold">{feed.name}</span>
-                    {stream && onUpdateStreamConfig && (
-                      <div className="flex items-center gap-4">
-                        {/* Object Tracking */}
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[0.68rem] font-bold text-text-secondary">Tracking</span>
-                          <label className="relative inline-flex items-center cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              className="sr-only peer"
-                              checked={stream.trackingEnabled}
-                              onChange={(e) => onUpdateStreamConfig(stream.streamId, { trackingEnabled: e.target.checked })}
-                            />
-                            <div className="w-8 h-4 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
-                          </label>
-                        </div>
-
-                        <div className="w-px h-3 bg-[rgba(255,255,255,0.15)]" />
-
-                        {/* AI Summaries */}
-                        <div className={`flex items-center gap-1.5 transition-opacity duration-200 ${!stream.trackingEnabled ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''}`}>
-                          <span className="text-[0.68rem] font-bold text-text-secondary">AI Summary</span>
-                          <label className="relative inline-flex items-center cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              className="sr-only peer"
-                              disabled={!stream.trackingEnabled}
-                              checked={stream.trackingEnabled && stream.aiSummaryEnabled !== false}
-                              onChange={(e) => onUpdateStreamConfig(stream.streamId, { aiSummaryEnabled: e.target.checked })}
-                            />
-                            <div className="w-8 h-4 bg-white/10 rounded-full relative peer peer-checked:bg-[var(--color-secondary)] transition-colors duration-200 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform after:duration-200 peer-checked:after:translate-x-4"></div>
-                          </label>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* RIGHT PANEL: Camera Properties */}
