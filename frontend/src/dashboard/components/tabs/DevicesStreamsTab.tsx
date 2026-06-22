@@ -6,7 +6,7 @@ import { DeviceInstallTooltip } from '../DeviceInstallTooltip';
 import { AddStreamModal } from '../modals/AddStreamModal';
 import { EditStreamModal } from '../modals/EditStreamModal';
 import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
-import { apiFetch } from '../../../api';
+import { apiFetch, discoverDeviceStreams } from '../../../api';
 
 export interface DevicesStreamsTabProps {
   devices: EdgeDevice[];
@@ -53,48 +53,56 @@ export function DevicesStreamsTab({
 
   // Network Discovery Modal state
   const [discoveryDevice, setDiscoveryDevice] = useState<EdgeDevice | null>(null);
-  const [discoveryStatus, setDiscoveryStatus] = useState<'scanning' | 'results' | 'imported'>('scanning');
+  const [discoveryStatus, setDiscoveryStatus] = useState<'scanning' | 'results' | 'empty' | 'error' | 'imported'>('scanning');
   const [discoveredStreams, setDiscoveredStreams] = useState<Array<{ name: string; url: string; res: string; fps: string; codec: string; zone: string }>>([]);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoverySubnet, setDiscoverySubnet] = useState<string | null>(null);
   const [importingIndex, setImportingIndex] = useState<number | null>(null);
 
-  // Trigger network discovery scan simulation
-  const handleOpenDiscovery = (device: EdgeDevice) => {
+  const normalizeStreamUrl = (url: string) => url.trim().toLowerCase().replace(/\/+$/, '');
+
+  const isStreamAlreadyRegistered = (url: string) => {
+    const normalized = normalizeStreamUrl(url);
+    return streams.some((stream) => normalizeStreamUrl(stream.streamUrl) === normalized);
+  };
+
+  // Trigger network discovery scan on the edge device
+  const handleOpenDiscovery = async (device: EdgeDevice) => {
     setDiscoveryDevice(device);
     setDiscoveryStatus('scanning');
     setDiscoveredStreams([]);
+    setDiscoveryError(null);
+    setDiscoverySubnet(null);
     setImportingIndex(null);
 
-    // Simulate scanning
-    setTimeout(() => {
-      // Determine simulated IP base
-      const ip = device.deviceId.includes('.') ? device.deviceId : '192.168.1.101';
-      setDiscoveredStreams([
-        {
-          name: `${device.name.split(' ')[0]} — Wide`,
-          url: `rtsp://${ip}:554/stream1`,
-          res: '4MP',
-          fps: '25',
-          codec: 'H.264',
-          zone: 'Entrance',
-        },
-        {
-          name: `${device.name.split(' ')[0]} — Zoom`,
-          url: `rtsp://${ip}:554/stream2`,
-          res: '2MP',
-          fps: '30',
-          codec: 'H.265',
-          zone: 'Forecourt',
-        },
-      ]);
-      setDiscoveryStatus('results');
-    }, 1500);
+    try {
+      const result = await discoverDeviceStreams(device.deviceId);
+      const cameras = (result.cameras || []).filter((camera) => !isStreamAlreadyRegistered(camera.url));
+
+      setDiscoverySubnet(result.subnet ?? null);
+      setDiscoveredStreams(
+        cameras.map((camera) => ({
+          name: camera.name,
+          url: camera.url,
+          res: '',
+          fps: '',
+          codec: '',
+          zone: '',
+        })),
+      );
+      setDiscoveryStatus(cameras.length > 0 ? 'results' : 'empty');
+    } catch (err) {
+      console.error('Failed to discover streams on edge device network', err);
+      setDiscoveryError(err instanceof Error ? err.message : 'Failed to scan device network');
+      setDiscoveryStatus('error');
+    }
   };
 
   // Import a discovered stream
   const handleImportStream = async (index: number) => {
     if (!discoveryDevice) return;
     setImportingIndex(index);
-    const mockStream = discoveredStreams[index];
+    const discoveredStream = discoveredStreams[index];
 
     try {
       const res = await apiFetch('/streams', {
@@ -102,18 +110,18 @@ export function DevicesStreamsTab({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           deviceId: discoveryDevice.deviceId,
-          name: mockStream.name,
+          name: discoveredStream.name,
           cameraType: 'rtsp',
-          streamUrl: mockStream.url,
+          streamUrl: discoveredStream.url,
           trackingEnabled: true,
           motionThreshold: 25,
           pixelChangeThreshold: 0.02,
           detectPerson: true,
           detectVehicle: true,
-          resolution: mockStream.res,
-          fps: mockStream.fps,
-          codec: mockStream.codec,
-          zone: mockStream.zone,
+          ...(discoveredStream.res ? { resolution: discoveredStream.res } : {}),
+          ...(discoveredStream.fps ? { fps: discoveredStream.fps } : {}),
+          ...(discoveredStream.codec ? { codec: discoveredStream.codec } : {}),
+          ...(discoveredStream.zone ? { zone: discoveredStream.zone } : {}),
           loiteringAlert: true,
           crossCameraReid: true,
           plateRecognition: true,
@@ -444,15 +452,52 @@ export function DevicesStreamsTab({
               <Loader2 size={36} className="animate-spin text-primary" />
               <div className="flex flex-col gap-1">
                 <p className="text-[0.9rem] font-semibold text-white">Scanning Network Ports</p>
-                <p className="text-[0.72rem] text-text-muted">Searching for active RTSP IP cameras on {discoveryDevice?.name}...</p>
+                <p className="text-[0.72rem] text-text-muted">
+                  Searching for active RTSP IP cameras from {discoveryDevice?.name} on its local subnet...
+                </p>
               </div>
+            </div>
+          )}
+
+          {discoveryStatus === 'error' && (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <p className="text-[0.88rem] font-bold text-danger">Scan Failed</p>
+              <p className="text-[0.72rem] text-text-muted max-w-[360px]">
+                {discoveryError || 'The edge device could not complete the network scan.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => discoveryDevice && handleOpenDiscovery(discoveryDevice)}
+                className="btn btn-primary py-1.5 px-4 text-[0.75rem] rounded-lg font-bold cursor-pointer bg-primary mt-2"
+              >
+                Retry scan
+              </button>
+            </div>
+          )}
+
+          {discoveryStatus === 'empty' && (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <p className="text-[0.88rem] font-bold text-white">No New Cameras Found</p>
+              <p className="text-[0.72rem] text-text-muted max-w-[360px]">
+                {discoverySubnet
+                  ? `The scan completed on ${discoverySubnet}, but no new RTSP cameras were detected.`
+                  : 'The scan completed, but no new RTSP cameras were detected on the device network.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => discoveryDevice && handleOpenDiscovery(discoveryDevice)}
+                className="btn py-1.5 px-4 text-[0.75rem] rounded-lg font-bold cursor-pointer border border-border-glass text-text-secondary hover:text-white mt-2"
+              >
+                Scan again
+              </button>
             </div>
           )}
 
           {discoveryStatus === 'results' && (
             <div className="flex flex-col gap-4 text-left">
               <p className="text-[0.78rem] text-text-secondary font-semibold">
-                Complete. Discovered {discoveredStreams.length} IP cameras on local subnet:
+                Complete. Discovered {discoveredStreams.length} new IP camera{discoveredStreams.length === 1 ? '' : 's'}
+                {discoverySubnet ? ` on ${discoverySubnet}` : ' on the local subnet'}:
               </p>
               <div className="flex flex-col gap-3.5 max-h-[220px] overflow-y-auto">
                 {discoveredStreams.map((stream, idx) => (

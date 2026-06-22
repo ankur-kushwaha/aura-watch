@@ -41,6 +41,7 @@ from recorder import (
 )
 from device_defaults import stream_config_defaults
 from reid_embedder import ReidEmbedder
+from rtsp_scanner import scan_rtsp_cameras
 from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names
 
 _STREAM_DEFAULTS = stream_config_defaults()
@@ -1986,6 +1987,29 @@ class EdgeAgent:
                 respond(True, **status)
             except Exception as exc:
                 respond(False, error=f"Could not get WiFi status: {exc}")
+            return
+
+        if command == "scan_rtsp_cameras":
+            self.send_log("[Discovery] Scanning local network for RTSP cameras...")
+            try:
+                result = scan_rtsp_cameras()
+                cameras = result.get("cameras", [])
+                subnet = result.get("subnet")
+                scanned_hosts = result.get("scannedHosts", 0)
+                self.send_log(
+                    f"[Discovery] Found {len(cameras)} RTSP camera(s) after scanning "
+                    f"{scanned_hosts} host(s) on {subnet or 'local network'}."
+                )
+                respond(
+                    True,
+                    message=result.get("message") or f"Found {len(cameras)} camera(s).",
+                    cameras=cameras,
+                    subnet=subnet,
+                    scannedHosts=scanned_hosts,
+                )
+            except Exception as exc:
+                self.send_log(f"[Discovery] Network scan failed: {exc}")
+                respond(False, error=f"Network scan failed: {exc}")
             return
 
         respond(False, error=f"Unknown device command: {command}")

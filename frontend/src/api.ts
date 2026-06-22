@@ -328,4 +328,32 @@ export async function getDeviceWifiStatus(deviceId: string): Promise<DeviceWifiS
   return res.json();
 }
 
+export interface DiscoveredCamera {
+  name: string;
+  url: string;
+  host?: string;
+  port?: string;
+}
+
+export interface DiscoverStreamsResult {
+  cameras: DiscoveredCamera[];
+  subnet?: string | null;
+  scannedHosts?: number | null;
+  message?: string;
+}
+
+/**
+ * Ask an online edge device to scan its local network for RTSP cameras.
+ */
+export async function discoverDeviceStreams(deviceId: string): Promise<DiscoverStreamsResult> {
+  const res = await apiFetch(`/devices/${deviceId}/discover-streams`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to discover streams on device network');
+  }
+  return res.json();
+}
+
 export { API_BASE };

@@ -917,4 +917,33 @@ router.get('/:deviceId/command/get-wifi-status', async (req: Request, res: Respo
   }
 });
 
+/**
+ * POST /api/devices/:deviceId/discover-streams
+ * Ask the online edge device to scan its local LAN for RTSP cameras.
+ */
+router.post('/:deviceId/discover-streams', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  if (!req.auth) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    if (!(await assertDeviceInOrg(deviceId, req.auth.orgId))) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const result = await sendDeviceCommand(deviceId, 'scan_rtsp_cameras', {}, 120000);
+    res.json({
+      cameras: Array.isArray(result.cameras) ? result.cameras : [],
+      subnet: result.subnet ?? null,
+      scannedHosts: result.scannedHosts ?? null,
+      message: result.message,
+    });
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const status = errMsg === 'Device is offline' ? 503 : 500;
+    res.status(status).json({ error: errMsg || 'Failed to discover streams' });
+  }
+});
+
 export default router;
