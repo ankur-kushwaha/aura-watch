@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Server, Cpu, Plus, Trash2, Loader2, Network, X } from 'lucide-react';
+import { Server, Cpu, Plus, Trash2, Loader2, Network, X, Power, Activity, FileText, ScrollText, Terminal } from 'lucide-react';
 import type { EdgeDevice, CameraStream } from '../../types';
+import type { DeviceLogTab } from '../modals';
 import { DeviceInstallTooltip } from '../DeviceInstallTooltip';
 import { AddStreamModal } from '../modals/AddStreamModal';
 import { EditStreamModal } from '../modals/EditStreamModal';
@@ -17,6 +18,9 @@ export interface DevicesStreamsTabProps {
   onDeleteStream: (streamId: string, e: React.MouseEvent) => void;
   fetchDevices: () => Promise<void>;
   onOpenMetrics?: (device: EdgeDevice, e: React.MouseEvent) => void;
+  onDeviceReboot?: (deviceId: string, name: string, e: React.MouseEvent) => void;
+  onOpenDeviceLogs?: (deviceId: string, name: string, e: React.MouseEvent, tab?: DeviceLogTab) => void;
+  deviceCommandPending?: string | null;
 }
 
 export function DevicesStreamsTab({
@@ -28,6 +32,9 @@ export function DevicesStreamsTab({
   onDeleteStream,
   fetchDevices,
   onOpenMetrics,
+  onDeviceReboot,
+  onOpenDeviceLogs,
+  deviceCommandPending,
 }: DevicesStreamsTabProps) {
   // Modal states
   const [addStreamOpen, setAddStreamOpen] = useState(false);
@@ -281,6 +288,51 @@ export function DevicesStreamsTab({
                         className="p-1.5 bg-transparent text-text-muted hover:text-danger hover:bg-danger/10 border border-border-glass hover:border-danger/30 rounded-lg shrink-0 cursor-pointer transition-colors"
                       >
                         <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 w-full">
+                      <button
+                        onClick={(e) => onDeviceReboot?.(dev.deviceId, dev.name, e)}
+                        disabled={!isOnline || deviceCommandPending === `${dev.deviceId}:reboot`}
+                        className="py-1 px-2 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-muted hover:text-white rounded-md text-[0.68rem] font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                      >
+                        <Power size={11} />
+                        {deviceCommandPending === `${dev.deviceId}:reboot` ? 'Rebooting…' : 'Reboot'}
+                      </button>
+                      <button
+                        onClick={(e) => onOpenDeviceLogs?.(dev.deviceId, dev.name, e, 'events')}
+                        className="py-1 px-2 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-muted hover:text-white rounded-md text-[0.68rem] font-bold transition-all cursor-pointer flex items-center gap-1"
+                      >
+                        <Activity size={11} />
+                        Events
+                      </button>
+                      <button
+                        onClick={(e) => onOpenDeviceLogs?.(dev.deviceId, dev.name, e, 'journal')}
+                        className="py-1 px-2 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-muted hover:text-white rounded-md text-[0.68rem] font-bold transition-all cursor-pointer flex items-center gap-1"
+                      >
+                        <FileText size={11} />
+                        Journal
+                      </button>
+                      <button
+                        onClick={(e) => onOpenDeviceLogs?.(dev.deviceId, dev.name, e, 'agent')}
+                        className="py-1 px-2 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-muted hover:text-white rounded-md text-[0.68rem] font-bold transition-all cursor-pointer flex items-center gap-1"
+                      >
+                        <ScrollText size={11} />
+                        Agent
+                      </button>
+                      <button
+                        onClick={(e) => onOpenDeviceLogs?.(dev.deviceId, dev.name, e, 'worker')}
+                        className="py-1 px-2 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-muted hover:text-white rounded-md text-[0.68rem] font-bold transition-all cursor-pointer flex items-center gap-1"
+                      >
+                        <Cpu size={11} />
+                        Worker
+                      </button>
+                      <button
+                        onClick={(e) => onOpenDeviceLogs?.(dev.deviceId, dev.name, e, 'live')}
+                        className="py-1 px-2 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-muted hover:text-white rounded-md text-[0.68rem] font-bold transition-all cursor-pointer flex items-center gap-1"
+                      >
+                        <Terminal size={11} />
+                        Live
                       </button>
                     </div>
                   </div>

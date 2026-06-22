@@ -57,6 +57,7 @@ import { ConfigurationTab } from './components/tabs/ConfigurationTab';
 import {
   DeviceConfigDialog,
   DeviceLogsDialog,
+  type DeviceLogTab,
   DeviceMetricsDialog,
   StreamConfigDialog,
   SystemStatusLogsDialog,
@@ -178,7 +179,7 @@ export default function DashboardApp() {
   const [deviceConfigName, setDeviceConfigName] = useState('');
   // When non-null, the dialog is in "add" mode and this is the target deviceId
   const [addingStreamForDeviceId, setAddingStreamForDeviceId] = useState<string | null>(null);
-  const [deviceLogsDevice, setDeviceLogsDevice] = useState<{ deviceId: string; name: string } | null>(null);
+  const [deviceLogsDevice, setDeviceLogsDevice] = useState<{ deviceId: string; name: string; initialTab: DeviceLogTab } | null>(null);
   const [deviceMetricsDevice, setDeviceMetricsDevice] = useState<{ deviceId: string; name: string } | null>(null);
   const [showSystemLogsDialog, setShowSystemLogsDialog] = useState(false);
   const [deviceCommandPending, setDeviceCommandPending] = useState<string | null>(null);
@@ -852,9 +853,14 @@ export default function DashboardApp() {
 
 
 
-  const openDeviceLogsModal = (deviceId: string, name: string, e: React.MouseEvent) => {
+  const openDeviceLogsModal = (
+    deviceId: string,
+    name: string,
+    e: React.MouseEvent,
+    initialTab: DeviceLogTab = 'events',
+  ) => {
     e.stopPropagation();
-    setDeviceLogsDevice({ deviceId, name });
+    setDeviceLogsDevice({ deviceId, name, initialTab });
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'subscribe_device', deviceId }));
     }
@@ -1357,6 +1363,9 @@ export default function DashboardApp() {
                   onDeleteStream={handleDeleteStream}
                   fetchDevices={fetchDevices}
                   onOpenMetrics={(dev, e) => openDeviceMetricsModal(dev.deviceId, dev.name, e)}
+                  onDeviceReboot={handleDeviceReboot}
+                  onOpenDeviceLogs={openDeviceLogsModal}
+                  deviceCommandPending={deviceCommandPending}
                 />
               )}
 
@@ -1398,6 +1407,7 @@ export default function DashboardApp() {
 
       <DeviceLogsDialog
         device={deviceLogsDevice}
+        initialTab={deviceLogsDevice?.initialTab}
         onClose={closeDeviceLogsModal}
         registerLiveLogSink={registerDeviceLogSink}
         registerLiveEventSink={registerDeviceEventSink}

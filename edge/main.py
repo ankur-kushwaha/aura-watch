@@ -1890,31 +1890,64 @@ class EdgeAgent:
 
         if command == "fetch_logs":
             lines = max(10, min(int(params.get("lines", 200)), 2000))
+            source = str(params.get("source", "all")).lower()
+            allowed_sources = {"all", "agent", "journal", "worker"}
+            if source not in allowed_sources:
+                respond(False, error=f"Invalid log source '{source}'.")
+                return
             try:
-                file_logs = self.agent_logger.tail(lines)
-                result = subprocess.run(
-                    [
-                        "journalctl",
-                        "-u",
-                        "aura-watch-edge.service",
-                        "-n",
-                        str(lines),
-                        "--no-pager",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                journal_logs = result.stdout.strip() or result.stderr.strip()
                 sections: list[str] = []
-                if file_logs:
-                    sections.append(
-                        f"=== Persistent agent log ({AGENT_LOG_FILE}, last {lines} lines) ===\n{file_logs}"
+
+                if source in ("all", "agent"):
+                    file_logs = self.agent_logger.tail(lines)
+                    if file_logs:
+                        if source == "agent":
+                            respond(True, logs=file_logs)
+                            return
+                        sections.append(
+                            f"=== Persistent agent log ({AGENT_LOG_FILE}, last {lines} lines) ===\n{file_logs}"
+                        )
+
+                if source in ("all", "worker"):
+                    worker_logs = AgentLogger(WORKER_LOG_FILE).tail(lines)
+                    if worker_logs:
+                        if source == "worker":
+                            respond(True, logs=worker_logs)
+                            return
+                        sections.append(
+                            f"=== Worker log ({WORKER_LOG_FILE}, last {lines} lines) ===\n{worker_logs}"
+                        )
+
+                if source in ("all", "journal"):
+                    result = subprocess.run(
+                        [
+                            "journalctl",
+                            "-u",
+                            "aura-watch-edge.service",
+                            "-n",
+                            str(lines),
+                            "--no-pager",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
                     )
-                if journal_logs:
-                    sections.append(f"=== systemd journal (aura-watch-edge) ===\n{journal_logs}")
+                    journal_logs = result.stdout.strip() or result.stderr.strip()
+                    if journal_logs:
+                        if source == "journal":
+                            respond(True, logs=journal_logs)
+                            return
+                        sections.append(f"=== systemd journal (aura-watch-edge) ===\n{journal_logs}")
+
                 if not sections:
-                    logs = "No logs available (agent.log missing and journal empty)."
+                    if source == "worker":
+                        logs = "No worker logs available yet."
+                    elif source == "agent":
+                        logs = "No agent logs available yet."
+                    elif source == "journal":
+                        logs = "No journal logs available."
+                    else:
+                        logs = "No logs available (agent.log missing and journal empty)."
                 else:
                     logs = "\n\n".join(sections)
                 respond(True, logs=logs)

@@ -5,7 +5,7 @@ export type { CropPreviewDialogProps } from './CropPreviewDialog';
 export { DeviceConfigDialog } from './DeviceConfigDialog';
 export type { DeviceConfigDialogProps } from './DeviceConfigDialog';
 export { DeviceLogsDialog } from './DeviceLogsDialog';
-export type { DeviceLogsDialogProps } from './DeviceLogsDialog';
+export type { DeviceLogsDialogProps, DeviceLogTab } from './DeviceLogsDialog';
 export { DeviceMetricsDialog } from './DeviceMetricsDialog';
 export type { DeviceMetricsDialogProps } from './DeviceMetricsDialog';
 export { MobileClipPreviewDialog } from './MobileClipPreviewDialog';

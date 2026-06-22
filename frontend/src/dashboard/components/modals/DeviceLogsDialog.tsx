@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, FileText, RefreshCw, ScrollText, Terminal, X } from 'lucide-react';
+import { Activity, Cpu, FileText, RefreshCw, ScrollText, Terminal, X } from 'lucide-react';
 import { apiFetch } from '../../../api';
 import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
 import type { DeviceEvent, LogEntry } from '../../types';
 
+export type DeviceLogTab = 'events' | 'journal' | 'agent' | 'worker' | 'live';
+
 export interface DeviceLogsDialogProps {
   device: { deviceId: string; name: string } | null;
+  initialTab?: DeviceLogTab;
   onClose: () => void;
   registerLiveLogSink?: (sink: ((entry: LogEntry) => void) | null) => void;
   registerLiveEventSink?: (sink: ((event: DeviceEvent) => void) | null) => void;
@@ -19,6 +22,7 @@ function severityClass(severity: string): string {
 
 interface DeviceLogsPanelProps {
   device: { deviceId: string; name: string };
+  initialTab?: DeviceLogTab;
   onClose: () => void;
   registerLiveLogSink?: (sink: ((entry: LogEntry) => void) | null) => void;
   registerLiveEventSink?: (sink: ((event: DeviceEvent) => void) | null) => void;
@@ -26,18 +30,24 @@ interface DeviceLogsPanelProps {
 
 function DeviceLogsPanel({
   device,
+  initialTab = 'events',
   onClose,
   registerLiveLogSink,
   registerLiveEventSink,
 }: DeviceLogsPanelProps) {
   const [journalLogs, setJournalLogs] = useState('');
+  const [agentLogs, setAgentLogs] = useState('');
+  const [workerLogs, setWorkerLogs] = useState('');
   const [loadingJournal, setLoadingJournal] = useState(false);
+  const [loadingAgent, setLoadingAgent] = useState(false);
+  const [loadingWorker, setLoadingWorker] = useState(false);
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
   const [savedEvents, setSavedEvents] = useState<DeviceEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
-  const [activeTab, setActiveTab] = useState<'events' | 'journal' | 'live'>('events');
+  const [activeTab, setActiveTab] = useState<DeviceLogTab>(initialTab);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
   const eventsContainerRef = useRef<HTMLDivElement | null>(null);
+  const fileLogsContainerRef = useRef<HTMLDivElement | null>(null);
 
   const fetchSavedEvents = useCallback(async (deviceId: string) => {
     setLoadingEvents(true);
@@ -57,27 +67,57 @@ function DeviceLogsPanel({
     }
   }, []);
 
-  const fetchJournalLogs = useCallback(async (deviceId: string) => {
-    setLoadingJournal(true);
+  const fetchLogsBySource = useCallback(async (
+    deviceId: string,
+    source: 'journal' | 'agent' | 'worker',
+    setLogs: (value: string) => void,
+    setLoading: (value: boolean) => void,
+    label: string,
+  ) => {
+    setLoading(true);
     try {
-      const res = await apiFetch(`/devices/${deviceId}/logs?lines=200`);
+      const res = await apiFetch(`/devices/${deviceId}/logs?lines=200&source=${source}`);
       const data = await res.json();
       if (res.ok) {
-        setJournalLogs(data.logs || '');
+        setLogs(data.logs || '');
       } else {
-        setJournalLogs(data.error || 'Failed to fetch journal logs');
+        setLogs(data.error || `Failed to fetch ${label}`);
       }
     } catch (err) {
-      console.error('Failed to fetch journal logs', err);
-      setJournalLogs('Failed to fetch journal logs');
+      console.error(`Failed to fetch ${label}`, err);
+      setLogs(`Failed to fetch ${label}`);
     } finally {
-      setLoadingJournal(false);
+      setLoading(false);
     }
   }, []);
 
+  const fetchJournalLogs = useCallback(
+    (deviceId: string) => fetchLogsBySource(deviceId, 'journal', setJournalLogs, setLoadingJournal, 'journal logs'),
+    [fetchLogsBySource],
+  );
+
+  const fetchAgentLogs = useCallback(
+    (deviceId: string) => fetchLogsBySource(deviceId, 'agent', setAgentLogs, setLoadingAgent, 'agent logs'),
+    [fetchLogsBySource],
+  );
+
+  const fetchWorkerLogs = useCallback(
+    (deviceId: string) => fetchLogsBySource(deviceId, 'worker', setWorkerLogs, setLoadingWorker, 'worker logs'),
+    [fetchLogsBySource],
+  );
+
   const refreshAll = useCallback(async (deviceId: string) => {
-    await Promise.all([fetchJournalLogs(deviceId), fetchSavedEvents(deviceId)]);
-  }, [fetchJournalLogs, fetchSavedEvents]);
+    await Promise.all([
+      fetchJournalLogs(deviceId),
+      fetchAgentLogs(deviceId),
+      fetchWorkerLogs(deviceId),
+      fetchSavedEvents(deviceId),
+    ]);
+  }, [fetchJournalLogs, fetchAgentLogs, fetchWorkerLogs, fetchSavedEvents]);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [device.deviceId, initialTab]);
 
   useEffect(() => {
     const deviceId = device.deviceId;
@@ -114,10 +154,12 @@ function DeviceLogsPanel({
   }, [device.deviceId, registerLiveLogSink, registerLiveEventSink]);
 
   useEffect(() => {
-    if (logsContainerRef.current) {
-      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+    if (fileLogsContainerRef.current) {
+      fileLogsContainerRef.current.scrollTop = fileLogsContainerRef.current.scrollHeight;
     }
-  }, [liveLogs, activeTab]);
+  }, [journalLogs, agentLogs, workerLogs, activeTab]);
+
+  const isRefreshing = loadingJournal || loadingAgent || loadingWorker || loadingEvents;
 
   useEffect(() => {
     if (eventsContainerRef.current) {
@@ -141,10 +183,10 @@ function DeviceLogsPanel({
           <button
             type="button"
             onClick={() => void refreshAll(device.deviceId)}
-            disabled={loadingJournal || loadingEvents}
+            disabled={isRefreshing}
             className="btn btn-secondary py-1 px-2 text-[0.75rem] rounded-md flex items-center gap-1"
           >
-            <RefreshCw size={12} className={loadingJournal || loadingEvents ? 'animate-spin' : ''} />
+            <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
             Refresh
           </button>
           <button
@@ -182,7 +224,29 @@ function DeviceLogsPanel({
             }`}
           >
             <FileText size={14} />
-            Service Journal
+            Journal
+          </button>
+          <button
+            onClick={() => setActiveTab('agent')}
+            className={`py-1.5 px-3 rounded-md text-[0.8rem] font-semibold flex items-center gap-1.5 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${
+              activeTab === 'agent'
+                ? 'bg-primary text-white shadow-[0_2px_8px_var(--color-primary-glow)]'
+                : 'text-text-secondary hover:text-text-primary bg-transparent cursor-pointer'
+            }`}
+          >
+            <ScrollText size={14} />
+            Agent
+          </button>
+          <button
+            onClick={() => setActiveTab('worker')}
+            className={`py-1.5 px-3 rounded-md text-[0.8rem] font-semibold flex items-center gap-1.5 transition-all duration-200 border-none outline-none whitespace-nowrap shrink-0 ${
+              activeTab === 'worker'
+                ? 'bg-primary text-white shadow-[0_2px_8px_var(--color-primary-glow)]'
+                : 'text-text-secondary hover:text-text-primary bg-transparent cursor-pointer'
+            }`}
+          >
+            <Cpu size={14} />
+            Worker
           </button>
           <button
             onClick={() => setActiveTab('live')}
@@ -231,13 +295,46 @@ function DeviceLogsPanel({
           )}
 
           {activeTab === 'journal' && (
-            <div className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] flex-1 overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap">
+            <div
+              ref={fileLogsContainerRef}
+              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#a5b4fc] flex-1 overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap"
+            >
               {loadingJournal ? (
-                <span className="text-text-muted">Loading journal logs...</span>
+                <span className="text-text-muted">Loading journalctl logs...</span>
               ) : journalLogs ? (
                 journalLogs
               ) : (
                 <span className="text-text-muted">No journal logs available.</span>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'agent' && (
+            <div
+              ref={fileLogsContainerRef}
+              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#86efac] flex-1 overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap"
+            >
+              {loadingAgent ? (
+                <span className="text-text-muted">Loading agent logs...</span>
+              ) : agentLogs ? (
+                agentLogs
+              ) : (
+                <span className="text-text-muted">No agent logs available.</span>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'worker' && (
+            <div
+              ref={fileLogsContainerRef}
+              className="font-mono bg-[rgba(0,0,0,0.5)] rounded-lg p-3 text-[0.75rem] leading-[1.4] text-[#fbbf24] flex-1 overflow-y-auto border border-[rgba(255,255,255,0.05)] whitespace-pre-wrap"
+            >
+              {loadingWorker ? (
+                <span className="text-text-muted">Loading worker logs...</span>
+              ) : workerLogs ? (
+                workerLogs
+              ) : (
+                <span className="text-text-muted">No worker logs available.</span>
               )}
             </div>
           )}
@@ -265,14 +362,21 @@ function DeviceLogsPanel({
   );
 }
 
-export function DeviceLogsDialog({ device, onClose, registerLiveLogSink, registerLiveEventSink }: DeviceLogsDialogProps) {
+export function DeviceLogsDialog({
+  device,
+  initialTab = 'events',
+  onClose,
+  registerLiveLogSink,
+  registerLiveEventSink,
+}: DeviceLogsDialogProps) {
   return (
     <Dialog open={!!device} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-[720px] p-6 flex flex-col gap-4 max-h-[85vh]">
         {device ? (
           <DeviceLogsPanel
-            key={device.deviceId}
+            key={`${device.deviceId}:${initialTab}`}
             device={device}
+            initialTab={initialTab}
             onClose={onClose}
             registerLiveLogSink={registerLiveLogSink}
             registerLiveEventSink={registerLiveEventSink}

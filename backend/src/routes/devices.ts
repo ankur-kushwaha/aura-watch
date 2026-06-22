@@ -784,11 +784,14 @@ router.get('/:deviceId/events', async (req: Request, res: Response) => {
 
 /**
  * GET /api/devices/:deviceId/logs
- * Fetch recent journalctl logs from the edge device's aura-watch-edge service
+ * Fetch logs from the edge device (agent file, worker file, journalctl, or all combined)
  */
 router.get('/:deviceId/logs', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
   const lines = Math.min(Math.max(parseInt(String(req.query.lines || '200'), 10) || 200, 10), 2000);
+  const sourceRaw = typeof req.query.source === 'string' ? req.query.source.toLowerCase() : 'all';
+  const allowedSources = new Set(['all', 'agent', 'journal', 'worker']);
+  const source = allowedSources.has(sourceRaw) ? sourceRaw : 'all';
 
   if (!req.auth) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -799,8 +802,8 @@ router.get('/:deviceId/logs', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Device not found' });
     }
 
-    const result = await sendDeviceCommand(deviceId, 'fetch_logs', { lines }, 45000);
-    res.json({ logs: result.logs || '', message: result.message });
+    const result = await sendDeviceCommand(deviceId, 'fetch_logs', { lines, source }, 45000);
+    res.json({ logs: result.logs || '', message: result.message, source });
   } catch (error: any) {
     const status = error.message === 'Device is offline' ? 503 : 500;
     res.status(status).json({ error: error.message || 'Failed to fetch device logs' });
