@@ -297,13 +297,12 @@ export function ManageNotificationsTab({
                 key={tab}
                 type="button"
                 onClick={() => setActiveSubTab(tab)}
-                className={`w-full text-left py-2.5 px-4 rounded-xl text-[0.88rem] font-semibold transition-all duration-200 cursor-pointer border-none outline-none ${
-                  isSelected
+                className={`w-full text-left py-2.5 px-4 rounded-xl text-[0.88rem] font-semibold transition-all duration-200 cursor-pointer border-none outline-none ${isSelected
                     ? 'bg-[rgba(255,255,255,0.06)] text-white shadow-sm border border-border-glass'
                     : 'text-text-muted hover:text-text-secondary bg-transparent hover:bg-[rgba(255,255,255,0.015)]'
-                }`}
+                  }`}
               >
-                {tab === 'Rules' ? 'Alert Rules' : 'Alert History'}
+                {tab === 'Rules' ? 'Alert Rules' : 'Triggered Alerts'}
               </button>
             );
           })}
@@ -538,9 +537,8 @@ export function ManageNotificationsTab({
                     return (
                       <div
                         key={rule.id}
-                        className={`glass-panel border overflow-hidden transition-all duration-300 ${
-                          isExpanded ? 'border-primary/30 ring-1 ring-primary/10 shadow-lg' : 'border-border-glass hover:border-white/10'
-                        }`}
+                        className={`glass-panel border overflow-hidden transition-all duration-300 ${isExpanded ? 'border-primary/30 ring-1 ring-primary/10 shadow-lg' : 'border-border-glass hover:border-white/10'
+                          }`}
                       >
                         {/* Accordion Header */}
                         <div
@@ -549,11 +547,10 @@ export function ManageNotificationsTab({
                         >
                           <div className="flex items-center gap-3 min-w-0 flex-1">
                             <div
-                              className={`p-2 rounded-lg shrink-0 ${
-                                rule.isActive
+                              className={`p-2 rounded-lg shrink-0 ${rule.isActive
                                   ? 'bg-purple-500/10 text-purple-400 border border-purple-500/15'
                                   : 'bg-white/5 text-text-muted border border-white/5'
-                              }`}
+                                }`}
                             >
                               <Bell size={16} />
                             </div>
@@ -562,9 +559,8 @@ export function ManageNotificationsTab({
                                 <h3 className="text-[0.88rem] font-bold text-text-primary truncate">
                                   {rule.name}
                                 </h3>
-                                <span className={`text-[0.65rem] px-2 py-0.5 rounded border capitalize ${
-                                  rule.isActive ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-white/5 text-text-muted border-white/5'
-                                }`}>
+                                <span className={`text-[0.65rem] px-2 py-0.5 rounded border capitalize ${rule.isActive ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-white/5 text-text-muted border-white/5'
+                                  }`}>
                                   {rule.isActive ? 'Active' : 'Disabled'}
                                 </span>
                                 {rule.allStreams ? (
@@ -597,14 +593,12 @@ export function ManageNotificationsTab({
                               role="switch"
                               aria-checked={rule.isActive}
                               onClick={() => handleToggleActive(rule.id, rule.isActive)}
-                              className={`relative w-9 h-5 rounded-full transition-colors duration-200 border-none cursor-pointer ${
-                                rule.isActive ? 'bg-primary' : 'bg-[rgba(255,255,255,0.12)]'
-                              }`}
+                              className={`relative w-9 h-5 rounded-full transition-colors duration-200 border-none cursor-pointer ${rule.isActive ? 'bg-primary' : 'bg-[rgba(255,255,255,0.12)]'
+                                }`}
                             >
                               <span
-                                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${
-                                  rule.isActive ? 'translate-x-4' : 'translate-x-0'
-                                }`}
+                                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${rule.isActive ? 'translate-x-4' : 'translate-x-0'
+                                  }`}
                               />
                             </button>
                             {/* Expand icon */}
@@ -622,22 +616,20 @@ export function ManageNotificationsTab({
                               <button
                                 type="button"
                                 onClick={() => setRuleSubTabs((prev) => ({ ...prev, [rule.id]: 'configure' }))}
-                                className={`px-3 py-2 text-[0.78rem] font-semibold border-b-2 border-transparent transition-all outline-none ${
-                                  subTab === 'configure'
+                                className={`px-3 py-2 text-[0.78rem] font-semibold border-b-2 border-transparent transition-all outline-none ${subTab === 'configure'
                                     ? 'border-primary text-primary'
                                     : 'text-text-secondary hover:text-text-primary'
-                                }`}
+                                  }`}
                               >
                                 Configure Rule
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setRuleSubTabs((prev) => ({ ...prev, [rule.id]: 'alerts' }))}
-                                className={`px-3 py-2 text-[0.78rem] font-semibold border-b-2 border-transparent transition-all outline-none flex items-center gap-1.5 ${
-                                  subTab === 'alerts'
+                                className={`px-3 py-2 text-[0.78rem] font-semibold border-b-2 border-transparent transition-all outline-none flex items-center gap-1.5 ${subTab === 'alerts'
                                     ? 'border-primary text-primary'
                                     : 'text-text-secondary hover:text-text-primary'
-                                }`}
+                                  }`}
                               >
                                 Triggered Alerts
                                 {unreadCount > 0 && (
@@ -836,11 +828,10 @@ export function ManageNotificationsTab({
                                             if (isUnread) onMarkRead(n.id);
                                             onNotificationClick(n);
                                           }}
-                                          className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${
-                                            isUnread
+                                          className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${isUnread
                                               ? 'bg-white/[0.04] border-white/10 hover:bg-white/[0.06]'
                                               : 'bg-transparent border-transparent hover:bg-white/[0.015]'
-                                          }`}
+                                            }`}
                                         >
                                           <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 mt-0.5">
                                             {getCategoryIcon(n.category, n.severity)}
@@ -932,11 +923,10 @@ export function ManageNotificationsTab({
                             if (isUnread) onMarkRead(n.id);
                             onNotificationClick(n);
                           }}
-                          className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${
-                            isUnread
+                          className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${isUnread
                               ? 'bg-white/[0.04] border-white/10 hover:bg-white/[0.06]'
                               : 'bg-transparent border-transparent hover:bg-white/[0.015]'
-                          }`}
+                            }`}
                         >
                           <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 mt-0.5">
                             {getCategoryIcon(n.category, n.severity)}
@@ -1039,11 +1029,10 @@ export function ManageNotificationsTab({
                                 if (isUnread) onMarkRead(n.id);
                                 onNotificationClick(n);
                               }}
-                              className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${
-                                isUnread
+                              className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${isUnread
                                   ? 'bg-white/[0.04] border-white/10 hover:bg-white/[0.06]'
                                   : 'bg-transparent border-transparent hover:bg-white/[0.015]'
-                              }`}
+                                }`}
                             >
                               <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 mt-0.5">
                                 {getCategoryIcon(n.category, n.severity)}

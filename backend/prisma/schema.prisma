@@ -149,6 +149,9 @@ model CameraStream {
   aiSummaryEnabled     Boolean         @default(true)
   plateRecognition     Boolean         @default(true)
   streamHost           String          @default("")
+  locationName         String?
+  latitude             Float?
+  longitude            Float?
   lastHeartbeat        DateTime        @default(now())
   clips                VideoClip[]
   detections           ReidDetection[]

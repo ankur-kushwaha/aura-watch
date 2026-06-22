@@ -16,6 +16,7 @@ export interface DevicesStreamsTabProps {
   onDeleteDevice: (deviceId: string, e: React.MouseEvent) => void;
   onDeleteStream: (streamId: string, e: React.MouseEvent) => void;
   fetchDevices: () => Promise<void>;
+  onOpenMetrics?: (device: EdgeDevice, e: React.MouseEvent) => void;
 }
 
 export function DevicesStreamsTab({
@@ -26,6 +27,7 @@ export function DevicesStreamsTab({
   onDeleteDevice,
   onDeleteStream,
   fetchDevices,
+  onOpenMetrics,
 }: DevicesStreamsTabProps) {
   // Modal states
   const [addStreamOpen, setAddStreamOpen] = useState(false);
@@ -242,26 +244,37 @@ export function DevicesStreamsTab({
                   </div>
 
                   {/* Actions buttons */}
-                  <div className="flex items-center gap-2 mt-2 w-full">
-                    <button
-                      onClick={(e) => onOpenSettings(dev, e)}
-                      className="flex-1 py-1.5 px-3 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-secondary hover:text-white rounded-lg text-[0.75rem] font-bold transition-all cursor-pointer flex items-center justify-center"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleOpenDiscovery(dev)}
-                      disabled={!isOnline}
-                      className="flex-1.5 py-1.5 px-3 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-secondary hover:text-white rounded-lg text-[0.75rem] font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1"
-                    >
-                      Discover streams
-                    </button>
-                    <button
-                      onClick={(e) => onDeleteDevice(dev.deviceId, e)}
-                      className="p-1.5 bg-transparent text-text-muted hover:text-danger hover:bg-danger/10 border border-border-glass hover:border-danger/30 rounded-lg shrink-0 cursor-pointer transition-colors"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                  <div className="flex flex-col gap-2 mt-2 w-full">
+                    <div className="flex items-center gap-2 w-full">
+                      <button
+                        onClick={(e) => onOpenSettings(dev, e)}
+                        className="flex-1 py-1.5 px-3 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-secondary hover:text-white rounded-lg text-[0.75rem] font-bold transition-all cursor-pointer flex items-center justify-center"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleOpenDiscovery(dev)}
+                        disabled={!isOnline}
+                        className="flex-1 py-1.5 px-3 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-secondary hover:text-white rounded-lg text-[0.75rem] font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1 truncate"
+                      >
+                        Discover streams
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2 w-full">
+                      <button
+                        onClick={(e) => onOpenMetrics?.(dev, e)}
+                        disabled={!isOnline}
+                        className="flex-1 py-1.5 px-3 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border border-border-glass text-text-secondary hover:text-white rounded-lg text-[0.75rem] font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        Metrics
+                      </button>
+                      <button
+                        onClick={(e) => onDeleteDevice(dev.deviceId, e)}
+                        className="p-1.5 bg-transparent text-text-muted hover:text-danger hover:bg-danger/10 border border-border-glass hover:border-danger/30 rounded-lg shrink-0 cursor-pointer transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

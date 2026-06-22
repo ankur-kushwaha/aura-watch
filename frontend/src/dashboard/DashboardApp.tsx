@@ -1350,6 +1350,7 @@ export default function DashboardApp() {
                   onDeleteDevice={handleDeleteDevice}
                   onDeleteStream={handleDeleteStream}
                   fetchDevices={fetchDevices}
+                  onOpenMetrics={(dev, e) => openDeviceMetricsModal(dev.deviceId, dev.name, e)}
                 />
               )}
 

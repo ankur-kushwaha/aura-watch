@@ -146,6 +146,9 @@ export interface CameraStream {
   crossCameraReid?: boolean | null;
   aiSummaryEnabled?: boolean | null;
   plateRecognition?: boolean | null;
+  locationName?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface CameraConfig {

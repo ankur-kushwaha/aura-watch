@@ -127,6 +127,9 @@ router.post('/', async (req: Request, res: Response) => {
     crossCameraReid,
     aiSummaryEnabled,
     plateRecognition,
+    locationName,
+    latitude,
+    longitude,
   } = req.body;
 
   if (!deviceId || !name) {
@@ -165,6 +168,9 @@ router.post('/', async (req: Request, res: Response) => {
         crossCameraReid: crossCameraReid !== undefined ? Boolean(crossCameraReid) : true,
         aiSummaryEnabled: aiSummaryEnabled !== undefined ? Boolean(aiSummaryEnabled) : true,
         plateRecognition: plateRecognition !== undefined ? Boolean(plateRecognition) : true,
+        locationName: locationName ? String(locationName).trim() : null,
+        latitude: latitude !== undefined && latitude !== null ? Number(latitude) : null,
+        longitude: longitude !== undefined && longitude !== null ? Number(longitude) : null,
         streamHost: '',
       },
     });
@@ -206,6 +212,9 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
     crossCameraReid,
     aiSummaryEnabled,
     plateRecognition,
+    locationName,
+    latitude,
+    longitude,
   } = req.body;
 
   if (!req.auth) {
@@ -242,6 +251,9 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
         crossCameraReid: crossCameraReid !== undefined ? Boolean(crossCameraReid) : existing.crossCameraReid,
         aiSummaryEnabled: aiSummaryEnabled !== undefined ? Boolean(aiSummaryEnabled) : existing.aiSummaryEnabled,
         plateRecognition: plateRecognition !== undefined ? Boolean(plateRecognition) : existing.plateRecognition,
+        locationName: locationName !== undefined ? (locationName ? String(locationName).trim() : null) : existing.locationName,
+        latitude: latitude !== undefined ? (latitude !== null ? Number(latitude) : null) : existing.latitude,
+        longitude: longitude !== undefined ? (longitude !== null ? Number(longitude) : null) : existing.longitude,
       },
     });
 
