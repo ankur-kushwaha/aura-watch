@@ -218,7 +218,7 @@ const getStatusLabelAndColor = (status: string | undefined, isOnline: boolean) =
                     {/* Camera stream body */}
                     <div className="flex-1 relative bg-gradient-to-br from-[#0c121e] to-[#060a12] w-full overflow-hidden select-none">
                       {/* Transparent overlay to capture clicks instead of letting the iframe intercept them */}
-                      <div className="absolute inset-0 z-10 cursor-pointer" />
+                      <div className="absolute inset-0 z-10 cursor-pointer mb-12" />
                       {feed.streamId && feed.isOnline && feed.streamUrl ? (
                         <iframe
                           key={`${feed.streamId}-${refreshKeys[feed.streamId] || 0}`}
