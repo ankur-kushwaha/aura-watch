@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Play, Pause, Download, Share2, Search } from 'lucide-react';
 
 interface Clip {
@@ -154,11 +155,20 @@ const mockClips: Clip[] = [
 ];
 
 export function ClipLibraryTab() {
+  const [searchParams] = useSearchParams();
+  const initialSearch = searchParams.get('search') || '';
   const [selectedClip, setSelectedClip] = useState<Clip>(mockClips[0]);
   const [filterPriority, setFilterPriority] = useState<'All' | 'High' | 'Medium' | 'Low'>('All');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playProgress, setPlayProgress] = useState(9); // Default start time
+
+  useEffect(() => {
+    const q = searchParams.get('search');
+    if (q !== null) {
+      setSearchQuery(q);
+    }
+  }, [searchParams]);
 
   // Video scrubber timeline update simulation
   useEffect(() => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2, Film, Server } from 'lucide-react';
 import { apiFetch } from '../../api';
 import { fetchAlertRules, updateAlertRule, type AlertRule } from '../../alertRulesApi';
 import { ToggleSwitch } from './ToggleSwitch';
@@ -182,6 +182,36 @@ export function EditStreamForm({ stream, allStreamIds = [], onClose, onSaved }: 
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 flex-1 overflow-y-auto max-h-[calc(100vh-200px)] pr-1 animate-[fadeIn_0.2s_ease-out] text-left">
+      {/* Quick Actions */}
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2.5">
+          <button
+            type="button"
+            onClick={() => navigate(`/app/events?streamId=${encodeURIComponent(stream?.streamId || '')}`)}
+            className="flex-1 py-2 px-3 text-[0.78rem] font-bold rounded-lg bg-[rgba(6,182,212,0.08)] border border-[rgba(6,182,212,0.2)] text-[var(--color-secondary)] hover:text-white hover:bg-[rgba(6,182,212,0.15)] transition-all duration-200 text-center flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <Film size={14} />
+            View Clips
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(`/app/notifications?streamId=${encodeURIComponent(stream?.streamId || '')}`)}
+            className="flex-1 py-2 px-3 text-[0.78rem] font-bold rounded-lg bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.2)] text-[#EF4444] hover:text-white hover:bg-[rgba(239,68,68,0.15)] transition-all duration-200 text-center flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <AlertTriangle size={14} />
+            View Alerts
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate('/app/devices')}
+          className="w-full py-2 px-3 text-[0.78rem] font-bold rounded-lg bg-[rgba(255,255,255,0.04)] border border-border-glass text-text-secondary hover:text-white hover:bg-[rgba(255,255,255,0.08)] transition-all duration-200 text-center flex items-center justify-center gap-1.5 cursor-pointer"
+        >
+          <Server size={14} />
+          Manage Device
+        </button>
+      </div>
+
       {/* Camera Name */}
       <div className="flex flex-col gap-1.5">
         <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Camera Name</label>

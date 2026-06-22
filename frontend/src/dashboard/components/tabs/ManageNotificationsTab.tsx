@@ -1,13 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Bell,
-  CheckCheck,
-  Trash2,
-  Video,
-  AlertTriangle,
-  Info,
-  ShieldAlert,
-  Cpu,
   ChevronDown,
   ChevronUp,
   SlidersHorizontal,
@@ -29,41 +22,23 @@ import type { Notification, CameraStream } from '../../types';
 
 export interface ManageNotificationsTabProps {
   notifications: Notification[];
-  onMarkRead: (id: string) => Promise<void>;
-  onNotificationClick: (n: Notification) => void;
-  onDeleteNotification: (id: string) => Promise<void>;
-  onClearAllNotifications: () => Promise<void>;
   streams: CameraStream[];
   currentOrg: AuthOrg | null;
-}
-
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const diffMs = Date.now() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
+  onMarkRead?: (id: string) => Promise<void>;
+  onNotificationClick?: (n: Notification) => void;
+  onDeleteNotification?: (id: string) => Promise<unknown>;
+  onClearAllNotifications?: () => Promise<unknown>;
 }
 
 export function ManageNotificationsTab({
   notifications,
-  onMarkRead,
-  onNotificationClick,
-  onDeleteNotification,
-  onClearAllNotifications,
   streams,
   currentOrg
 }: ManageNotificationsTabProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'Rules' | 'History'>('Rules');
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [loadingRules, setLoadingRules] = useState<boolean>(true);
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
-  const [ruleSubTabs, setRuleSubTabs] = useState<Record<string, 'configure' | 'alerts'>>({});
 
   // New Rule Form State
   const [showAddForm, setShowAddForm] = useState(false);
@@ -80,8 +55,7 @@ export function ManageNotificationsTab({
   const [editDrafts, setEditDrafts] = useState<Record<string, Partial<AlertRule>>>({});
   const [savingRuleId, setSavingRuleId] = useState<string | null>(null);
 
-  // General Notification accordion state
-  const [generalAccordionExpanded, setGeneralAccordionExpanded] = useState(false);
+
 
   const loadRules = useCallback(async () => {
     if (!currentOrg) return;
@@ -214,40 +188,6 @@ export function ManageNotificationsTab({
     }));
   };
 
-  const getCategoryIcon = (category: string, severity: string) => {
-    const baseClass = "w-4 h-4 shrink-0";
-    if (severity === 'critical') {
-      return <ShieldAlert className={`${baseClass} text-red-500`} />;
-    }
-    switch (category) {
-      case 'surveillance':
-        return <Video className={`${baseClass} text-purple-400`} />;
-      case 'camera':
-        return <AlertTriangle className={`${baseClass} text-amber-500`} />;
-      case 'device':
-        return <Cpu className={`${baseClass} text-blue-400`} />;
-      case 'websocket':
-      default:
-        return <Info className={`${baseClass} text-cyan-400`} />;
-    }
-  };
-
-  const getSeverityBadgeClass = (severity: string) => {
-    switch (severity) {
-      case 'critical':
-        return 'bg-red-500/20 text-red-300 border-red-500/30';
-      case 'error':
-        return 'bg-orange-500/20 text-orange-300 border-orange-500/30';
-      case 'warn':
-        return 'bg-amber-500/20 text-amber-300 border-amber-500/30';
-      case 'info':
-      default:
-        return 'bg-blue-500/20 text-blue-300 border-blue-500/30';
-    }
-  };
-
-  // Group notifications by rule ID
-  const generalNotifications = notifications.filter((n) => !n.alertRuleId);
 
   return (
     <div className="flex flex-col gap-6 w-full">
@@ -262,57 +202,21 @@ export function ManageNotificationsTab({
             </p>
           </div>
           <div className="flex gap-2">
-            {activeSubTab === 'Rules' && (
-              <button
-                type="button"
-                onClick={() => setShowAddForm((prev) => !prev)}
-                className="btn btn-primary py-2 px-3.5 text-[0.8rem] font-semibold flex items-center gap-1.5 shrink-0"
-              >
-                <Plus size={15} /> Add Alert Rule
-              </button>
-            )}
-            {activeSubTab === 'History' && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm('Clear all triggered alerts?')) onClearAllNotifications();
-                }}
-                className="btn btn-secondary py-2 px-3 text-[0.8rem] font-semibold flex items-center gap-1.5 shrink-0 hover:text-danger hover:border-danger/30"
-                title="Clear all alerts across the organization"
-              >
-                <Trash2 size={14} /> Clear All Alerts
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowAddForm((prev) => !prev)}
+              className="btn btn-primary py-2 px-3.5 text-[0.8rem] font-semibold flex items-center gap-1.5 shrink-0"
+            >
+              <Plus size={15} /> Add Alert Rule
+            </button>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch flex-1">
-        {/* LEFT COLUMN: Categories Submenu */}
-        <div className="lg:col-span-2 flex flex-col gap-2">
-          {(['Rules', 'History'] as const).map((tab) => {
-            const isSelected = activeSubTab === tab;
-            return (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveSubTab(tab)}
-                className={`w-full text-left py-2.5 px-4 rounded-xl text-[0.88rem] font-semibold transition-all duration-200 cursor-pointer border-none outline-none ${isSelected
-                    ? 'bg-[rgba(255,255,255,0.06)] text-white shadow-sm border border-border-glass'
-                    : 'text-text-muted hover:text-text-secondary bg-transparent hover:bg-[rgba(255,255,255,0.015)]'
-                  }`}
-              >
-                {tab === 'Rules' ? 'Alert Rules' : 'Triggered Alerts'}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* RIGHT COLUMN: Content Area */}
-        <div className="lg:col-span-10 flex flex-col gap-6">
-          {activeSubTab === 'Rules' ? (
-            <>
-              {/* Add New Rule Form Card */}
+      <div className="flex flex-col gap-6 flex-1 w-full">
+        {/* Content Area */}
+        <div className="flex flex-col gap-6">
+          {/* Add New Rule Form Card */}
               {showAddForm && (
                 <form onSubmit={handleCreateRule} className="glass-panel p-6 border border-primary/20 bg-primary/2 flex flex-col gap-4 animate-fadeIn">
                   <div className="flex justify-between items-center pb-2.5 border-b border-white/5">
@@ -526,7 +430,6 @@ export function ManageNotificationsTab({
                 ) : (
                   rules.map((rule) => {
                     const isExpanded = expandedRuleId === rule.id;
-                    const subTab = ruleSubTabs[rule.id] || 'configure';
                     const ruleNotifications = notifications.filter((n) => n.alertRuleId === rule.id);
                     const unreadCount = ruleNotifications.filter((n) => !n.readAt).length;
 
@@ -610,38 +513,8 @@ export function ManageNotificationsTab({
 
                         {/* Accordion Body */}
                         {isExpanded && (
-                          <div className="border-t border-border-glass bg-[rgba(0,0,0,0.15)] animate-slideDown">
-                            {/* Nested Tabs Bar */}
-                            <div className="flex border-b border-border-glass px-4 pt-2 gap-2 bg-white/[0.01]">
-                              <button
-                                type="button"
-                                onClick={() => setRuleSubTabs((prev) => ({ ...prev, [rule.id]: 'configure' }))}
-                                className={`px-3 py-2 text-[0.78rem] font-semibold border-b-2 border-transparent transition-all outline-none ${subTab === 'configure'
-                                    ? 'border-primary text-primary'
-                                    : 'text-text-secondary hover:text-text-primary'
-                                  }`}
-                              >
-                                Configure Rule
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setRuleSubTabs((prev) => ({ ...prev, [rule.id]: 'alerts' }))}
-                                className={`px-3 py-2 text-[0.78rem] font-semibold border-b-2 border-transparent transition-all outline-none flex items-center gap-1.5 ${subTab === 'alerts'
-                                    ? 'border-primary text-primary'
-                                    : 'text-text-secondary hover:text-text-primary'
-                                  }`}
-                              >
-                                Triggered Alerts
-                                {unreadCount > 0 && (
-                                  <span className="w-1.5 h-1.5 bg-primary rounded-full" />
-                                )}
-                              </button>
-                            </div>
-
-                            {/* Tab Panels */}
-                            <div className="p-4 sm:p-5">
-                              {subTab === 'configure' ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4.5">
+                          <div className="border-t border-border-glass bg-[rgba(0,0,0,0.15)] p-4 sm:p-5 animate-slideDown">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4.5">
                                   {/* Configure Col Left */}
                                   <div className="flex flex-col gap-3.5">
                                     <div className="flex flex-col gap-1">
@@ -811,88 +684,6 @@ export function ManageNotificationsTab({
                                     )}
                                   </div>
                                 </div>
-                              ) : (
-                                /* Triggered Alerts sub-tab */
-                                <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
-                                  {ruleNotifications.length === 0 ? (
-                                    <p className="text-[0.78rem] text-text-muted italic py-4 text-center">
-                                      No triggered notifications generated for this rule.
-                                    </p>
-                                  ) : (
-                                    ruleNotifications.map((n) => {
-                                      const isUnread = !n.readAt;
-                                      return (
-                                        <div
-                                          key={n.id}
-                                          onClick={() => {
-                                            if (isUnread) onMarkRead(n.id);
-                                            onNotificationClick(n);
-                                          }}
-                                          className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${isUnread
-                                              ? 'bg-white/[0.04] border-white/10 hover:bg-white/[0.06]'
-                                              : 'bg-transparent border-transparent hover:bg-white/[0.015]'
-                                            }`}
-                                        >
-                                          <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 mt-0.5">
-                                            {getCategoryIcon(n.category, n.severity)}
-                                          </div>
-
-                                          <div className="flex-1 min-w-0">
-                                            <div className="flex justify-between items-start gap-2">
-                                              <p className={`text-[0.8rem] font-bold truncate leading-snug ${isUnread ? 'text-text-primary' : 'text-text-secondary'}`}>
-                                                {n.title}
-                                              </p>
-                                              <span className="text-[0.68rem] text-text-muted shrink-0">
-                                                {formatRelativeTime(n.createdAt)}
-                                              </span>
-                                            </div>
-                                            <p className="text-[0.74rem] text-text-muted line-clamp-1 mt-0.5 leading-relaxed">
-                                              {n.body}
-                                            </p>
-                                            <div className="flex items-center gap-1.5 mt-1">
-                                              <span className={`text-[0.6rem] px-1.5 py-0.5 rounded border capitalize ${getSeverityBadgeClass(n.severity)}`}>
-                                                {n.severity}
-                                              </span>
-                                              {n.riskLevel && (
-                                                <span className="text-[0.6rem] px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10 uppercase font-semibold">
-                                                  {n.riskLevel} risk
-                                                </span>
-                                              )}
-                                              {n.clipId && (
-                                                <span className="text-[0.6rem] px-1.5 py-0.5 rounded border border-cyan-500/30 text-cyan-300 bg-cyan-500/5 font-medium inline-flex items-center gap-0.5">
-                                                  <Video size={9} /> View Footage
-                                                </span>
-                                              )}
-                                            </div>
-                                          </div>
-
-                                          <div className="shrink-0 self-center flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                                            {isUnread && (
-                                              <button
-                                                type="button"
-                                                onClick={() => onMarkRead(n.id)}
-                                                className="btn btn-secondary p-1 rounded-md text-text-muted hover:text-text-primary"
-                                                title="Mark read"
-                                              >
-                                                <CheckCheck size={13} />
-                                              </button>
-                                            )}
-                                            <button
-                                              type="button"
-                                              onClick={() => onDeleteNotification(n.id)}
-                                              className="btn btn-secondary p-1 rounded-md text-text-muted hover:text-danger hover:border-danger/30"
-                                              title="Delete notification"
-                                            >
-                                              <Trash2 size={13} />
-                                            </button>
-                                          </div>
-                                        </div>
-                                      );
-                                    })
-                                  )}
-                                </div>
-                              )}
-                            </div>
                           </div>
                         )}
                       </div>
@@ -900,195 +691,8 @@ export function ManageNotificationsTab({
                   })
                 )}
               </div>
-            </>
-          ) : (
-            <>
-              {/* Triggered Alerts list */}
-              <div className="flex flex-col gap-3">
-                <h2 className="text-[0.98rem] font-bold text-text-primary flex items-center gap-2 mb-1 px-1">
-                  <Bell size={17} className="text-primary" /> Triggered AI Alerts ({notifications.filter(n => n.alertRuleId).length})
-                </h2>
-                <div className="glass-panel p-4 flex flex-col gap-2 max-h-[400px] overflow-y-auto pr-1">
-                  {notifications.filter(n => n.alertRuleId).length === 0 ? (
-                    <p className="text-[0.78rem] text-text-muted italic py-4 text-center">
-                      No custom AI rules have triggered alerts yet.
-                    </p>
-                  ) : (
-                    notifications.filter(n => n.alertRuleId).map((n) => {
-                      const isUnread = !n.readAt;
-                      return (
-                        <div
-                          key={n.id}
-                          onClick={() => {
-                            if (isUnread) onMarkRead(n.id);
-                            onNotificationClick(n);
-                          }}
-                          className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${isUnread
-                              ? 'bg-white/[0.04] border-white/10 hover:bg-white/[0.06]'
-                              : 'bg-transparent border-transparent hover:bg-white/[0.015]'
-                            }`}
-                        >
-                          <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 mt-0.5">
-                            {getCategoryIcon(n.category, n.severity)}
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-start gap-2">
-                              <p className={`text-[0.8rem] font-bold truncate leading-snug ${isUnread ? 'text-text-primary' : 'text-text-secondary'}`}>
-                                {n.title}
-                              </p>
-                              <span className="text-[0.68rem] text-text-muted shrink-0">
-                                {formatRelativeTime(n.createdAt)}
-                              </span>
-                            </div>
-                            <p className="text-[0.74rem] text-text-muted line-clamp-1 mt-0.5 leading-relaxed">
-                              {n.body}
-                            </p>
-                            <div className="flex items-center gap-1.5 mt-1">
-                              <span className={`text-[0.6rem] px-1.5 py-0.5 rounded border capitalize ${getSeverityBadgeClass(n.severity)}`}>
-                                {n.severity}
-                              </span>
-                              {n.riskLevel && (
-                                <span className="text-[0.6rem] px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10 uppercase font-semibold">
-                                  {n.riskLevel} risk
-                                </span>
-                              )}
-                              {n.clipId && (
-                                <span className="text-[0.6rem] px-1.5 py-0.5 rounded border border-cyan-500/30 text-cyan-300 bg-cyan-500/5 font-medium inline-flex items-center gap-0.5">
-                                  <Video size={9} /> View Footage
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="shrink-0 self-center flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                            {isUnread && (
-                              <button
-                                type="button"
-                                onClick={() => onMarkRead(n.id)}
-                                className="btn btn-secondary p-1 rounded-md text-text-muted hover:text-text-primary"
-                                title="Mark read"
-                              >
-                                <CheckCheck size={13} />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => onDeleteNotification(n.id)}
-                              className="btn btn-secondary p-1 rounded-md text-text-muted hover:text-danger hover:border-danger/30"
-                              title="Delete notification"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* General System Notifications Feed Accordion */}
-              <div className="glass-panel border border-border-glass overflow-hidden mt-2">
-                <div
-                  onClick={() => setGeneralAccordionExpanded(!generalAccordionExpanded)}
-                  className="p-4 flex items-center justify-between cursor-pointer select-none hover:bg-white/[0.01] transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/5 text-text-muted shrink-0">
-                      <Cpu size={16} />
-                    </div>
-                    <div>
-                      <h3 className="text-[0.88rem] font-bold text-text-primary flex items-center gap-2">
-                        System &amp; Device Notifications ({generalNotifications.length})
-                      </h3>
-                      <p className="text-[0.72rem] text-text-muted mt-0.5">
-                        Technical logs, heartbeats, websocket connections, and generic camera errors.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-text-muted hover:text-text-primary p-1">
-                    {generalAccordionExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  </div>
-                </div>
-
-                {generalAccordionExpanded && (
-                  <div className="border-t border-border-glass bg-[rgba(0,0,0,0.15)] p-4 sm:p-5 animate-slideDown">
-                    <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
-                      {generalNotifications.length === 0 ? (
-                        <p className="text-[0.78rem] text-text-muted italic py-4 text-center">
-                          No system or device notifications log.
-                        </p>
-                      ) : (
-                        generalNotifications.map((n) => {
-                          const isUnread = !n.readAt;
-                          return (
-                            <div
-                              key={n.id}
-                              onClick={() => {
-                                if (isUnread) onMarkRead(n.id);
-                                onNotificationClick(n);
-                              }}
-                              className={`group flex items-start gap-3 rounded-lg border p-2.5 transition-all duration-200 cursor-pointer text-left ${isUnread
-                                  ? 'bg-white/[0.04] border-white/10 hover:bg-white/[0.06]'
-                                  : 'bg-transparent border-transparent hover:bg-white/[0.015]'
-                                }`}
-                            >
-                              <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 mt-0.5">
-                                {getCategoryIcon(n.category, n.severity)}
-                              </div>
-
-                              <div className="flex-1 min-w-0">
-                                <div className="flex justify-between items-start gap-2">
-                                  <p className={`text-[0.8rem] font-bold truncate leading-snug ${isUnread ? 'text-text-primary' : 'text-text-secondary'}`}>
-                                    {n.title}
-                                  </p>
-                                  <span className="text-[0.68rem] text-text-muted shrink-0">
-                                    {formatRelativeTime(n.createdAt)}
-                                  </span>
-                                </div>
-                                <p className="text-[0.74rem] text-text-muted line-clamp-1 mt-0.5 leading-relaxed">
-                                  {n.body}
-                                </p>
-                                <div className="flex items-center gap-1.5 mt-1">
-                                  <span className={`text-[0.6rem] px-1.5 py-0.5 rounded border capitalize ${getSeverityBadgeClass(n.severity)}`}>
-                                    {n.category}: {n.severity}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="shrink-0 self-center flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                                {isUnread && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onMarkRead(n.id)}
-                                    className="btn btn-secondary p-1 rounded-md text-text-muted hover:text-text-primary"
-                                    title="Mark read"
-                                  >
-                                    <CheckCheck size={13} />
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => onDeleteNotification(n.id)}
-                                  className="btn btn-secondary p-1 rounded-md text-text-muted hover:text-danger hover:border-danger/30"
-                                  title="Delete notification"
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
   );
 }

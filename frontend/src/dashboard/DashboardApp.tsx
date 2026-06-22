@@ -7,6 +7,7 @@ import {
   Fingerprint,
   // AlertTriangle,
   Bell,
+  BellRing,
   Film,
   Monitor,
   // Map as MapIcon,
@@ -47,7 +48,7 @@ import { fetchNotifications, fetchUnreadCount, markNotificationsRead, deleteNoti
 
 
 import { dashboardTabFromPath } from './utils/routing';
-import { EventsTab, type EventsTabRef, ReidTab, DevicesStreamsTab } from './components/tabs';
+import { EventsTab, type EventsTabRef, ReidTab, DevicesStreamsTab, NotificationsTab } from './components/tabs';
 import { ManageNotificationsTab } from './components/tabs/ManageNotificationsTab';
 import { LiveWallTab } from './components/tabs/LiveWallTab';
 import { ClipLibraryTab } from './components/tabs/ClipLibraryTab';
@@ -74,7 +75,7 @@ function PremiseMapTab() {
 
           {/* Blueprint-style outline drawings */}
           <div className="absolute inset-10 border border-dashed border-[rgba(255,255,255,0.05)] rounded-lg pointer-events-none flex items-center justify-center">
-            <span className="text-[0.7rem] text-text-muted select-none uppercase tracking-widest font-mono">West Campus Floor Plan</span>
+            <span className="text-[0.7rem] text-text-muted select-none uppercase tracking-widest font-mono">West Campus</span>
           </div>
           <div className="absolute top-1/4 left-1/3 w-1/3 h-1/2 border border-[rgba(255,255,255,0.04)] bg-[rgba(255,255,255,0.005)] rounded pointer-events-none" />
 
@@ -1009,7 +1010,7 @@ export default function DashboardApp() {
               { tab: 'ai' as const, icon: Monitor, title: 'Ask Camera AI' },
               // { tab: 'map' as const, icon: MapIcon, title: 'Premise map' },
               { tab: 'devices' as const, icon: Server, title: 'Streaming Devices' },
-              { tab: 'notifications' as const, icon: Bell, title: 'Custom Alerts' },
+              { tab: 'custom-alerts' as const, icon: BellRing, title: 'Custom Alerts' },
             ].map(({ tab, icon: Icon, title, hasBadge }) => {
               const isSelected = activeTab === tab;
               return (
@@ -1052,12 +1053,15 @@ export default function DashboardApp() {
 
         {/* User initials & notifications bell */}
         <div className={`flex flex-col gap-4 w-full ${isSidebarExpanded ? 'items-stretch' : 'items-center'}`}>
-          {/* Notifications Drawer Toggle */}
+          {/* Notifications Page Link */}
           <button
-            onClick={() => setNotificationsDrawerOpen((prev) => !prev)}
-            className={`rounded-xl transition-all duration-200 border-none outline-none cursor-pointer hover:bg-[rgba(255,255,255,0.02)] text-text-muted hover:text-text-secondary relative flex items-center ${isSidebarExpanded ? 'justify-start gap-3 w-full px-4 py-3' : 'justify-center p-3'
+            onClick={() => navigate('/app/notifications')}
+            className={`rounded-xl transition-all duration-200 border-none outline-none cursor-pointer relative flex items-center ${isSidebarExpanded ? 'justify-start gap-3 w-full px-4 py-3' : 'justify-center p-3'
+              } ${activeTab === 'notifications'
+                ? 'bg-[rgba(6,182,212,0.1)] text-[var(--color-secondary)] border border-[rgba(6,182,212,0.2)]'
+                : 'text-text-muted hover:text-text-secondary hover:bg-[rgba(255,255,255,0.02)]'
               }`}
-            title={isSidebarExpanded ? undefined : "Notifications drawer"}
+            title={isSidebarExpanded ? undefined : "Notifications"}
           >
             <Bell size={20} className="shrink-0" />
             {isSidebarExpanded && (
@@ -1175,18 +1179,20 @@ export default function DashboardApp() {
                     </span>
                   </span>
                 )}
-                {activeTab === 'notifications' && 'Manage Notifications'}
+                {activeTab === 'custom-alerts' && 'Manage Notifications'}
+                {activeTab === 'notifications' && 'Notification Center'}
                 {appView === 'settings' && 'Org settings'}
               </h1>
               {activeTab !== 'devices' && (
                 <p className="text-[0.72rem] text-text-muted mt-1 leading-none font-semibold">
-                  {activeTab === 'live' && 'Control Room - West Campus'}
+                  {activeTab === 'live' && 'Control Room'}
                   {activeTab === 'events' && 'All zones · last 24 hours'}
                   {activeTab === 'clips' && 'Recorded & flagged footage'}
                   {activeTab === 'reid' && 'Multi-camera tracking & path analysis'}
                   {activeTab === 'ai' && 'Natural-language video search'}
                   {activeTab === 'map' && 'Interactive camera location mapping'}
-                  {activeTab === 'notifications' && 'Alert subscriptions & integrations'}
+                  {activeTab === 'custom-alerts' && 'Alert subscriptions & integrations'}
+                  {activeTab === 'notifications' && 'System & security notification feed'}
                   {appView === 'settings' && 'Manage your organization, billing, and team members'}
                 </p>
               )}
@@ -1228,7 +1234,7 @@ export default function DashboardApp() {
           ) : (
             <div className="flex items-center divide-x divide-border-glass text-[0.72rem] text-text-muted font-bold">
               <div className="pr-4 flex items-center gap-1.5">
-                <span>{devices.filter((d) => d.status !== 'Offline').length} / {devices.length || 1} online</span>
+                <span>{streams.filter((s) => s.status !== 'Offline' && s.status !== 'Error').length} / {streams.length || 1} online</span>
               </div>
               <button
                 type="button"
@@ -1236,7 +1242,7 @@ export default function DashboardApp() {
                 className="px-4 flex items-center gap-1.5 hover:text-text-primary transition-colors bg-transparent border-none outline-none cursor-pointer text-[0.72rem] text-text-muted font-bold font-sans"
               >
                 <Bell size={12} className="text-text-muted shrink-0" />
-                <span>{unreadNotificationCount} active alerts</span>
+                <span>{unreadNotificationCount} unread alerts</span>
               </button>
               <div className="pl-4 flex items-center gap-1.5 text-text-secondary">
                 <Clock className="w-3.5 h-3.5 animate-pulse text-text-muted shrink-0" />
@@ -1354,7 +1360,7 @@ export default function DashboardApp() {
                 />
               )}
 
-              {activeTab === 'notifications' && (
+              {activeTab === 'custom-alerts' && (
                 <ManageNotificationsTab
                   notifications={notifications}
                   onMarkRead={handleMarkRead}
@@ -1363,6 +1369,18 @@ export default function DashboardApp() {
                   onClearAllNotifications={handleClearAllNotifications}
                   streams={streams}
                   currentOrg={currentOrg}
+                />
+              )}
+
+              {activeTab === 'notifications' && (
+                <NotificationsTab
+                  notifications={notifications}
+                  onMarkRead={handleMarkRead}
+                  onMarkAllRead={handleMarkAllRead}
+                  onDeleteNotification={handleDeleteNotification}
+                  onClearAllNotifications={handleClearAllNotifications}
+                  onNotificationClick={handleNotificationClick}
+                  streams={streams}
                 />
               )}
             </>

@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   Clock,
@@ -94,11 +95,13 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
     const [showAskAiDialog, setShowAskAiDialog] = useState(false);
     const [generatingAiSummary, setGeneratingAiSummary] = useState(false);
     const [aiSummaryError, setAiSummaryError] = useState<string | null>(null);
+    const [searchParams] = useSearchParams();
     const [clipFilterDeviceId, setClipFilterDeviceId] = useState('');
     const [clipFilterStreamId, setClipFilterStreamId] = useState('');
     const [clipFilterStartTime, setClipFilterStartTime] = useState('');
     const [clipFilterEndTime, setClipFilterEndTime] = useState('');
     const [showClipFilters, setShowClipFilters] = useState(false);
+
 
     const clipFilterParams = useMemo(
       () => ({
@@ -199,8 +202,26 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
     }, [clips.length, clipsTotal, loadingMoreClips, clipFilterParams]);
 
     useEffect(() => {
+      const streamIdParam = searchParams.get('streamId');
+      if (streamIdParam) {
+        setClipFilterStreamId(streamIdParam);
+        setShowClipFilters(true);
+        const stream = streams.find((s) => s.streamId === streamIdParam);
+        const deviceId = stream ? (stream.deviceId || '') : '';
+        setClipFilterDeviceId(deviceId);
+        void fetchClips({
+          deviceId,
+          streamId: streamIdParam,
+          startTime: clipFilterStartTime,
+          endTime: clipFilterEndTime,
+        });
+      }
+    }, [searchParams, streams, fetchClips, clipFilterStartTime, clipFilterEndTime]);
+
+    useEffect(() => {
+      if (searchParams.get('streamId')) return;
       void fetchClips();
-    }, [fetchClips]);
+    }, [fetchClips, searchParams]);
 
     const onlineDevicesInitializedRef = useRef(false);
     useEffect(() => {

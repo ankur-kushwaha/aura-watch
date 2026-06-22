@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { SlidersHorizontal, Video, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { SlidersHorizontal, Video, RefreshCw, Server } from 'lucide-react';
 import type { CameraStream } from '../../types';
 import { EditStreamForm } from '../EditStreamForm';
-
 
 
 
@@ -94,6 +94,7 @@ const getStatusLabelAndColor = (status: string | undefined, isOnline: boolean) =
 };
 
   export function LiveWallTab({ streams = [], onUpdateStreamConfig }: LiveWallTabProps) {
+    const navigate = useNavigate();
     const [selectedZone, setSelectedZone] = useState<'All' | 'Exterior' | 'Restricted'>('All');
     const [selectedCameraCode, setSelectedCameraCode] = useState<string | null>(null);
     const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
@@ -150,19 +151,28 @@ const getStatusLabelAndColor = (status: string | undefined, isOnline: boolean) =
             <div className="flex items-center gap-3">
               <h2 className="text-[1.25rem] font-bold tracking-tight">Live wall</h2>
             </div>
-            <div className="flex gap-1.5 bg-[rgba(255,255,255,0.02)] p-1 rounded-lg border border-border-glass">
-              {(['All', 'Exterior', 'Restricted'] as const).map((zone) => (
-                <button
-                  key={zone}
-                  onClick={() => setSelectedZone(zone)}
-                  className={`py-1.5 px-3 rounded-md text-[0.78rem] font-semibold transition-all duration-200 border-none outline-none cursor-pointer ${(zone === 'All' && selectedZone === 'All') || selectedZone === zone
-                    ? 'bg-[rgba(255,255,255,0.08)] text-white shadow-sm'
-                    : 'text-text-muted hover:text-text-secondary bg-transparent'
-                    }`}
-                >
-                  {zone === 'All' ? 'All zones' : zone}
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <div className="flex gap-1.5 bg-[rgba(255,255,255,0.02)] p-1 rounded-lg border border-border-glass">
+                {(['All', 'Exterior', 'Restricted'] as const).map((zone) => (
+                  <button
+                    key={zone}
+                    onClick={() => setSelectedZone(zone)}
+                    className={`py-1.5 px-3 rounded-md text-[0.78rem] font-semibold transition-all duration-200 border-none outline-none cursor-pointer ${(zone === 'All' && selectedZone === 'All') || selectedZone === zone
+                      ? 'bg-[rgba(255,255,255,0.08)] text-white shadow-sm'
+                      : 'text-text-muted hover:text-text-secondary bg-transparent'
+                      }`}
+                  >
+                    {zone === 'All' ? 'All zones' : zone}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => navigate('/app/devices')}
+                className="py-2 px-3.5 rounded-lg text-[0.78rem] font-bold text-text-secondary hover:text-white bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)] border border-border-glass transition-all duration-200 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Server size={14} />
+                Manage devices
+              </button>
             </div>
           </div>
 
