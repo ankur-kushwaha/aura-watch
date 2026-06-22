@@ -75,6 +75,8 @@ const DOCUMENTATION: Section[] = [
         description: 'Bring your security cameras into Aura Watch — automatically or one at a time.',
         subheadings: [
           { id: 'rtsp-format', label: 'Find your camera link' },
+          { id: 'rtsp-by-brand', label: 'Links by camera brand' },
+          { id: 'verify-rtsp-vlc', label: 'Test with VLC' },
           { id: 'auto-discovery', label: 'Let us find them' },
           { id: 'manual-add', label: 'Add one yourself' },
           { id: 'troubleshoot-streams', label: 'Something wrong?' },
@@ -668,9 +670,168 @@ export default function Tutorials() {
                   <CopyButton onCopy={() => handleCopy(sampleRtsp, setCopiedRtsp)} copied={copiedRtsp} />
                 </div>
                 <p className="text-[0.78rem] text-text-muted mt-3">
-                  Every camera brand is slightly different (Hikvision, Dahua, Reolink, CP Plus, etc.). Check the
-                  camera manual or ask whoever installed your CCTV — they&apos;ll know where to find it.
+                  The link always starts with <code className="text-cyan-400 text-[0.76rem]">rtsp://</code> and
+                  includes your camera&apos;s IP address, username, and password. The path at the end varies by brand —
+                  see the next section for common examples.
                 </p>
+              </section>
+
+              <section id="rtsp-by-brand" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Links by camera brand</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-4">
+                  Every brand formats the link slightly differently. Replace the placeholders below with your own
+                  values: <strong className="text-white font-semibold">username</strong>,{' '}
+                  <strong className="text-white font-semibold">password</strong>, and your camera&apos;s{' '}
+                  <strong className="text-white font-semibold">IP address</strong> (e.g.{' '}
+                  <code className="text-cyan-400 text-[0.82rem]">192.168.1.100</code>). Port{' '}
+                  <code className="text-cyan-400 text-[0.82rem]">554</code> is standard for RTSP unless your
+                  installer used a different one.
+                </p>
+                <div className="flex flex-col gap-3">
+                  {[
+                    {
+                      brand: 'Hikvision',
+                      where: 'Camera web page → Configuration → Network → Advanced → Integration Protocol. Enable RTSP if it is off.',
+                      main: 'rtsp://username:password@192.168.1.100:554/Streaming/Channels/101',
+                      sub: 'rtsp://username:password@192.168.1.100:554/Streaming/Channels/102',
+                      note: '101 = main (high quality), 102 = sub-stream (lower quality). Try the sub-stream if your computer struggles with 4K.',
+                    },
+                    {
+                      brand: 'Dahua / Amcrest',
+                      where: 'Camera web page → Setup → Network → Connection, or the Dahua / Amcrest mobile app under Device Info.',
+                      main: 'rtsp://username:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0',
+                      sub: 'rtsp://username:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1',
+                      note: 'subtype=0 is main stream, subtype=1 is sub-stream. Channel 1 is the first camera on a recorder; use channel 2, 3, etc. for additional cameras.',
+                    },
+                    {
+                      brand: 'Reolink',
+                      where: 'Reolink app → Device Settings → Network → Advanced, or the camera\'s web interface. RTSP must be enabled.',
+                      main: 'rtsp://username:password@192.168.1.100:554/h264Preview_01_main',
+                      sub: 'rtsp://username:password@192.168.1.100:554/h264Preview_01_sub',
+                      note: 'Older Reolink models may use Preview_01_main instead of h264Preview_01_main.',
+                    },
+                    {
+                      brand: 'CP Plus / DVR-NVR',
+                      where: 'DVR/NVR menu → Network → RTSP, or the CP Plus mobile app. Many CP Plus devices use Dahua-style paths.',
+                      main: 'rtsp://username:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0',
+                      sub: 'rtsp://username:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1',
+                      note: 'For a standalone CP Plus IP camera, channel is usually 1. On a DVR, each camera input has its own channel number.',
+                    },
+                    {
+                      brand: 'TP-Link Tapo',
+                      where: 'Tapo app → Camera Settings → Advanced Settings → Camera Account. Create a camera username and password — the Tapo cloud login will not work for RTSP.',
+                      main: 'rtsp://camera_username:camera_password@192.168.1.100:554/stream1',
+                      sub: 'rtsp://camera_username:camera_password@192.168.1.100:554/stream2',
+                      note: 'stream1 = HD, stream2 = SD. RTSP must be turned on in the Tapo app first.',
+                    },
+                    {
+                      brand: 'Axis',
+                      where: 'Camera web page → System → Plain Config → Network → RTSP, or check the Axis support site for your model.',
+                      main: 'rtsp://root:password@192.168.1.100/axis-media/media.amp',
+                      sub: null,
+                      note: 'Default username is often root. Some models use a different path — check the sticker on the camera or Axis documentation.',
+                    },
+                    {
+                      brand: 'Ubiquiti UniFi Protect',
+                      where: 'UniFi Protect console → Cameras → select camera → Settings → Advanced. Copy the RTSP URL shown there.',
+                      main: 'rtsp://username:password@192.168.1.100:7447/s0PpHk8xYzQ',
+                      sub: null,
+                      note: 'UniFi generates a unique path per camera. Enable RTSP in Protect settings and copy the full URL — do not guess the path.',
+                    },
+                  ].map((item) => (
+                    <div key={item.brand} className="glass-panel p-4 border border-white/5 rounded-xl flex flex-col gap-2.5">
+                      <h3 className="text-[0.9rem] font-bold text-white">{item.brand}</h3>
+                      <p className="text-[0.78rem] text-text-muted leading-relaxed">
+                        <strong className="text-text-secondary">Where to find it:</strong> {item.where}
+                      </p>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[0.62rem] font-black uppercase text-cyan-400 tracking-wider">
+                          {item.sub ? 'Main stream' : 'Example link'}
+                        </span>
+                        <code className="text-[0.72rem] font-mono text-cyan-300 break-all leading-relaxed">
+                          {item.main}
+                        </code>
+                        {item.sub && (
+                          <>
+                            <span className="text-[0.62rem] font-black uppercase text-cyan-400 tracking-wider mt-1">
+                              Sub-stream
+                            </span>
+                            <code className="text-[0.72rem] font-mono text-cyan-300 break-all leading-relaxed">
+                              {item.sub}
+                            </code>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-[0.76rem] text-text-muted leading-relaxed">{item.note}</p>
+                    </div>
+                  ))}
+                </div>
+                <Callout>
+                  <p>
+                    <strong className="text-white">Don&apos;t see your brand?</strong> Search online for{' '}
+                    <em>&ldquo;[your camera model] RTSP URL&rdquo;</em> or check the manual. Your CCTV installer
+                    almost always has these links on file.
+                  </p>
+                </Callout>
+              </section>
+
+              <section id="verify-rtsp-vlc" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Test your link with VLC</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-4">
+                  Before adding a camera to Aura Watch, you can check whether the RTSP link works using{' '}
+                  <strong className="text-white font-semibold">VLC media player</strong> — a free app available on
+                  Windows, Mac, and Linux. If VLC can play the stream, Aura Watch should be able to connect too.
+                </p>
+                <ol className="text-[0.86rem] text-text-secondary flex flex-col gap-3 list-decimal pl-5 mb-4">
+                  <li>
+                    Download and install VLC from{' '}
+                    <a
+                      href="https://www.videolan.org/vlc/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[var(--color-secondary)] font-semibold hover:underline"
+                    >
+                      videolan.org
+                    </a>
+                    .
+                  </li>
+                  <li>
+                    Open VLC. On the menu bar, click{' '}
+                    <strong className="text-white font-semibold">Media</strong> →{' '}
+                    <strong className="text-white font-semibold">Open Network Stream…</strong> (on Mac:{' '}
+                    <strong className="text-white font-semibold">File</strong> →{' '}
+                    <strong className="text-white font-semibold">Open Network…</strong>).
+                  </li>
+                  <li>
+                    Paste your full RTSP link into the URL field — e.g.{' '}
+                    <code className="text-cyan-400 text-[0.8rem]">{sampleRtsp}</code>
+                  </li>
+                  <li>
+                    Click <strong className="text-white font-semibold">Play</strong>. Wait a few seconds.
+                  </li>
+                  <li>
+                    <strong className="text-emerald-400 font-semibold">Working:</strong> live video appears in the
+                    VLC window. The link is valid — copy the same URL into Aura Watch.
+                  </li>
+                  <li>
+                    <strong className="text-rose-400 font-semibold">Not working:</strong> VLC shows an error, stays
+                    black, or spins forever. See the checklist below.
+                  </li>
+                </ol>
+                <div className="rounded-xl border border-white/5 bg-gradient-to-br from-[#0c121e] to-[#04060b] p-5 flex flex-col gap-3">
+                  <h3 className="text-[0.88rem] font-bold text-white">If VLC cannot play the stream</h3>
+                  <ul className="text-[0.82rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                    <li>
+                      Run VLC on a computer on the <strong className="text-white font-semibold">same network</strong>{' '}
+                      as the camera — RTSP usually does not work over the public internet unless your installer set
+                      that up.
+                    </li>
+                    <li>Double-check username and password. Special characters in passwords sometimes need URL-encoding (e.g. <code className="text-cyan-400 text-[0.76rem]">@</code> becomes <code className="text-cyan-400 text-[0.76rem]">%40</code>).</li>
+                    <li>Confirm RTSP is enabled in the camera&apos;s settings — some brands ship with it turned off.</li>
+                    <li>Try the sub-stream URL instead of the main stream — it uses less bandwidth and is easier to connect.</li>
+                    <li>Verify the camera&apos;s IP address hasn&apos;t changed (check your router&apos;s device list or the camera app).</li>
+                  </ul>
+                </div>
               </section>
 
               <section id="auto-discovery" className="scroll-mt-28">
@@ -732,6 +893,7 @@ export default function Tutorials() {
                 <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
                   <li>Is the camera turned on and connected to the same Wi‑Fi or network as your local computer?</li>
                   <li>Double-check the username and password in the camera link — a typo is the most common issue.</li>
+                  <li>Test the RTSP link in VLC first (see the section above). If VLC cannot play it, fix the link before adding it to Aura Watch.</li>
                   <li>Ask your IT person to confirm the camera and computer can &ldquo;see&rdquo; each other on the network.</li>
                   <li>If the video quality is very high, try adding the lower-quality stream instead — some small computers struggle with 4K.</li>
                 </ul>
