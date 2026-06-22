@@ -1,4 +1,4 @@
-import { Activity, Clock, Cpu, Fingerprint, Loader2, ScanSearch, ScrollText, Sparkles, UserCircle, Car } from 'lucide-react';
+import { Activity, Clock, Cpu, Fingerprint, Loader2, ScanSearch, ScrollText, Sparkles, UserCircle, Car, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState } from 'react';
 import type { OrgSettings } from '../../api';
 import type { ClipObjectDetection, ClipReidLog, CropClipPlayback, VideoClip } from '../types';
@@ -29,7 +29,7 @@ export interface ClipPreviewPanelProps {
 
 export function ClipPreviewPanel({
   clip,
-  videoHeightClass = 'h-[220px]',
+  videoHeightClass = 'h-[min(38vh,260px)] lg:h-[min(82vh,640px)]',
   deviceName,
   orgSettings,
   loadingClipDetections,
@@ -48,56 +48,48 @@ export function ClipPreviewPanel({
   const aiAnalysis = tryParseClipAiAnalysis(clip.aiSummary);
   const canGenerateAiSummary = orgSettings.aiChat && !!onGenerateAiSummary;
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [reidLogOpenClipId, setReidLogOpenClipId] = useState<string | null>(null);
+  const reidLogOpen = reidLogOpenClipId === clip.id;
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className={`bg-[#000] rounded-xl overflow-hidden ${videoHeightClass} border border-[rgba(255,255,255,0.08)] shrink-0 relative`}>
-        <video
-          key={clip.id}
-          src={mediaUrl(`/videos/${clip.filename}`)}
-          controls
-          autoPlay
-          onError={() => setVideoError('Could not load clip from the edge device. It may be offline or busy — try again in a few seconds.')}
-          onLoadedData={() => setVideoError(null)}
-          className="w-full h-full object-contain"
-        />
-        {videoError && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-4 text-center">
-            <p className="text-[0.75rem] text-amber-300 leading-snug">{videoError}</p>
+    <div className="flex flex-col gap-3 min-h-0 h-full">
+      <div className="shrink-0 rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[0.9rem] font-semibold text-text-primary">{clip.camera}</h3>
+            <p className="text-[0.7rem] text-text-muted break-all mt-0.5">{clip.filename}</p>
           </div>
-        )}
-      </div>
-      <div>
-        <div className="flex justify-between items-start mb-1.5 flex-wrap gap-2">
-          <div className="min-w-0">
-            <h3 className="text-[0.85rem] font-semibold text-text-primary">{clip.camera}</h3>
-            <p className="text-[0.72rem] text-text-muted break-all">{clip.filename}</p>
-          </div>
-          <div className="text-[0.7rem] text-text-muted flex flex-col items-end gap-1 whitespace-nowrap shrink-0">
-            <span className="flex items-center gap-1">
-              <Clock size={12} /> {formatDate(clip.timestamp)}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.68rem] text-text-muted shrink-0">
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <Clock size={11} /> {formatDate(clip.timestamp)}
             </span>
             {deviceName && (
-              <span className="flex items-center gap-1">
-                <Cpu size={12} /> {deviceName}
+              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                <Cpu size={11} /> {deviceName}
               </span>
             )}
             {selectedDurationLabel && (
-              <span className="flex items-center gap-1">
+              <span className="inline-flex items-center gap-1 whitespace-nowrap">
                 Duration: {selectedDurationLabel}
               </span>
             )}
             {selectedDetectionCount !== null && (
-              <span className="flex items-center gap-1 text-sky-400/90">
-                <Activity size={12} />
+              <span className="inline-flex items-center gap-1 text-sky-400/90 whitespace-nowrap">
+                <Activity size={11} />
                 {selectedDetectionCount} YOLO detection{selectedDetectionCount === 1 ? '' : 's'}
               </span>
             )}
           </div>
         </div>
-        <InlineCopyIds ids={buildTimelineIdEntries({ clipId: clip.id })} />
+        <div className="mt-2">
+          <InlineCopyIds ids={buildTimelineIdEntries({ clipId: clip.id })} />
+        </div>
+      </div>
+
+      <div className="flex flex-col lg:flex-row gap-3 lg:gap-4 flex-1 min-h-0">
+        <div className="flex flex-col gap-3 flex-1 min-w-0 min-h-0 overflow-y-auto order-2 lg:order-1 pr-0.5">
         {orgSettings.videoSummary && !aiAnalysis && (
-          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5 mt-2">
+          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
             <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-1 tracking-wider flex items-center gap-1">
               <ScanSearch size={12} />Detection Summary
             </p>
@@ -107,7 +99,7 @@ export function ClipPreviewPanel({
           </div>
         )}
         {orgSettings.aiChat && (
-          <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5 mt-3">
+          <div className="bg-[rgba(124,58,237,0.05)] border border-[rgba(124,58,237,0.15)] rounded-lg p-2.5">
             <div className="flex items-start justify-between gap-2 mb-1">
               <p className="text-[0.7rem] font-bold text-[#a78bfa] uppercase tracking-wider flex items-center gap-1">
                 <Sparkles size={12} />AI Summary
@@ -187,8 +179,8 @@ export function ClipPreviewPanel({
             )}
           </div>
         )}
-        {orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0 || clipReidLog) && (
-          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5 mt-3">
+        {orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0) && (
+          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
             <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
               <Fingerprint size={12} />Detected Objects
             </p>
@@ -300,31 +292,58 @@ export function ClipPreviewPanel({
                 })}
               </div>
             )}
-            {!loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
-              <div className="pt-2 mt-1 border-t border-[rgba(56,189,248,0.12)]">
-                <p className="text-[0.65rem] font-bold text-text-muted uppercase mb-1.5 tracking-wider flex items-center gap-1">
-                  <ScrollText size={11} />ReID Log
-                </p>
-                <div className="flex flex-col gap-1">
-                  {clipReidLog.entries.map((entry, idx) => (
-                    <p
-                      key={idx}
-                      className={`text-[0.72rem] leading-snug ${
-                        entry.level === 'warn'
-                          ? 'text-amber-400'
-                          : entry.level === 'error'
-                            ? 'text-red-400'
-                            : 'text-text-muted'
-                      }`}
-                    >
-                      {entry.message}
-                    </p>
-                  ))}
-                </div>
+          </div>
+        )}
+        {orgSettings.reidProcessing && !loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
+          <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-2.5">
+            <button
+              type="button"
+              onClick={() => setReidLogOpenClipId(reidLogOpen ? null : clip.id)}
+              className="w-full flex items-center justify-between gap-2 text-left py-0.5 text-text-muted hover:text-text-secondary transition-colors"
+            >
+              <span className="text-[0.65rem] font-bold uppercase tracking-wider flex items-center gap-1">
+                <ScrollText size={11} />
+                {reidLogOpen ? 'Hide ReID Log' : `Show ReID Log (${clipReidLog.entries.length})`}
+              </span>
+              {reidLogOpen ? <ChevronUp size={14} className="shrink-0" /> : <ChevronDown size={14} className="shrink-0" />}
+            </button>
+            {reidLogOpen && (
+              <div className="flex flex-col gap-1 mt-2 pt-2 border-t border-border-glass">
+                {clipReidLog.entries.map((entry, idx) => (
+                  <p
+                    key={idx}
+                    className={`text-[0.72rem] leading-snug ${
+                      entry.level === 'warn'
+                        ? 'text-amber-400'
+                        : entry.level === 'error'
+                          ? 'text-red-400'
+                          : 'text-text-muted'
+                    }`}
+                  >
+                    {entry.message}
+                  </p>
+                ))}
               </div>
             )}
           </div>
         )}
+        </div>
+      <div className={`bg-black rounded-xl overflow-hidden ${videoHeightClass} border border-border-glass shrink-0 relative order-1 lg:order-2 lg:w-[44%] lg:max-w-[480px] lg:sticky lg:top-0 lg:self-start`}>
+        <video
+          key={clip.id}
+          src={mediaUrl(`/videos/${clip.filename}`)}
+          controls
+          autoPlay
+          onError={() => setVideoError('Could not load clip from the edge device. It may be offline or busy — try again in a few seconds.')}
+          onLoadedData={() => setVideoError(null)}
+          className="w-full h-full object-contain"
+        />
+        {videoError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-4 text-center">
+            <p className="text-[0.75rem] text-amber-300 leading-snug">{videoError}</p>
+          </div>
+        )}
+      </div>
       </div>
     </div>
   );

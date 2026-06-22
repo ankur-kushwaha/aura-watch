@@ -687,7 +687,7 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
             <div className="hidden lg:block w-[1px] bg-[rgba(255,255,255,0.08)] self-stretch" />
 
             {/* Right pane: Clip Viewer (desktop only) */}
-            <div className="hidden lg:flex flex-1 flex-col min-w-0 overflow-y-auto pr-1 lg:h-full">
+            <div className="hidden lg:flex flex-1 flex-col min-w-0 overflow-hidden pr-1 lg:h-full">
               {selectedClip ? (
                 <ClipPreviewPanel
                   clip={selectedClip}
