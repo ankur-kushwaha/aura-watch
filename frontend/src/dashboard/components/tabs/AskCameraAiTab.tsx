@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, Sparkles, MessageSquare, ArrowRight, Play, SlidersHorizontal, X } from 'lucide-react';
 import { apiFetch } from '../../../api';
+import { ChatMarkdown } from '../../../ChatMarkdown';
 import type { OrgSettings } from '../../../api';
 import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
 import { ClipPreviewPanel } from '../ClipPreviewPanel';
@@ -335,9 +336,9 @@ export function AskCameraAiTab({ orgSettings, streams }: AskCameraAiTabProps) {
                 </div>
 
                 {/* Summary paragraph */}
-                <p className="text-[0.9rem] font-medium leading-relaxed text-text-primary">
-                  {summary}
-                </p>
+                <div className="text-[0.9rem] font-medium leading-relaxed text-text-primary">
+                  <ChatMarkdown content={summary} />
+                </div>
 
                 {/* Badges */}
                 {pills.length > 0 && (

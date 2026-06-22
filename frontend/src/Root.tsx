@@ -9,6 +9,7 @@ import BlogPost from './BlogPost.tsx';
 import About from './About.tsx';
 import Tutorials from './Tutorials.tsx';
 import ContactPage from './ContactPage.tsx';
+import Pricing from './Pricing.tsx';
 import Privacy from './Privacy.tsx';
 import { isLoggedIn } from './auth.ts';
 import ScrollToTop from './components/ScrollToTop.tsx';
@@ -88,6 +89,10 @@ export default function Root() {
         <Route
           path="/contact"
           element={<ContactPage />}
+        />
+        <Route
+          path="/pricing"
+          element={<Pricing />}
         />
         <Route
           path="/privacy"

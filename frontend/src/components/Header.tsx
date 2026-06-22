@@ -5,6 +5,7 @@ export default function Header() {
   const location = useLocation();
   const isAboutActive = location.pathname === '/about';
   const isContactActive = location.pathname === '/contact';
+  const isPricingActive = location.pathname === '/pricing';
   const isTutorialsActive = location.pathname.startsWith('/tutorials');
 
   return (
@@ -30,9 +31,12 @@ export default function Header() {
           <Link to="/#how-it-works" className="hover:text-text-primary transition-colors">
             How It Works
           </Link>
-          {/* <Link to="/login" className="hover:text-text-primary transition-colors">
+          <Link
+            to="/pricing"
+            className={`hover:text-text-primary transition-colors ${isPricingActive ? 'text-text-primary font-medium' : ''}`}
+          >
             Pricing
-          </Link> */}
+          </Link>
           <Link
             to="/about"
             className={`hover:text-text-primary transition-colors ${isAboutActive ? 'text-text-primary font-medium' : ''}`}
