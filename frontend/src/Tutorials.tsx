@@ -1229,7 +1229,7 @@ function SidebarNav({
   onTopicClick,
 }: {
   activeTopicId: string;
-  onTopicClick: (topicId: string, hash?: string) => void;
+  onTopicClick: (topicId: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -1254,21 +1254,6 @@ function SidebarNav({
                   >
                     {topic.title}
                   </button>
-                  {isActive && (
-                    <ul className="mt-1 mb-2 ml-3 pl-3 border-l border-white/8 flex flex-col gap-1">
-                      {topic.subheadings.map((sub) => (
-                        <li key={sub.id}>
-                          <button
-                            type="button"
-                            onClick={() => onTopicClick(topic.id, sub.id)}
-                            className="w-full text-left py-1 px-2 rounded-md text-[0.76rem] text-text-muted hover:text-[var(--color-secondary)] transition-colors"
-                          >
-                            {sub.label}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
                 </li>
               );
             })}
