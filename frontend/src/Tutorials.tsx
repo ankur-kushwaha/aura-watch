@@ -82,6 +82,76 @@ const DOCUMENTATION: Section[] = [
       },
     ],
   },
+  {
+    title: 'USE THE DASHBOARD',
+    topics: [
+      {
+        id: 'live-monitoring',
+        title: 'Watch Cameras Live',
+        description: 'See your camera feeds in real time and switch between zones and cameras.',
+        subheadings: [
+          { id: 'live-overview', label: 'What this screen does' },
+          { id: 'live-wall', label: 'Live wall' },
+          { id: 'camera-panel', label: 'Camera settings panel' },
+        ],
+      },
+      {
+        id: 'event-archive',
+        title: 'Review Past Events',
+        description: 'Open saved clips, read AI summaries, and inspect detected objects.',
+        subheadings: [
+          { id: 'archive-overview', label: 'What you can review' },
+          { id: 'clip-list', label: 'Clip list' },
+          { id: 'clip-details', label: 'Clip details' },
+        ],
+      },
+      {
+        id: 'ask-camera-ai',
+        title: 'Ask Camera AI',
+        description: 'Search your footage using plain English questions.',
+        subheadings: [
+          { id: 'ask-overview', label: 'What it does' },
+          { id: 'search-box', label: 'Search box' },
+          { id: 'question-ideas', label: 'Question ideas' },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'ALERTS & SETTINGS',
+    topics: [
+      {
+        id: 'manage-alert-rules',
+        title: 'Create Alert Rules',
+        description: 'Set up automatic alerts when important things happen on selected cameras.',
+        subheadings: [
+          { id: 'rules-overview', label: 'How alerts work' },
+          { id: 'rule-fields', label: 'Fill in the rule' },
+          { id: 'rule-channels', label: 'Where alerts are sent' },
+        ],
+      },
+      {
+        id: 'notification-center',
+        title: 'Check Notifications',
+        description: 'See all alerts and system messages in one place and filter them quickly.',
+        subheadings: [
+          { id: 'feed-overview', label: 'Notification feed' },
+          { id: 'feed-filters', label: 'Use filters' },
+          { id: 'empty-feed', label: 'If nothing appears' },
+        ],
+      },
+      {
+        id: 'organization-settings',
+        title: 'Organization Settings',
+        description: 'Turn major product features on or off for your team.',
+        subheadings: [
+          { id: 'settings-overview', label: 'What this page controls' },
+          { id: 'video-ai-settings', label: 'Video and AI options' },
+          { id: 'notification-settings', label: 'Notification options' },
+        ],
+      },
+    ],
+  },
 ];
 
 const ALL_TOPICS = DOCUMENTATION.flatMap((s) => s.topics);
@@ -90,6 +160,12 @@ const TUTORIAL_IMAGES = {
   addDevice: '/tutorials/add-edge-device.png',
   dashboard: '/tutorials/streaming-devices-dashboard.png',
   addCamera: '/tutorials/add-ip-camera.png',
+  liveMonitoring: '/tutorials/live-monitoring.png',
+  eventArchive: '/tutorials/event-archive.png',
+  askCameraAi: '/tutorials/ask-camera-ai.png',
+  manageNotifications: '/tutorials/manage-notifications.png',
+  notificationCenter: '/tutorials/notification-center.png',
+  orgSettings: '/tutorials/org-settings.png',
 } as const;
 
 function topicIndex(id: string) {
@@ -184,12 +260,10 @@ export default function Tutorials() {
     if (!activeTopic) return;
     const hash = location.hash.replace('#', '');
     if (hash && activeTopic.subheadings.some((s) => s.id === hash)) {
-      setActiveSubheadingId(hash);
       requestAnimationFrame(() => {
         document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth' });
       });
     } else {
-      setActiveSubheadingId(activeTopic.subheadings[0]?.id ?? '');
       window.scrollTo({ top: 0 });
     }
   }, [activeTopic, location.hash]);
@@ -303,9 +377,12 @@ export default function Tutorials() {
         </div>
       )}
 
-      <div className="max-w-[1400px] mx-auto px-6 pt-24 lg:pt-24 pb-20 flex gap-8">
+      <div className="max-w-[1400px] mx-auto px-6 pt-24 lg:pt-24 pb-20 flex items-start gap-8">
+        {/* Left sidebar spacer */}
+        <div className="hidden lg:block w-60 shrink-0" aria-hidden="true" />
+
         {/* Left sidebar */}
-        <aside className="hidden lg:block w-60 shrink-0 sticky top-24 self-start max-h-[calc(100vh-6rem)] overflow-y-auto pr-4 border-r border-white/5 select-none text-left">
+        <aside className="hidden lg:block fixed top-24 bottom-6 w-60 overflow-y-auto pr-4 border-r border-white/5 select-none text-left">
           <SidebarNav activeTopicId={topicId} onTopicClick={goToTopic} />
         </aside>
 
@@ -662,6 +739,264 @@ export default function Tutorials() {
             </article>
           )}
 
+          {topicId === 'live-monitoring' && (
+            <article className="flex flex-col gap-8">
+              <section id="live-overview" className="scroll-mt-28">
+                <h1 className="text-[2.1rem] font-extrabold text-white tracking-tight mb-3 leading-tight">
+                  Watch Cameras Live
+                </h1>
+                <p className="text-text-secondary text-[0.95rem] leading-relaxed mb-4">
+                  This is the main live viewing screen. It shows camera feeds as they are happening right now, so your
+                  team can keep an eye on entrances, parking areas, warehouses, and other important places.
+                </p>
+                <Screenshot
+                  src={TUTORIAL_IMAGES.liveMonitoring}
+                  alt="Live Monitoring page showing two camera tiles and a camera settings panel"
+                  caption="The Live Monitoring screen shows your camera tiles on the left and details for the selected camera on the right."
+                />
+              </section>
+
+              <section id="live-wall" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Live wall</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  Each tile is one camera. Use this area to quickly check what is happening across your site.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>The camera name or number appears on each tile.</li>
+                  <li>Use the zone buttons at the top to filter cameras by area.</li>
+                  <li>If a camera is working, you should see a live picture updating in the tile.</li>
+                  <li>You can click a camera tile to focus on it and view more details.</li>
+                </ul>
+              </section>
+
+              <section id="camera-panel" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Camera settings panel</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  The panel on the right changes when you click a camera. It is where you can inspect that camera and
+                  adjust AI-related options for it.
+                </p>
+                <Callout>
+                  <p>
+                    If the panel says <strong className="text-white">No camera selected</strong>, simply click one of
+                    the camera tiles on the left.
+                  </p>
+                </Callout>
+              </section>
+            </article>
+          )}
+
+          {topicId === 'event-archive' && (
+            <article className="flex flex-col gap-8">
+              <section id="archive-overview" className="scroll-mt-28">
+                <h1 className="text-[2.1rem] font-extrabold text-white tracking-tight mb-3 leading-tight">
+                  Review Past Events
+                </h1>
+                <p className="text-text-secondary text-[0.95rem] leading-relaxed mb-4">
+                  Use the Event Archive when you want to look back at something that already happened. It stores clips,
+                  lets you play them back, and shows an AI-written summary of what was seen.
+                </p>
+                <Screenshot
+                  src={TUTORIAL_IMAGES.eventArchive}
+                  alt="Event Archive page showing a clip list, video preview, AI summary, and detected objects"
+                  caption="The Event Archive helps you review saved clips, read a plain-language summary, and inspect detected objects."
+                />
+              </section>
+
+              <section id="clip-list" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Clip list</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  The left side shows a list of saved events. Pick any row to open that clip.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>Each item shows the camera, time, and a quick summary.</li>
+                  <li>You can scroll down to view older events.</li>
+                  <li>Use filters at the top if you want to narrow the list.</li>
+                </ul>
+              </section>
+
+              <section id="clip-details" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Clip details</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  The large panel on the right is the selected clip. This is where you review what happened.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>The video player shows the saved moment.</li>
+                  <li>The AI summary explains the clip in simple language.</li>
+                  <li>The detected objects section lists people, cars, and other things found in the scene.</li>
+                </ul>
+              </section>
+            </article>
+          )}
+
+          {topicId === 'ask-camera-ai' && (
+            <article className="flex flex-col gap-8">
+              <section id="ask-overview" className="scroll-mt-28">
+                <h1 className="text-[2.1rem] font-extrabold text-white tracking-tight mb-3 leading-tight">
+                  Ask Camera AI
+                </h1>
+                <p className="text-text-secondary text-[0.95rem] leading-relaxed mb-4">
+                  This page lets you search your footage using normal sentences instead of manually scrubbing through
+                  videos. You type what you are looking for, and Aura Watch searches across your camera clips.
+                </p>
+                <Screenshot
+                  src={TUTORIAL_IMAGES.askCameraAi}
+                  alt="Ask Camera AI page with a large search box and suggested questions"
+                  caption="Type your question into the search box, then let Aura Watch look through your footage for matching moments."
+                />
+              </section>
+
+              <section id="search-box" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Search box</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  The big search bar is the main part of this page. Type what you want to find, such as:
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>&ldquo;Show people entering after 10 PM&rdquo;</li>
+                  <li>&ldquo;Find a white car near the gate&rdquo;</li>
+                  <li>&ldquo;Did anyone leave a bag in the lobby today?&rdquo;</li>
+                </ul>
+              </section>
+
+              <section id="question-ideas" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Question ideas</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  The right side includes example questions. These are useful when you are not sure how to phrase your
+                  search yet.
+                </p>
+                <Callout>
+                  <p>
+                    Start simple. Short, clear questions like <strong className="text-white">&ldquo;red shirt near loading dock&rdquo;</strong> often work better than long paragraphs.
+                  </p>
+                </Callout>
+              </section>
+            </article>
+          )}
+
+          {topicId === 'manage-alert-rules' && (
+            <article className="flex flex-col gap-8">
+              <section id="rules-overview" className="scroll-mt-28">
+                <h1 className="text-[2.1rem] font-extrabold text-white tracking-tight mb-3 leading-tight">
+                  Create Alert Rules
+                </h1>
+                <p className="text-text-secondary text-[0.95rem] leading-relaxed mb-4">
+                  Alert rules tell Aura Watch when to notify your team. For example, you might want an alert when a
+                  car appears after hours or when movement is detected in a restricted zone.
+                </p>
+                <Screenshot
+                  src={TUTORIAL_IMAGES.manageNotifications}
+                  alt="Manage Notifications page showing an alert rule form"
+                  caption="Use this page to create rules, choose which cameras they apply to, and decide who receives the alert."
+                />
+              </section>
+
+              <section id="rule-fields" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Fill in the rule</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  Start by naming the rule and writing what should trigger it.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li><strong className="text-white">Rule Name</strong>: a label your team will recognise.</li>
+                  <li><strong className="text-white">AI Alert Criteria</strong>: describe what you want to be alerted about.</li>
+                  <li><strong className="text-white">Applies to Streams</strong>: choose all cameras or only selected ones.</li>
+                </ul>
+              </section>
+
+              <section id="rule-channels" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Where alerts are sent</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  Near the bottom, you choose how people are notified.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>Notification Center sends alerts inside the app.</li>
+                  <li>Send Email Alert can email people when supported.</li>
+                  <li>Trigger Webhook sends alerts to another system.</li>
+                </ul>
+              </section>
+            </article>
+          )}
+
+          {topicId === 'notification-center' && (
+            <article className="flex flex-col gap-8">
+              <section id="feed-overview" className="scroll-mt-28">
+                <h1 className="text-[2.1rem] font-extrabold text-white tracking-tight mb-3 leading-tight">
+                  Check Notifications
+                </h1>
+                <p className="text-text-secondary text-[0.95rem] leading-relaxed mb-4">
+                  The Notification Center is your inbox for alerts and system messages. It helps you see what needs
+                  attention without jumping between different pages.
+                </p>
+                <Screenshot
+                  src={TUTORIAL_IMAGES.notificationCenter}
+                  alt="Notification Center page with filters on the left and an empty feed state"
+                  caption="Use the Notification Center to review alerts, narrow them by camera or rule, and clear the feed when needed."
+                />
+              </section>
+
+              <section id="feed-filters" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Use filters</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  The filter panel on the left helps you quickly narrow down the feed.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>Filter by category to separate AI alerts from system logs.</li>
+                  <li>Filter by camera to focus on one location.</li>
+                  <li>Filter by alert rule to review one type of alert at a time.</li>
+                </ul>
+              </section>
+
+              <section id="empty-feed" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">If nothing appears</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed">
+                  If the page says there are no notifications, that can simply mean nothing has been triggered yet or
+                  your current filters are too narrow. Try switching the filters back to “All” first.
+                </p>
+              </section>
+            </article>
+          )}
+
+          {topicId === 'organization-settings' && (
+            <article className="flex flex-col gap-8">
+              <section id="settings-overview" className="scroll-mt-28">
+                <h1 className="text-[2.1rem] font-extrabold text-white tracking-tight mb-3 leading-tight">
+                  Organization Settings
+                </h1>
+                <p className="text-text-secondary text-[0.95rem] leading-relaxed mb-4">
+                  This page controls major features for your whole organization. Changes here affect how video
+                  processing, AI search, and notifications behave for your team.
+                </p>
+                <Screenshot
+                  src={TUTORIAL_IMAGES.orgSettings}
+                  alt="Organization Settings page with toggles for video summary, Ask Camera AI, and notifications"
+                  caption="Organization Settings lets admins turn key features on or off for the entire workspace."
+                />
+              </section>
+
+              <section id="video-ai-settings" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Video and AI options</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  The upper half of the page controls what Aura Watch does with your clips.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>Video summary creates plain-language summaries for clips.</li>
+                  <li>ReID processing helps track people or objects across clips.</li>
+                  <li>Semantic search indexing and Ask Camera AI power natural-language search.</li>
+                </ul>
+              </section>
+
+              <section id="notification-settings" className="scroll-mt-28">
+                <h2 className="text-[1.4rem] font-bold text-white mb-3">Notification options</h2>
+                <p className="text-text-secondary text-[0.9rem] leading-relaxed mb-3">
+                  Lower down, you can control how notifications behave.
+                </p>
+                <ul className="text-[0.86rem] text-text-secondary flex flex-col gap-2 list-disc pl-5">
+                  <li>Enable or disable notifications for the whole organization.</li>
+                  <li>Set the minimum alert severity you want to receive.</li>
+                  <li>Add a webhook URL if another system should receive alerts automatically.</li>
+                </ul>
+              </section>
+            </article>
+          )}
+
           {/* Prev / Next navigation */}
           <nav className="mt-14 pt-8 border-t border-white/6 flex items-center justify-between gap-4">
             {prevTopic ? (
@@ -697,8 +1032,11 @@ export default function Tutorials() {
           </nav>
         </main>
 
+        {/* Right sidebar spacer */}
+        <div className="hidden xl:block w-52 shrink-0" aria-hidden="true" />
+
         {/* Right sidebar — table of contents */}
-        <aside className="hidden xl:block w-52 shrink-0 sticky top-24 self-start max-h-[calc(100vh-6rem)] overflow-y-auto pl-4 border-l border-white/5 text-left select-none">
+        <aside className="hidden xl:block fixed top-24 right-[max(1.5rem,calc((100vw-1400px)/2+1.5rem))] bottom-6 w-52 overflow-y-auto pl-4 border-l border-white/5 text-left select-none">
           <p className="text-[0.68rem] font-black tracking-wider text-text-muted uppercase mb-3">On this page</p>
           <nav className="flex flex-col gap-2.5" aria-label="Table of contents">
             {activeTopic.subheadings.map((sub) => (
@@ -707,7 +1045,7 @@ export default function Tutorials() {
                 type="button"
                 onClick={() => scrollToSection(sub.id)}
                 className={`text-left text-[0.78rem] font-medium transition-colors leading-relaxed ${
-                  activeSubheadingId === sub.id
+                  (activeSubheadingId || activeTopic.subheadings[0]?.id) === sub.id
                     ? 'text-[var(--color-secondary)] font-bold'
                     : 'text-text-muted hover:text-text-secondary'
                 }`}

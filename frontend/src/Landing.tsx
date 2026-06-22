@@ -233,7 +233,7 @@ export default function Landing() {
           </div>
         </section>
         {/* Deep dives */}
-        <section className="px-6 py-20">
+        <section id="capabilities" className="px-6 py-20 scroll-mt-24">
           <div className="max-w-6xl mx-auto flex flex-col gap-8">
             {/* Multi-camera tracking deep dive */}
             <div id="tracking" className="glass-panel active p-8 md:p-12 scroll-mt-24">
@@ -381,7 +381,7 @@ export default function Landing() {
         </section>
 
         {/* Showcase Infographic Section */}
-        <section className="px-6 py-20 bg-white/[0.01]">
+        <section id="use-cases" className="px-6 py-20 scroll-mt-24 bg-white/[0.01]">
           <div className="max-w-6xl mx-auto text-center">
             <SectionHeader
               label="System Overview"
