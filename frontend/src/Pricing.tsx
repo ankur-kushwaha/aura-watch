@@ -36,6 +36,7 @@ const INCLUDED_FEATURES = [
 ];
 
 const PRICING_BULLETS = [
+  'First camera is free for trial',
   'Billed per camera with active AI processing',
   'No hidden tiers or per-seat fees',
   'Scale up or down as you add or remove cameras',
@@ -54,7 +55,7 @@ export default function Pricing() {
     }
     metaDesc.setAttribute(
       'content',
-      'Simple pricing for Aura Watch AI: $20 per camera for AI processing. Person tracking, live monitoring, alerts, and Ask Camera AI included.',
+      'Simple pricing for Aura Watch AI: first camera free for trial, then $20 per camera for AI processing. Person tracking, live monitoring, alerts, and Ask Camera AI included.',
     );
 
     let metaKey = document.querySelector('meta[name="keywords"]');
@@ -80,7 +81,7 @@ export default function Pricing() {
       '@context': 'https://schema.org',
       '@type': 'WebPage',
       name: 'Aura Watch AI Pricing',
-      description: '$20 per camera for AI processing.',
+      description: 'First camera free for trial, then $20 per camera for AI processing.',
       url: 'https://aura-watch.adboardtools.com/pricing',
       mainEntity: {
         '@type': 'Product',
@@ -123,13 +124,13 @@ export default function Pricing() {
               Simple, transparent pricing
             </div>
             <h1 className="text-[2.5rem] md:text-[3.25rem] font-extrabold leading-tight mb-4">
-              <span className="text-gradient">Pay per camera.</span>
+              <span className="text-gradient">One camera free for trial.</span>
               <br />
-              <span className="text-gradient-purple">Nothing else.</span>
+              <span className="text-gradient-purple">Then $20 per camera.</span>
             </h1>
             <p className="text-text-secondary text-[1.05rem] leading-relaxed">
-              Our pricing is straightforward: one flat rate for AI processing on each camera you connect.
-              No complicated plans or surprise add-ons.
+              Start with one free trial camera, then pay a flat rate for each additional camera with AI
+              processing enabled. No complicated plans or surprise add-ons.
             </p>
           </div>
 
@@ -137,12 +138,14 @@ export default function Pricing() {
             <p className="text-[0.8rem] uppercase tracking-widest text-secondary font-semibold mb-4">
               AI processing
             </p>
+            <p className="text-[0.9rem] text-secondary font-medium mb-3">1 camera free for trial</p>
             <div className="flex items-baseline justify-center gap-2 mb-3">
               <span className="text-[3.5rem] md:text-[4rem] font-extrabold text-text-primary leading-none">$20</span>
               <span className="text-text-secondary text-[1.1rem]">/ camera</span>
             </div>
             <p className="text-text-secondary text-[0.95rem] mb-8 max-w-md mx-auto">
-              Per camera with active AI processing—detection, tracking, alerts, and Ask Camera AI included.
+              After your free trial camera, each additional camera with active AI processing includes
+              detection, tracking, alerts, and Ask Camera AI.
             </p>
             <ul className="text-left max-w-sm mx-auto flex flex-col gap-3 mb-8">
               {PRICING_BULLETS.map((bullet) => (
