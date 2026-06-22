@@ -5,6 +5,7 @@ export default function Header() {
   const location = useLocation();
   const isAboutActive = location.pathname === '/about';
   const isContactActive = location.pathname === '/contact';
+  const isTutorialsActive = location.pathname === '/tutorials';
 
   return (
     <header className="fixed top-0 inset-x-0 z-50 border-b border-white/6 bg-[rgba(10,14,26,0.72)] backdrop-blur-xl">
@@ -18,7 +19,7 @@ export default function Header() {
             <span className="text-[0.6rem] text-text-muted font-medium tracking-wider mt-0.5 uppercase">AI Surveillance Agent</span>
           </div>
         </Link>
-
+ 
         <nav className="hidden md:flex items-center gap-7 text-[0.85rem] font-medium text-text-secondary" aria-label="Primary">
           <Link to="/#capabilities" className="hover:text-text-primary transition-colors">
             Features
@@ -37,6 +38,12 @@ export default function Header() {
             className={`hover:text-text-primary transition-colors ${isAboutActive ? 'text-text-primary font-medium' : ''}`}
           >
             About Us
+          </Link>
+          <Link
+            to="/tutorials"
+            className={`hover:text-text-primary transition-colors ${isTutorialsActive ? 'text-text-primary font-medium' : ''}`}
+          >
+            Tutorials
           </Link>
           <Link
             to="/contact"

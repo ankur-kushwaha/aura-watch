@@ -1,5 +1,7 @@
 import { API_BASE, getToken } from '../../api';
-import { HUB_HTTP } from '../constants';
+import { buildInstallCmd, HUB_HTTP } from '../../utils/install';
+
+export { buildInstallCmd, HUB_HTTP };
 
 export function mediaUrl(path: string) {
   const token = getToken();
@@ -13,8 +15,3 @@ export function identityCoverUrl(identityId: string) {
   return `${API_BASE}/reid/identities/${identityId}/cover${qs}`;
 }
 
-export function buildInstallCmd(enrollmentToken?: string, tailscaleAuthKey?: string | null) {
-  const tokenPart = enrollmentToken ? ` ENROLLMENT_TOKEN='${enrollmentToken}'` : '';
-  const tailscalePart = tailscaleAuthKey ? ` TAILSCALE_AUTH_KEY='${tailscaleAuthKey}'` : '';
-  return `CLOUD_URL='${HUB_HTTP}'${tokenPart}${tailscalePart} sh -c "$(curl -fsSL https://raw.githubusercontent.com/ankur-kushwaha/aura-watch/main/edge/scripts/install.sh)"`;
-}

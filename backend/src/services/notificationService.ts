@@ -87,6 +87,7 @@ export async function createNotification(input: CreateNotificationInput) {
       body: input.body,
       riskLevel: input.riskLevel ?? null,
       triggeredByInstruction: input.triggeredByInstruction ?? null,
+      readAt: null,
     },
   });
 

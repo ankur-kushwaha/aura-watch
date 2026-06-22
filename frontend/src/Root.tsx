@@ -7,6 +7,7 @@ import Register from './Register.tsx';
 import BlogList from './BlogList.tsx';
 import BlogPost from './BlogPost.tsx';
 import About from './About.tsx';
+import Tutorials from './Tutorials.tsx';
 import ContactPage from './ContactPage.tsx';
 import Privacy from './Privacy.tsx';
 import { isLoggedIn } from './auth.ts';
@@ -82,6 +83,8 @@ export default function Root() {
           path="/about"
           element={<About />}
         />
+        <Route path="/tutorials" element={<Navigate to="/tutorials/quick-start" replace />} />
+        <Route path="/tutorials/:topicId" element={<Tutorials />} />
         <Route
           path="/contact"
           element={<ContactPage />}

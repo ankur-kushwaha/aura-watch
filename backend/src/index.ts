@@ -1326,6 +1326,22 @@ server.listen(PORT, async () => {
     data: { status: 'Offline' }
   });
 
+  // Backfill readAt: null for legacy/existing notifications to ensure Prisma counts them correctly
+  try {
+    await prisma.$runCommandRaw({
+      update: "Notification",
+      updates: [
+        {
+          q: { readAt: { $exists: false } },
+          u: { $set: { readAt: null } },
+          multi: true
+        }
+      ]
+    });
+  } catch (err: any) {
+    console.error('[Startup] Failed to backfill notification readAt values:', err.message);
+  }
+
   // Periodically check for inactive edge devices (heartbeat timeout every 15s)
   setInterval(async () => {
     const timeoutThreshold = new Date(Date.now() - 30000); // 30 seconds ago
