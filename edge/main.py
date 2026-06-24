@@ -921,6 +921,7 @@ class EdgeAgent:
                 motion_threshold=config.motion_threshold,
                 pixel_change_threshold=config.pixel_change_threshold,
                 preroll_sec=runtime.clip_preroll_sec,
+                yolo_detect_interval=getattr(runtime, "yolo_detect_interval", 1),
             )
             pipeline_data["settings"] = settings
             pipeline_data["runtime"] = runtime

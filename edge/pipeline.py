@@ -72,6 +72,7 @@ class PipelineSettings:
     motion_threshold: int = 25
     pixel_change_threshold: float = 0.02
     preroll_sec: float = CLIP_PREROLL_SEC
+    yolo_detect_interval: int = 1
 
 
 FrameCallback = Callable[[np.ndarray], None]
@@ -130,6 +131,7 @@ class VisionPipeline:
         self._active_last_snapshot_at: dict[int, float] = {}
         self._active_reid_track_ids: set[int] = set()
         self._tracking_lock = threading.Lock()
+        self._stop_capture = threading.Event()
 
     def start_clip_feed(self, encoder: ClipEncoder) -> None:
         """Write the latest camera frame on a wall-clock tick so clip length matches recording time."""
@@ -230,6 +232,7 @@ class VisionPipeline:
         last_stream_time = 0.0
         last_frame_time = time.monotonic()
         last_frame_received_at = time.monotonic()
+        frame_index = 0
 
         while not self.should_stop():
             try:
@@ -244,6 +247,7 @@ class VisionPipeline:
                 continue
 
             last_frame_received_at = time.monotonic()
+            frame_index += 1
 
             if self.settings.tracking_enabled:
                 motion_detected, ratio = self._motion.detect(frame)
@@ -258,9 +262,11 @@ class VisionPipeline:
                     if self._clip_start_time is not None:
                         timeline_sec = now_mono - self._clip_start_time
 
+                    run_inference = (frame_index % self.settings.yolo_detect_interval == 0)
+
                     _annotated, detections, new_detection, stabilized = self.tracker.process(
                         frame,
-                        run_inference=True,
+                        run_inference=run_inference,
                         tracking_enabled=True,
                         timeline_sec=timeline_sec,
                         draw_annotated=False,
@@ -349,7 +355,7 @@ class VisionPipeline:
 
     def _capture_loop(self):
         consecutive_failures = 0
-        while not self.should_stop():
+        while not self.should_stop() and not self._stop_capture.is_set():
             frame = self.camera.read()
             if frame is None:
                 consecutive_failures += 1
@@ -383,6 +389,7 @@ class VisionPipeline:
                     pass
 
     def join_capture(self, timeout: float = 5.0):
+        self._stop_capture.set()
         self.stop_clip_feed()
         self.stop_continuous_feed()
         if self._capture_thread and self._capture_thread.is_alive():
