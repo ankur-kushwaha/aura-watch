@@ -48,7 +48,7 @@ export function NotificationsTab({
   const [searchParams] = useSearchParams();
   const [selectedStreamIdFilter, setSelectedStreamIdFilter] = useState('');
   const [selectedRuleIdFilter, setSelectedRuleIdFilter] = useState('');
-  const [filterCategory, setFilterCategory] = useState<'all' | 'ai' | 'custom'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'ai' | 'custom' | 'system'>('all');
   const [filterUnreadOnly, setFilterUnreadOnly] = useState(false);
   const [rules, setRules] = useState<AlertRule[]>([]);
 
@@ -100,21 +100,19 @@ export function NotificationsTab({
 
   // Filter notifications
   const filteredNotifications = notifications.filter((n) => {
-    // Hide system notifications entirely
-    if (n.category !== 'surveillance' && !n.alertRuleId) {
-      return false;
-    }
-
     // Stream ID Filter
     if (selectedStreamIdFilter && n.streamId !== selectedStreamIdFilter) {
       return false;
     }
 
-    // Category Filter: ai vs custom (has alertRuleId)
+    // Category Filter: ai vs custom (has alertRuleId) vs system (no alertRuleId)
     if (filterCategory === 'ai' && (n.category !== 'surveillance' || n.alertRuleId)) {
       return false;
     }
     if (filterCategory === 'custom' && !n.alertRuleId) {
+      return false;
+    }
+    if (filterCategory === 'system' && (n.category === 'surveillance' || n.alertRuleId)) {
       return false;
     }
 
@@ -182,7 +180,7 @@ export function NotificationsTab({
             <div className="flex flex-col gap-2">
               <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Source Category</label>
               <div className="flex flex-col gap-1">
-                {(['all', 'ai', 'custom'] as const).map((cat) => (
+                {(['all', 'ai', 'custom', 'system'] as const).map((cat) => (
                   <button
                     key={cat}
                     type="button"
@@ -195,6 +193,7 @@ export function NotificationsTab({
                     {cat === 'all' && 'All Notifications'}
                     {cat === 'ai' && 'AI Security Alerts'}
                     {cat === 'custom' && 'Custom Alerts'}
+                    {cat === 'system' && 'System & Device Logs'}
                   </button>
                 ))}
               </div>
@@ -218,21 +217,23 @@ export function NotificationsTab({
             </div>
 
             {/* Rule Filter */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Filter by Alert Rule</label>
-              <select
-                value={selectedRuleIdFilter}
-                onChange={(e) => setSelectedRuleIdFilter(e.target.value)}
-                className="bg-[#0b0f19] border border-border-glass text-[0.78rem] px-3 py-2 rounded-lg focus:border-primary text-white outline-none w-full cursor-pointer"
-              >
-                <option value="">All Alert Rules</option>
-                {rules.map((rule) => (
-                  <option key={rule.id} value={rule.id}>
-                    {rule.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {filterCategory !== 'system' && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Filter by Alert Rule</label>
+                <select
+                  value={selectedRuleIdFilter}
+                  onChange={(e) => setSelectedRuleIdFilter(e.target.value)}
+                  className="bg-[#0b0f19] border border-border-glass text-[0.78rem] px-3 py-2 rounded-lg focus:border-primary text-white outline-none w-full cursor-pointer"
+                >
+                  <option value="">All Alert Rules</option>
+                  {rules.map((rule) => (
+                    <option key={rule.id} value={rule.id}>
+                      {rule.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Read/Unread Filter */}
             <label className="flex items-center gap-2 text-[0.78rem] text-text-secondary cursor-pointer select-none mt-2">
