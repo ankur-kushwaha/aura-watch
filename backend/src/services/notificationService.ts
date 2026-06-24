@@ -136,6 +136,8 @@ export async function fromDeviceEvent(
     event.category === 'device' ? 'device' : 'camera'
   ) as NotificationCategory;
 
+  if (category === 'websocket') return;
+
   await createNotification({
     orgId,
     deviceId,
