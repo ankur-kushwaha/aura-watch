@@ -1317,6 +1317,7 @@ class EdgeAgent:
             clip_results = None
             if pipeline:
                 clip_results = pipeline.get_active_clip_results()
+                pipeline.clear_active_clip_results()
                 pipeline.stop_clip_feed()
             if stopped_encoder:
                 clip_encoder = stopped_encoder

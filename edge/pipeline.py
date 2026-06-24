@@ -138,13 +138,6 @@ class VisionPipeline:
         self.stop_clip_feed()
         with self._tracking_lock:
             self._clip_start_time = time.monotonic()
-            self._active_track_events.clear()
-            self._active_best_crops.clear()
-            self._active_seen_vehicle_tracks.clear()
-            self._active_last_snapshot_at.clear()
-            self._active_reid_track_ids.clear()
-            if self.tracker:
-                self.tracker.reset()
 
         self._clip_feed_encoder = encoder
         self._clip_feed_stop.clear()
@@ -162,6 +155,16 @@ class VisionPipeline:
                 "best_crops": dict(self._active_best_crops),
                 "reid_track_ids": set(self._active_reid_track_ids),
             }
+
+    def clear_active_clip_results(self) -> None:
+        with self._tracking_lock:
+            self._active_track_events.clear()
+            self._active_best_crops.clear()
+            self._active_seen_vehicle_tracks.clear()
+            self._active_last_snapshot_at.clear()
+            self._active_reid_track_ids.clear()
+            if self.tracker:
+                self.tracker.reset()
 
     def stop_clip_feed(self) -> None:
         self._clip_feed_stop.set()
