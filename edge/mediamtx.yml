@@ -1,0 +1,29 @@
+# MediaMTX Configuration for local Edge Proxy
+# Place this file in the same directory as your mediamtx binary on the Raspberry Pi.
+
+# API and metrics configs
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# RTSP settings
+rtsp: yes
+rtspAddress: :8554
+
+# Disable other unused protocols to save RAM and CPU
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+
+paths:
+  # Path name of your stream (e.g. cam1)
+  # You will configure your camera's stream URL in the dashboard to: rtsp://localhost:8554/cam1
+  cam1:
+    # REPLACE with your actual camera's physical RTSP URL
+    source: rtsp://admin:password@192.168.1.100:554/stream1
+    
+    # Do not disconnect from the camera when no one is watching
+    sourceOnDemand: no
+    
+    # Run the connection directly (no transcoding)
+    sourceProtocol: automatic

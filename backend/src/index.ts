@@ -13,6 +13,7 @@ import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, {
   registerOnClipUploaded,
+  registerOnClipMetadataUpdate,
   registerOnDevicesChanged,
   registerOnDeviceConfigUpdated,
   registerOnDeviceEventRecorded,
@@ -326,6 +327,10 @@ registerOnDeviceConfigUpdated(pushDeviceConfigure);
 
 registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight, reidProfiles) => {
   await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight, reidProfiles);
+});
+
+registerOnClipMetadataUpdate(async (deviceId, filename, streamId, trackEvents, reidProfiles, frameWidth, frameHeight) => {
+  await processVideoClipMetadataUpdateInBackground(deviceId, filename, streamId, trackEvents, reidProfiles, frameWidth, frameHeight);
 });
 
 registerOnClipDeleted((deviceId, filename) => {
@@ -819,6 +824,344 @@ async function processVideoClipInBackground(
       }
     }
 
+    // Restore stream status
+    const refreshedStream = await prisma.cameraStream.findUnique({ where: { streamId } });
+    const isOnline = activeDevices.has(deviceId);
+    const finalStatus = isOnline ? (refreshedStream?.trackingEnabled ? 'Monitoring' : 'Idle') : 'Offline';
+    
+    await prisma.cameraStream.update({
+      where: { streamId },
+      data: { status: finalStatus }
+    });
+
+    broadcastToSubscribedUIs(deviceId, { 
+      type: 'status', 
+      streamId,
+      status: finalStatus 
+    });
+
+    // Fallback signal for UIs to refresh archive after processing ends (success or failure).
+    for (const ws of uiClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'clip_processing_complete', streamId, deviceId }));
+      }
+    }
+  }
+}
+
+async function processVideoClipMetadataUpdateInBackground(
+  deviceId: string,
+  filename: string,
+  streamId: string,
+  trackEvents: ReidTrackEvent[] = [],
+  reidProfiles?: any[],
+  frameWidth?: number,
+  frameHeight?: number,
+) {
+  // Merge ReID profiles/embeddings into trackEvents
+  if (Array.isArray(reidProfiles) && reidProfiles.length > 0) {
+    const profileByTrackId = new Map<number, any>();
+    for (const p of reidProfiles) {
+      if (p && typeof p.trackId === 'number') {
+        profileByTrackId.set(p.trackId, p);
+      }
+    }
+    for (const event of trackEvents) {
+      const p = profileByTrackId.get(event.trackId);
+      if (p && Array.isArray(p.embedding)) {
+        event.embedding = p.embedding;
+      }
+    }
+  }
+
+  const existingClip = await prisma.videoClip.findFirst({
+    where: { filename, deviceId }
+  });
+
+  if (!existingClip) {
+    console.warn(`[Metadata Update] Clip record not found for filename: ${filename}, deviceId: ${deviceId}`);
+    return;
+  }
+
+  const filepath = existingClip.filepath;
+  const timestamp = existingClip.timestamp;
+  const duration = existingClip.duration;
+
+  const stream = await prisma.cameraStream.findUnique({
+    where: { streamId }
+  });
+  const cameraName = stream ? stream.name : 'Unknown Camera';
+
+  await prisma.cameraStream.update({
+    where: { streamId },
+    data: { status: 'Processing' }
+  });
+
+  broadcastToSubscribedUIs(deviceId, { type: 'status', streamId, status: 'Processing' });
+  broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Processing metadata update for clip: ${filename}...`);
+
+  const orgId = await getDeviceOrgId(deviceId);
+  const orgSettings = orgId ? await getOrgSettings(orgId) : null;
+
+  try {
+    trackEvent(orgId || deviceId, 'process_video_clip_metadata_update', {
+      duration,
+      cameraName,
+      streamId,
+      trackEventCount: trackEvents.length,
+    });
+
+    const reidFromClipPromise =
+      orgSettings?.reidProcessing !== false && stream?.crossCameraReid !== false && trackEvents.length > 0
+        ? processReidTrackEventsFromClip(
+            filepath,
+            deviceId,
+            streamId,
+            timestamp.getTime(),
+            filename,
+            trackEvents,
+            frameWidth,
+            frameHeight,
+          )
+        : Promise.resolve({ succeeded: 0, failures: [] as { trackId: number; error: string }[], appearances: new Map() });
+
+    const vehicleAppearancePromise =
+      orgSettings?.videoSummary !== false && trackEvents.length > 0
+        ? analyzeVehicleAppearancesFromClip(filepath, trackEvents, frameWidth, frameHeight)
+        : Promise.resolve(new Map());
+
+    const [reidResult, vehicleAppearances] = await Promise.all([
+      reidFromClipPromise,
+      vehicleAppearancePromise,
+    ]);
+    const appearances = mergeAppearanceMaps(reidResult.appearances, vehicleAppearances);
+    const reidCropsExtracted = reidResult.succeeded;
+    const reidCandidateCount = selectReidTrackEvents(trackEvents).length;
+
+    let summary = '';
+    if (orgSettings?.videoSummary !== false) {
+      summary = buildYoloSummary(
+        trackEvents,
+        cameraName,
+        duration,
+        frameWidth,
+        frameHeight,
+        appearances,
+      );
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Detection summary generated from YOLO metadata.`);
+    } else {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Video summary disabled for this organization.`);
+    }
+
+    if (orgSettings?.reidProcessing === false && trackEvents.length > 0) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] ReID processing disabled for this organization.`);
+    } else if (stream?.crossCameraReid === false && trackEvents.length > 0) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] ReID processing disabled for this camera stream.`);
+    }
+
+    const reidLogEntries: ClipReidLogEntry[] = [];
+    if (orgSettings?.reidProcessing === false) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'ReID processing is disabled in organization settings.',
+      });
+    }
+    if (stream?.crossCameraReid === false) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'ReID processing is disabled on this camera stream.',
+      });
+    }
+    if (!stream?.trackingEnabled) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'Object tracking was disabled on this camera stream when the clip was processed.',
+      });
+    }
+    if (trackEvents.length === 0) {
+      reidLogEntries.push({
+        level: 'info',
+        message: 'No track events were bundled with this clip. ReID requires a person or vehicle to be detected during clip analysis.',
+      });
+    } else if (reidCandidateCount === 0) {
+      reidLogEntries.push({
+        level: 'warn',
+        message: `Clip included ${trackEvents.length} YOLO snapshot(s) but no ReID-ready track event with an edge embedding.`,
+      });
+    } else {
+      reidLogEntries.push({
+        level: 'info',
+        message: `Edge bundled ${trackEvents.length} track event(s) (${reidCandidateCount} ReID candidate(s)).`,
+      });
+      for (const failure of reidResult.failures) {
+        reidLogEntries.push({
+          level: 'warn',
+          message: `Track ${failure.trackId}: ReID profile creation failed — ${failure.error}`,
+        });
+      }
+      if (reidCropsExtracted > 0) {
+        reidLogEntries.push({
+          level: 'info',
+          message: `Stored ${reidCropsExtracted} edge ReID profile(s) from the clip.`,
+        });
+      } else if (reidResult.failures.length === 0) {
+        reidLogEntries.push({
+          level: 'warn',
+          message: 'Track events were received but no ReID profiles could be created.',
+        });
+      }
+    }
+
+    const reidLog: ClipReidLog = {
+      trackEventsReceived: trackEvents.length,
+      cropsExtracted: reidCropsExtracted,
+      trackingEnabled: stream?.trackingEnabled ?? false,
+      entries: reidLogEntries,
+    };
+
+    if (trackEvents.length > 0) {
+      if (reidCropsExtracted > 0) {
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] Stored ${reidCropsExtracted} ReID profile(s) from clip ${filename}.`,
+        );
+      } else if (reidCandidateCount > 0) {
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] ReID profile creation failed for ${reidCandidateCount} candidate(s) in ${filename}.`,
+        );
+      } else {
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] Clip ${filename} had ${trackEvents.length} detection snapshot(s) but no ReID embeddings from the edge.`,
+        );
+      }
+    }
+
+    let yoloPreviewCrops = new Map<number, { cropFilename: string; clipOffsetMs: number; bbox: string }>();
+    if (trackEvents.length > 0 && fs.existsSync(filepath)) {
+      try {
+        yoloPreviewCrops = await extractYoloPreviewCrops(
+          filepath,
+          deviceId,
+          timestamp.getTime(),
+          trackEvents,
+          frameWidth,
+          frameHeight,
+        );
+        if (yoloPreviewCrops.size > 0 && reidCropsExtracted < trackEvents.length) {
+          broadcastLogToSubscribedUIs(
+            deviceId,
+            `[${cameraName}] Saved ${yoloPreviewCrops.size} YOLO preview crop(s) for clip ${filename}.`,
+          );
+        }
+      } catch (err: any) {
+        console.warn(`[YoloCrop] Preview crop extraction failed for ${filename}:`, err.message);
+      }
+    }
+
+    const detectedObjects = trackEvents.length > 0
+      ? enrichDetectedObjects(aggregateTrackEvents(trackEvents), trackEvents, appearances)
+          .map((object) => {
+            const crop = yoloPreviewCrops.get(object.trackId);
+            if (!crop) return object;
+            return {
+              ...object,
+              cropFilename: crop.cropFilename,
+              clipOffsetMs: crop.clipOffsetMs,
+              bbox: crop.bbox,
+            };
+          })
+      : undefined;
+
+    // 2. Update metadata in MongoDB
+    const clipDb = await prisma.videoClip.update({
+      where: { id: existingClip.id },
+      data: {
+        summary,
+        detectedObjects: detectedObjects as object,
+        reidLog: reidLog as object,
+      }
+    });
+
+    await linkDetectionsToClip(clipDb.id, filename);
+    broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Updated clip metadata in MongoDB with ID: ${clipDb.id}`);
+
+    let clipForBroadcast = clipDb;
+    if (
+      orgSettings?.videoSummary !== false &&
+      stream?.aiSummaryEnabled !== false &&
+      trackEvents.length > 0 &&
+      fs.existsSync(filepath)
+    ) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Generating AI summary for clip with detected objects...`);
+      try {
+        clipForBroadcast = await generateClipAiSummaryFromLocalFile(
+          clipDb,
+          filepath,
+          orgId ?? undefined,
+          orgSettings?.semanticSearch !== false,
+        );
+        broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generated for clip ${filename}.`);
+      } catch (err: any) {
+        console.error(`[AI Summary] Auto-generation failed for ${filename}:`, err);
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] AI summary generation failed for ${filename}: ${err.message}`,
+        );
+      }
+    } else if (stream?.aiSummaryEnabled === false && trackEvents.length > 0) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generation disabled for this camera stream.`);
+    }
+
+    if (orgSettings?.semanticSearch === false) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Semantic search indexing disabled for this organization.`);
+    }
+    
+    // Notify all UI clients
+    broadcastNewClipToAllUIs(clipForBroadcast, deviceId, streamId);
+
+    // --- Notification: LLM surveillance classifier ---
+    if (orgId && orgSettings?.notificationsEnabled !== false) {
+      const aiSummaryRaw = (clipForBroadcast as any).aiSummary as string | null | undefined;
+      const parsedAi = tryParseClipAiAnalysis(aiSummaryRaw);
+
+      // Resolve identity labels from ReID detections linked to this clip
+      const reidDetections = await prisma.reidDetection.findMany({
+        where: {
+          OR: [{ clipId: clipForBroadcast.id }, { clipFilename: filename }],
+          identityId: { not: null },
+        },
+        include: { identity: { select: { id: true, label: true, isWatchlisted: true } } },
+      });
+
+      const identityLabels = [...new Set(
+        reidDetections
+          .map(d => d.identity?.label)
+          .filter((l): l is string => !!l),
+      )];
+
+      void evaluateClipWithLLM({
+        clipId: clipForBroadcast.id,
+        streamId,
+        deviceId,
+        orgId,
+        cameraName,
+        duration,
+        aiSummary: aiSummaryRaw ?? null,
+        objectCounts: {
+          person: parsedAi?.objectCounts?.person ?? 0,
+          vehicle: parsedAi?.objectCounts?.vehicle ?? 0,
+        },
+        identityLabels,
+      }).catch((err: any) => {
+        console.warn(`[Notifications] Clip evaluation failed for ${filename}:`, err.message);
+      });
+    }
+  } catch (error: any) {
+    console.error(`[Pipeline Error] Failed to process metadata update for ${filename}:`, error);
+    broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process metadata update for ${filename}: ${error.message}`);
+  } finally {
     // Restore stream status
     const refreshedStream = await prisma.cameraStream.findUnique({ where: { streamId } });
     const isOnline = activeDevices.has(deviceId);

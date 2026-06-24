@@ -1229,7 +1229,7 @@ class EdgeAgent:
         timestamp_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)
         p_data["recording_started_at_ms"] = timestamp_ms
         filename = f"clip_{timestamp_ms}_{stream_id}.mp4"
-        output_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+        output_path = os.path.join(LOCAL_CLIPS_DIR, filename)
         width = p_data.get("frame_width") or 640
         height = p_data.get("frame_height") or 480
         clip_encoder: Optional[ClipEncoder] = None
@@ -1351,6 +1351,28 @@ class EdgeAgent:
             preroll_frames = list(p_data.get("preroll_frames") or [])
             self.send_log(f"[{name}] Queuing clip for background YOLO + upload: {filename}")
             
+            # Immediate upload to Cloud (without metadata)
+            uploaded_immediately = False
+            self.send_log(f"[{name}] Uploading clip to Cloud (immediate, no metadata): {filename}")
+            try:
+                upload_clip(
+                    CLOUD_URL,
+                    self.device_id,
+                    output_path,
+                    filename,
+                    duration=actual_duration,
+                    stream_id=stream_id,
+                    track_events=[],
+                    frame_width=width,
+                    frame_height=height,
+                    clip_start_ms=timestamp_ms,
+                    reid_profiles=[],
+                )
+                uploaded_immediately = True
+                self.send_log(f"[{name}] Successfully uploaded clip to Cloud (immediate): {filename}")
+            except Exception as upload_exc:
+                self.send_log(f"[{name}] Failed immediate clip upload (will retry in background): {upload_exc}")
+
             # Resolve config values for JSON sidecar metadata
             runtime = p_data.get("runtime")
             if runtime is None and config is not None:
@@ -1386,6 +1408,7 @@ class EdgeAgent:
                 "detection_classes": detection_classes,
                 "min_upload_duration_sec": getattr(runtime, "min_upload_duration_sec", 3.0),
                 "attempts": 0,
+                "uploaded": uploaded_immediately,
             }
 
             temp_json_path = json_path + ".tmp"

@@ -228,13 +228,28 @@ export type ClipUploadCallback = (
   reidProfiles?: any[],
 ) => Promise<void>;
 
+export type ClipMetadataUpdateCallback = (
+  deviceId: string,
+  filename: string,
+  streamId: string,
+  trackEvents: ReidTrackEvent[],
+  reidProfiles?: any[],
+  frameWidth?: number,
+  frameHeight?: number,
+) => Promise<void>;
+
 let onClipUploadedCallback: ClipUploadCallback | null = null;
+let onClipMetadataUpdateCallback: ClipMetadataUpdateCallback | null = null;
 let onDevicesChangedCallback: (() => void) | null = null;
 let onDeviceConfigUpdatedCallback: ((deviceId: string) => Promise<void>) | null = null;
 let onDeviceEventRecordedCallback: ((deviceId: string, event: object) => void) | null = null;
 
 export function registerOnClipUploaded(cb: ClipUploadCallback) {
   onClipUploadedCallback = cb;
+}
+
+export function registerOnClipMetadataUpdate(cb: ClipMetadataUpdateCallback) {
+  onClipMetadataUpdateCallback = cb;
 }
 
 export function registerOnDevicesChanged(cb: () => void) {
@@ -613,6 +628,43 @@ router.post('/:deviceId/upload', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error uploading clip:', error);
     res.status(500).json({ error: 'Failed to process file upload' });
+  }
+});
+
+/**
+ * POST /api/devices/:deviceId/metadata
+ * Update metadata of an uploaded video clip
+ */
+router.post('/:deviceId/metadata', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const { filename, streamId, trackEvents, reidProfiles, frameWidth, frameHeight } = req.body;
+
+  if (!filename || !streamId) {
+    return res.status(400).json({ error: 'filename and streamId are required' });
+  }
+
+  try {
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found. Register first.' });
+    }
+
+    res.status(200).json({ message: 'Metadata update received' });
+
+    if (onClipMetadataUpdateCallback) {
+      onClipMetadataUpdateCallback(
+        deviceId,
+        filename,
+        streamId,
+        Array.isArray(trackEvents) ? trackEvents : [],
+        reidProfiles,
+        frameWidth,
+        frameHeight,
+      ).catch((err) => console.error(`[Cloud Hub] Error processing metadata update for ${filename}:`, err));
+    }
+  } catch (error) {
+    console.error('Error updating clip metadata:', error);
+    res.status(500).json({ error: 'Failed to process metadata update' });
   }
 });
 

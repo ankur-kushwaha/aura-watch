@@ -6,7 +6,7 @@ const PUBLIC_PATHS: Array<{ method: string; pattern: RegExp }> = [
   { method: 'POST', pattern: /^\/api\/auth\/(register|login)$/ },
   { method: 'POST', pattern: /^\/api\/admin\/login$/ },
   { method: 'POST', pattern: /^\/api\/devices\/register$/ },
-  { method: 'POST', pattern: /^\/api\/devices\/[^/]+\/(upload|reid\/crop)$/ },
+  { method: 'POST', pattern: /^\/api\/devices\/[^/]+\/(upload|reid\/crop|metadata)$/ },
 ];
 
 function isPublicPath(method: string, path: string): boolean {

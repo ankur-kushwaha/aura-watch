@@ -401,3 +401,36 @@ def upload_clip(
 
     if response.status_code < 200 or response.status_code >= 300:
         raise RuntimeError(f"Upload failed ({response.status_code}): {response.text}")
+
+
+def update_clip_metadata(
+    cloud_url: str,
+    device_id: str,
+    filename: str,
+    stream_id: str,
+    track_events: list,
+    reid_profiles: Optional[list] = None,
+    frame_width: Optional[int] = None,
+    frame_height: Optional[int] = None,
+):
+    url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/metadata"
+    payload = {
+        "filename": filename,
+        "streamId": stream_id,
+        "trackEvents": track_events,
+    }
+    if reid_profiles is not None:
+        payload["reidProfiles"] = reid_profiles
+    if frame_width is not None:
+        payload["frameWidth"] = frame_width
+    if frame_height is not None:
+        payload["frameHeight"] = frame_height
+
+    response = requests.post(
+        url,
+        json=payload,
+        timeout=60,
+    )
+
+    if response.status_code < 200 or response.status_code >= 300:
+        raise RuntimeError(f"Metadata update failed ({response.status_code}): {response.text}")

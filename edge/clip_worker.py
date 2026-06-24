@@ -19,7 +19,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from agent_log import AgentLogger
 from clip_processor import process_clip
-from recorder import clip_meets_upload_threshold, upload_clip
+from recorder import clip_meets_upload_threshold, upload_clip, update_clip_metadata
 from reid_embedder import ReidEmbedder
 from yolo_tracker import YoloByteTracker
 
@@ -176,7 +176,7 @@ def process_single_job(
     job["attempts"] = job.get("attempts", 0) + 1
     filename = job["filename"]
     stream_id = job["stream_id"]
-    mp4_path = os.path.join(LOCAL_VIDEO_DIR, filename)
+    mp4_path = os.path.join(LOCAL_CLIPS_DIR, filename)
 
     # Check attempt limit (Poison Pill mitigation)
     if job["attempts"] > 3:
@@ -283,49 +283,58 @@ def process_single_job(
         f"{len(track_events)} total track event(s)."
     )
 
-    # Move clip to persistent LOCAL_CLIPS_DIR before uploading
-    os.makedirs(LOCAL_CLIPS_DIR, exist_ok=True)
-    target_mp4_path = os.path.join(LOCAL_CLIPS_DIR, filename)
-    try:
-        shutil.move(mp4_path, target_mp4_path)
-        wlog(f"[{stream_id}] Moved clip {filename} to persistent storage: {target_mp4_path}")
-    except Exception as exc:
-        wlog(f"[{stream_id}] Failed to move clip to persistent storage: {exc}. Keeping temp path.")
-        target_mp4_path = mp4_path
-
-    wlog(
-        f"[{stream_id}] Uploading clip to Cloud: {filename} "
-        f"({len(track_events)} track event(s))..."
-    )
-    try:
-        upload_clip(
-            CLOUD_URL,
-            device_id,
-            target_mp4_path,
-            filename,
-            duration=job.get("actual_duration"),
-            stream_id=stream_id,
-            track_events=track_events,
-            frame_width=job.get("width"),
-            frame_height=job.get("height"),
-            clip_start_ms=clip_start_ms,
-            reid_profiles=reid_profiles,
-        )
-        wlog(f"[{stream_id}] Successfully uploaded clip to Cloud: {filename}")
-
-        # Successfully uploaded — remove sidecar
+    # Check if the clip has already been uploaded (immediate upload succeeded in main.py)
+    already_uploaded = job.get("uploaded", False)
+    if not already_uploaded:
+        wlog(f"[{stream_id}] Clip was not uploaded immediately. Uploading video file now...")
         try:
-            os.unlink(json_path)
-        except OSError:
-            pass
-    except Exception as exc:
-        wlog(f"[{stream_id}] Clip upload failed for {filename}: {exc}")
-        # Move back to temp so it can be retried if it was moved
-        if target_mp4_path != mp4_path and os.path.exists(target_mp4_path):
+            upload_clip(
+                CLOUD_URL,
+                device_id,
+                mp4_path,
+                filename,
+                duration=job.get("actual_duration"),
+                stream_id=stream_id,
+                track_events=track_events,
+                frame_width=job.get("width"),
+                frame_height=job.get("height"),
+                clip_start_ms=clip_start_ms,
+                reid_profiles=reid_profiles,
+            )
+            wlog(f"[{stream_id}] Successfully uploaded clip to Cloud (retry/failover): {filename}")
+            # Mark as uploaded so we don't re-upload if subsequent steps fail
+            job["uploaded"] = True
             try:
-                shutil.move(target_mp4_path, mp4_path)
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(job, f, indent=2)
             except Exception:
                 pass
+        except Exception as exc:
+            wlog(f"[{stream_id}] Clip video upload failed: {exc}")
+            return
+    else:
+        wlog(f"[{stream_id}] Uploading clip metadata to Cloud: {filename} ({len(track_events)} track event(s))...")
+        try:
+            update_clip_metadata(
+                CLOUD_URL,
+                device_id,
+                filename,
+                stream_id,
+                track_events,
+                reid_profiles=reid_profiles,
+                frame_width=job.get("width"),
+                frame_height=job.get("height"),
+            )
+            wlog(f"[{stream_id}] Successfully updated clip metadata in Cloud: {filename}")
+        except Exception as exc:
+            wlog(f"[{stream_id}] Clip metadata update failed: {exc}")
+            return
+
+    # Successfully processed and uploaded/updated — remove sidecar
+    try:
+        os.unlink(json_path)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
