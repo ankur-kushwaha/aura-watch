@@ -958,9 +958,11 @@ class EdgeAgent:
                 with p_data["motion_lock"]:
                     p_data["last_motion_at"] = time.monotonic()
 
+            tracker = self._get_stream_tracker(stream_id)
             pipeline = VisionPipeline(
                 camera=camera,
                 settings=settings,
+                tracker=tracker,
                 get_clip_encoder=get_clip_encoder,
                 on_preview_frame=on_preview if self.live_preview_enabled else None,
                 on_motion_start=on_motion_start,
@@ -1311,7 +1313,9 @@ class EdgeAgent:
 
             stopped_encoder = self._stop_active_clip_encoder(p_data)
             pipeline = p_data.get("pipeline")
+            clip_results = None
             if pipeline:
+                clip_results = pipeline.get_active_clip_results()
                 pipeline.stop_clip_feed()
             if stopped_encoder:
                 clip_encoder = stopped_encoder
@@ -1348,12 +1352,33 @@ class EdgeAgent:
             with p_data["recording_lock"]:
                 p_data["is_recording"] = False
 
+            pre_extracted_crops = {}
+            track_events = []
+            if clip_results:
+                track_events = clip_results["track_events"]
+                best_crops = clip_results["best_crops"]
+                import cv2
+                for tid, (detection, offset_ms, crop_bgr) in best_crops.items():
+                    crop_filename = f"clip_{timestamp_ms}_{stream_id}_crop_{tid}.jpg"
+                    crop_path = os.path.join(LOCAL_VIDEO_DIR, crop_filename)
+                    try:
+                        cv2.imwrite(crop_path, crop_bgr)
+                        pre_extracted_crops[str(tid)] = {
+                            "filename": crop_filename,
+                            "offset_ms": offset_ms,
+                            "bbox": list(detection.bbox),
+                            "confidence": detection.confidence,
+                            "class_name": detection.class_name,
+                        }
+                    except Exception as e:
+                        self.send_log(f"[{name}] Failed to save crop image for track {tid}: {e}")
+
             preroll_frames = list(p_data.get("preroll_frames") or [])
             self.send_log(f"[{name}] Queuing clip for background YOLO + upload: {filename}")
             
-            # Immediate upload to Cloud (without metadata)
+            # Immediate upload to Cloud (with real-time YOLO metadata)
             uploaded_immediately = False
-            self.send_log(f"[{name}] Uploading clip to Cloud (immediate, no metadata): {filename}")
+            self.send_log(f"[{name}] Uploading clip to Cloud (immediate, with real-time YOLO metadata): {filename}")
             try:
                 upload_clip(
                     CLOUD_URL,
@@ -1362,7 +1387,7 @@ class EdgeAgent:
                     filename,
                     duration=actual_duration,
                     stream_id=stream_id,
-                    track_events=[],
+                    track_events=track_events,
                     frame_width=width,
                     frame_height=height,
                     clip_start_ms=timestamp_ms,
@@ -1409,6 +1434,8 @@ class EdgeAgent:
                 "min_upload_duration_sec": getattr(runtime, "min_upload_duration_sec", 3.0),
                 "attempts": 0,
                 "uploaded": uploaded_immediately,
+                "pre_extracted_track_events": track_events,
+                "pre_extracted_crops": pre_extracted_crops,
             }
 
             temp_json_path = json_path + ".tmp"

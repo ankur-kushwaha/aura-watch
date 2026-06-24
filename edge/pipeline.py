@@ -19,6 +19,47 @@ from camera import CameraCapture
 from frame_buffer import FrameRingBuffer
 from motion_detector import MotionDetector
 from recorder import ClipEncoder
+from yolo_tracker import YoloByteTracker, Detection
+from crop_appearance import (
+    analyze_crop_appearance,
+    analyze_vehicle_from_frame,
+    analyze_vehicle_region,
+    is_vehicle_class,
+)
+
+
+def _clip_crop_bgr(frame: np.ndarray, bbox: tuple[int, int, int, int]) -> Optional[np.ndarray]:
+    h_f, w_f = frame.shape[:2]
+    x1 = max(0, min(bbox[0], w_f - 1))
+    y1 = max(0, min(bbox[1], h_f - 1))
+    x2 = max(0, min(bbox[2], w_f))
+    y2 = max(0, min(bbox[3], h_f))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return frame[y1:y2, x1:x2].copy()
+
+
+def _detection_event(
+    detection: Detection,
+    offset_ms: int,
+    *,
+    kind: str,
+    appearance: Optional[dict[str, Any]] = None,
+    embedding: Optional[list[float]] = None,
+) -> dict[str, Any]:
+    event: dict[str, Any] = {
+        "trackId": detection.track_id,
+        "bbox": ",".join(map(str, detection.bbox)),
+        "offsetMs": offset_ms,
+        "confidence": round(detection.confidence, 4),
+        "className": detection.class_name,
+        "kind": kind,
+    }
+    if appearance:
+        event["appearance"] = appearance
+    if embedding is not None:
+        event["embedding"] = embedding
+    return event
 
 
 @dataclass
@@ -46,6 +87,7 @@ class VisionPipeline:
         self,
         camera: CameraCapture,
         settings: PipelineSettings,
+        tracker: Optional[YoloByteTracker] = None,
         get_clip_encoder: Optional[ClipEncoderGetter] = None,
         on_preview_frame: Optional[FrameCallback] = None,
         on_motion_start: Optional[MotionStartCallback] = None,
@@ -54,6 +96,7 @@ class VisionPipeline:
     ):
         self.camera = camera
         self.settings = settings
+        self.tracker = tracker
         self.get_clip_encoder = get_clip_encoder
         self.on_preview_frame = on_preview_frame
         self.on_motion_start = on_motion_start
@@ -79,9 +122,28 @@ class VisionPipeline:
         self._continuous_feed_stop = threading.Event()
         self._continuous_feed_encoder: Optional[ClipEncoder] = None
 
+        # Real-time tracking structures for active recording session
+        self._clip_start_time: Optional[float] = None
+        self._active_track_events: list[dict[str, Any]] = []
+        self._active_best_crops: dict[int, tuple[Detection, int, np.ndarray]] = {}
+        self._active_seen_vehicle_tracks: set[int] = set()
+        self._active_last_snapshot_at: dict[int, float] = {}
+        self._active_reid_track_ids: set[int] = set()
+        self._tracking_lock = threading.Lock()
+
     def start_clip_feed(self, encoder: ClipEncoder) -> None:
         """Write the latest camera frame on a wall-clock tick so clip length matches recording time."""
         self.stop_clip_feed()
+        with self._tracking_lock:
+            self._clip_start_time = time.monotonic()
+            self._active_track_events.clear()
+            self._active_best_crops.clear()
+            self._active_seen_vehicle_tracks.clear()
+            self._active_last_snapshot_at.clear()
+            self._active_reid_track_ids.clear()
+            if self.tracker:
+                self.tracker.reset()
+
         self._clip_feed_encoder = encoder
         self._clip_feed_stop.clear()
         self._clip_feed_thread = threading.Thread(
@@ -90,6 +152,14 @@ class VisionPipeline:
             daemon=True,
         )
         self._clip_feed_thread.start()
+
+    def get_active_clip_results(self) -> dict[str, Any]:
+        with self._tracking_lock:
+            return {
+                "track_events": list(self._active_track_events),
+                "best_crops": dict(self._active_best_crops),
+                "reid_track_ids": set(self._active_reid_track_ids),
+            }
 
     def stop_clip_feed(self) -> None:
         self._clip_feed_stop.set()
@@ -181,6 +251,80 @@ class VisionPipeline:
                 if self.get_clip_encoder:
                     encoder = self.get_clip_encoder()
                     is_recording = encoder is not None and encoder.is_running()
+
+                if self.tracker and (motion_detected or is_recording):
+                    now_mono = time.monotonic()
+                    timeline_sec = 0.0
+                    if self._clip_start_time is not None:
+                        timeline_sec = now_mono - self._clip_start_time
+
+                    _annotated, detections, new_detection, stabilized = self.tracker.process(
+                        frame,
+                        run_inference=True,
+                        tracking_enabled=True,
+                        timeline_sec=timeline_sec,
+                        draw_annotated=False,
+                    )
+
+                    has_targets = any(d.class_name in self.tracker.class_names for d in detections)
+                    if not is_recording:
+                        motion_detected = has_targets
+                    else:
+                        if has_targets and self.on_motion_active:
+                            self.on_motion_active()
+
+                    if is_recording:
+                        with self._tracking_lock:
+                            offset_ms = int(timeline_sec * 1000)
+                            for d in detections:
+                                if d.track_id is None:
+                                    continue
+                                tid = d.track_id
+
+                                existing_best = self._active_best_crops.get(tid)
+                                if not existing_best or d.confidence > existing_best[0].confidence:
+                                    best_crop_bgr = _clip_crop_bgr(frame, d.bbox)
+                                    if best_crop_bgr is not None:
+                                        self._active_best_crops[tid] = (d, offset_ms, best_crop_bgr)
+
+                                last_at = self._active_last_snapshot_at.get(tid, -1.0)
+                                if timeline_sec - last_at >= 0.5:
+                                    self._active_last_snapshot_at[tid] = timeline_sec
+
+                                    appearance = None
+                                    if is_vehicle_class(d.class_name):
+                                        if tid not in self._active_seen_vehicle_tracks:
+                                            appearance = analyze_vehicle_from_frame(frame, d.bbox)
+                                            if appearance:
+                                                self._active_seen_vehicle_tracks.add(tid)
+
+                                    self._active_track_events.append(
+                                        _detection_event(d, offset_ms, kind="snapshot", appearance=appearance)
+                                    )
+
+                            for d in stabilized:
+                                if d.track_id is None:
+                                    continue
+                                tid = d.track_id
+                                if tid not in self._active_reid_track_ids:
+                                    crop_bgr = _clip_crop_bgr(frame, d.bbox)
+                                    appearance = None
+                                    if crop_bgr is not None:
+                                        if is_vehicle_class(d.class_name):
+                                            appearance = analyze_vehicle_region(crop_bgr)
+                                        else:
+                                            appearance = analyze_crop_appearance(crop_bgr, d.bbox)
+
+                                    self._active_track_events.append(
+                                        _detection_event(
+                                            d,
+                                            offset_ms,
+                                            kind="reid",
+                                            appearance=appearance,
+                                            embedding=None,
+                                        )
+                                    )
+                                    self._active_reid_track_ids.add(tid)
 
                 if motion_detected:
                     if not self._motion_active or not is_recording:
