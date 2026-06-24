@@ -4,7 +4,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -62,7 +61,6 @@ export interface EventsTabRef {
     startTime: string;
     endTime: string;
   }) => Promise<void>;
-  handleNewClip: (clip: VideoClip) => void;
   handleSelectClip: (clip: VideoClip) => void;
 }
 
@@ -223,14 +221,6 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
       void fetchClips();
     }, [fetchClips, searchParams]);
 
-    const onlineDevicesInitializedRef = useRef(false);
-    useEffect(() => {
-      if (!onlineDevicesInitializedRef.current) {
-        onlineDevicesInitializedRef.current = true;
-        return;
-      }
-      void fetchClips();
-    }, [onlineDeviceIds, fetchClips]);
 
     useEffect(() => {
       const selectedClipId = selectedClip?.id;
@@ -277,23 +267,6 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
       }
     }, [isMobileViewport]);
 
-    const handleNewClip = useCallback(
-      (clip: VideoClip) => {
-        if (clip.deviceId && !onlineDeviceIds.has(clip.deviceId)) return;
-        const normalized: VideoClip = {
-          ...clip,
-          timestamp: typeof clip.timestamp === 'string'
-            ? clip.timestamp
-            : new Date(clip.timestamp as unknown as string).toISOString(),
-        };
-        setClips((prev) => {
-          if (prev.some((c) => c.id === normalized.id)) return prev;
-          return [normalized, ...prev];
-        });
-        setClipsTotal((prev) => prev + 1);
-      },
-      [onlineDeviceIds]
-    );
 
     const handleSelectClip = useCallback(
       (clip: VideoClip) => {
@@ -433,10 +406,8 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
       }
     }, [clips.length, clipsTotal]);
 
-    // Expose handlers via imperative ref
     useImperativeHandle(ref, () => ({
       fetchClips,
-      handleNewClip,
       handleSelectClip,
     }));
 
@@ -463,11 +434,10 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
               <button
                 type="button"
                 onClick={() => setShowClipFilters(!showClipFilters)}
-                className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${
-                  showClipFilters || hasActiveClipFilters
+                className={`btn btn-secondary py-1 px-2.5 text-[0.75rem] rounded-md flex items-center gap-1.5 transition-all duration-200 ${showClipFilters || hasActiveClipFilters
                     ? 'border-primary text-primary bg-[rgba(124,58,237,0.08)]'
                     : ''
-                }`}
+                  }`}
               >
                 <SlidersHorizontal size={12} />
                 Filters
@@ -610,9 +580,8 @@ export const EventsTab = forwardRef<EventsTabRef, EventsTabProps>(
                       <div
                         key={c.id}
                         onClick={() => handleSelectClip(c)}
-                        className={`glass-panel interactive ${
-                          selectedClip?.id === c.id ? 'active' : ''
-                        } p-3 flex justify-between items-start cursor-pointer transition-all duration-200 w-full min-w-0`}
+                        className={`glass-panel interactive ${selectedClip?.id === c.id ? 'active' : ''
+                          } p-3 flex justify-between items-start cursor-pointer transition-all duration-200 w-full min-w-0`}
                       >
                         <div className="flex items-start gap-3 flex-1 min-w-0">
                           <div className="bg-primary-glow p-2 rounded-lg text-primary flex-shrink-0 mt-0.5">

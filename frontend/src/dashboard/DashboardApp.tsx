@@ -40,7 +40,6 @@ import type {
   DeviceEvent,
   EdgeDevice,
   LogEntry,
-  VideoClip,
   Notification,
 } from './types';
 import { NotificationDrawer } from './components';
@@ -277,7 +276,6 @@ export default function DashboardApp() {
   const selectedStreamIdRef = useRef(selectedStreamId);
   const selectedStreamDeviceIdRef = useRef<string | null>(null);
   const fetchClipsRef = useRef<() => Promise<void>>(async () => { });
-  const handleNewClipRef = useRef<(clip: VideoClip) => void>(() => { });
   const triggerReidRefreshRef = useRef<() => void>(() => { });
   const streamStatusRef = useRef<string>('Offline');
   const onlineDeviceIdsRef = useRef<Set<string>>(new Set());
@@ -443,7 +441,6 @@ export default function DashboardApp() {
 
   useEffect(() => {
     fetchClipsRef.current = () => eventsTabRef.current?.fetchClips() ?? Promise.resolve();
-    handleNewClipRef.current = (clip) => eventsTabRef.current?.handleNewClip(clip);
     triggerReidRefreshRef.current = reidTab.triggerReidRefresh;
   }, [reidTab.triggerReidRefresh]);
 
@@ -597,13 +594,6 @@ export default function DashboardApp() {
           });
           if (deviceLogSinkRef.current) {
             deviceLogSinkRef.current(logEntry);
-          }
-          break;
-        }
-        case 'new_clip': {
-          const clip = data.clip as VideoClip | undefined;
-          if (clip?.id) {
-            handleNewClipRef.current(clip);
           }
           break;
         }
