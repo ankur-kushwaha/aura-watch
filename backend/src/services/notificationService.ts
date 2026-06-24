@@ -392,7 +392,7 @@ export async function getNotifications(
 
 export async function getUnreadCount(orgId: string): Promise<number> {
   return prisma.notification.count({
-    where: { orgId, readAt: null },
+    where: { orgId, readAt: null, category: 'surveillance' },
   });
 }
 

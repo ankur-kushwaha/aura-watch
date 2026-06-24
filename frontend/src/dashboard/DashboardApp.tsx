@@ -220,10 +220,13 @@ export default function DashboardApp() {
   const handleMarkRead = async (id: string) => {
     try {
       await markNotificationsRead({ ids: [id] });
+      const targetNotif = notifications.find((n) => n.id === id);
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
       );
-      setUnreadNotificationCount((prev) => Math.max(0, prev - 1));
+      if (targetNotif && targetNotif.category === 'surveillance') {
+        setUnreadNotificationCount((prev) => Math.max(0, prev - 1));
+      }
     } catch (err) {
       console.error(`Failed to mark notification ${id} as read:`, err);
     }
@@ -511,7 +514,9 @@ export default function DashboardApp() {
               if (prev.some((n) => n.id === data.notification.id)) return prev;
               return [data.notification, ...prev];
             });
-            setUnreadNotificationCount((prev) => prev + 1);
+            if (data.notification.category === 'surveillance') {
+              setUnreadNotificationCount((prev) => prev + 1);
+            }
           }
           break;
         case 'status':
