@@ -236,100 +236,19 @@ def process_single_job(
         tracker_state["config_key"] = cfg_key
     tracker: YoloByteTracker = tracker_state["tracker"]
 
-    track_events = []
-    reid_crops = []
-    has_targets = False
+    wlog(f"[{stream_id}] Running YOLO + ByteTrack on clip {filename} (attempt {job['attempts']})...")
+    try:
+        clip_result = process_clip(
+            mp4_path,
+            tracker,
+            embedder,
+            detect_interval=int(job.get("yolo_detect_interval", 1)),
+        )
+    except Exception as exc:
+        wlog(f"[{stream_id}] Clip analysis failed for {filename}: {exc}")
+        return
 
-    pre_extracted_crops = job.get("pre_extracted_crops")
-    pre_extracted_track_events = job.get("pre_extracted_track_events")
-
-    if pre_extracted_crops is not None and pre_extracted_track_events is not None:
-        wlog(f"[{stream_id}] Using real-time pre-extracted YOLO tracks & crops for {filename}...")
-        track_events = list(pre_extracted_track_events)
-        has_targets = len(track_events) > 0
-
-        import cv2
-        from clip_processor import ReidCropUpload, _build_merge_map
-        from crop_appearance import is_vehicle_class
-
-        # 1. Generate ReID embeddings on pre-extracted crops
-        for tid_str, crop_info in pre_extracted_crops.items():
-            crop_path = os.path.join(LOCAL_VIDEO_DIR, crop_info["filename"])
-            if not os.path.exists(crop_path):
-                continue
-            try:
-                crop_bgr = cv2.imread(crop_path)
-                if crop_bgr is None:
-                    continue
-                embedding = embedder.generate_from_bgr(crop_bgr)
-                tid = int(tid_str)
-                reid_crops.append(
-                    ReidCropUpload(
-                        crop_jpeg=b"",
-                        track_id=tid,
-                        confidence=crop_info["confidence"],
-                        bbox=tuple(crop_info["bbox"]),
-                        class_name=crop_info["class_name"],
-                        offset_ms=crop_info["offset_ms"],
-                        embedding=embedding,
-                    )
-                )
-                # update the embedding in corresponding reid event
-                for event in track_events:
-                    if event.get("kind") == "reid" and event.get("trackId") == tid:
-                        event["embedding"] = embedding
-            except Exception as exc:
-                wlog(f"[{stream_id}] Real-time ReID embedding failed for track {tid_str}: {exc}")
-
-        # Clean up pre-extracted crop files early
-        for crop_info in pre_extracted_crops.values():
-            crop_path = os.path.join(LOCAL_VIDEO_DIR, crop_info["filename"])
-            if os.path.exists(crop_path):
-                try:
-                    os.unlink(crop_path)
-                except OSError:
-                    pass
-
-        # 2. Merge tracks using ReID similarity
-        person_crops = [c for c in reid_crops if c.class_name == "person"]
-        vehicle_crops = [c for c in reid_crops if is_vehicle_class(c.class_name)]
-        merge_map = {}
-        for crop_list in (person_crops, vehicle_crops):
-            merge_map.update(_build_merge_map(crop_list))
-
-        if merge_map:
-            wlog(f"[{stream_id}] [ReID merge] same-clip merge map: {merge_map}")
-            for event in track_events:
-                tid = event.get("trackId")
-                if tid in merge_map:
-                    event["mergedFrom"] = tid
-                    event["trackId"] = merge_map[tid]
-            for crop in reid_crops:
-                if crop.track_id in merge_map:
-                    crop.track_id = merge_map[crop.track_id]
-            best_crop = {}
-            for crop in reid_crops:
-                tid = crop.track_id
-                if tid not in best_crop or crop.confidence > best_crop[tid].confidence:
-                    best_crop[tid] = crop
-            reid_crops = list(best_crop.values())
-    else:
-        wlog(f"[{stream_id}] Running YOLO + ByteTrack post-processing on clip {filename} (attempt {job['attempts']})...")
-        try:
-            clip_result = process_clip(
-                mp4_path,
-                tracker,
-                embedder,
-                detect_interval=int(job.get("yolo_detect_interval", 1)),
-            )
-            track_events = clip_result.track_events
-            reid_crops = clip_result.reid_crops
-            has_targets = clip_result.has_targets
-        except Exception as exc:
-            wlog(f"[{stream_id}] Clip analysis failed for {filename}: {exc}")
-            return
-
-    if not has_targets:
+    if not clip_result.has_targets:
         wlog(f"[{stream_id}] No person/vehicle in {filename} — discarding locally.")
         try:
             os.unlink(mp4_path)
@@ -341,12 +260,13 @@ def process_single_job(
             pass
         return
 
-    if not reid_crops:
+    if not clip_result.reid_crops:
         wlog(
             f"[{stream_id}] WARNING: YOLO found objects but no ReID profiles were created. "
             f"Check OSNet model ({embedder.model_path}) and edge logs."
         )
 
+    track_events = clip_result.track_events
     preroll_ms = (
         int(job.get("preroll_frame_count", 0) / job.get("clip_fps", 10) * 1000)
         if job.get("preroll_frame_count")
@@ -354,7 +274,8 @@ def process_single_job(
     )
     clip_start_ms = job["timestamp_ms"] - preroll_ms
 
-    reid_profiles = _build_reid_profiles(reid_crops, clip_start_ms)
+    # Build lightweight reid profiles (embedding + metadata only, no JPEG)
+    reid_profiles = _build_reid_profiles(clip_result.reid_crops, clip_start_ms)
 
     reid_event_count = sum(1 for event in track_events if event.get("kind") == "reid")
     wlog(
