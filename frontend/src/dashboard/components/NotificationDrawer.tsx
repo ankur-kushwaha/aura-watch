@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, CheckCheck, Video, AlertTriangle, Info, ShieldAlert, Cpu, Bell } from 'lucide-react';
-import type { Notification } from '../types';
+import type { Notification, CameraStream } from '../types';
 
 export interface NotificationDrawerProps {
   isOpen: boolean;
@@ -11,6 +11,7 @@ export interface NotificationDrawerProps {
   onMarkRead: (id: string) => void;
   onNotificationClick: (n: Notification) => void;
   onViewAll?: () => void;
+  streams?: CameraStream[];
 }
 
 function formatRelativeTime(dateString: string): string {
@@ -34,20 +35,22 @@ export function NotificationDrawer({
   onMarkRead,
   onNotificationClick,
   onViewAll,
+  streams = [],
 }: NotificationDrawerProps) {
-  const [activeTab, setActiveTab] = useState<'all' | 'ai' | 'custom' | 'system'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'ai' | 'custom'>('all');
 
   if (!isOpen) return null;
 
   const filteredNotifications = notifications.filter((n) => {
+    // Hide system notifications entirely
+    if (n.category !== 'surveillance' && !n.alertRuleId) {
+      return false;
+    }
     if (activeTab === 'ai') {
       return n.category === 'surveillance' && !n.alertRuleId;
     }
     if (activeTab === 'custom') {
       return !!n.alertRuleId;
-    }
-    if (activeTab === 'system') {
-      return n.category !== 'surveillance' && !n.alertRuleId;
     }
     return true;
   });
@@ -131,7 +134,7 @@ export function NotificationDrawer({
         
         {/* Tabs */}
         <div className="flex border-b border-white/10 bg-white/[0.01] px-4 py-2 gap-1 select-none">
-          {(['all', 'ai', 'custom', 'system'] as const).map((tab) => (
+          {(['all', 'ai', 'custom'] as const).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -145,7 +148,6 @@ export function NotificationDrawer({
               {tab === 'all' && 'All'}
               {tab === 'ai' && 'AI Alerts'}
               {tab === 'custom' && 'Custom'}
-              {tab === 'system' && 'System'}
             </button>
           ))}
         </div>
@@ -165,16 +167,16 @@ export function NotificationDrawer({
               <div>
                 <p className="text-[0.9rem] font-semibold text-text-secondary">All caught up!</p>
                 <p className="text-[0.78rem] text-text-muted mt-1 max-w-[240px]">
-                  {activeTab === 'all' && 'Surveillance alerts and device health notifications will appear here.'}
+                  {activeTab === 'all' && 'Surveillance alerts and custom AI notifications will appear here.'}
                   {activeTab === 'ai' && 'AI surveillance alerts (such as watchlists) will appear here.'}
                   {activeTab === 'custom' && 'Custom alert rule notifications will appear here.'}
-                  {activeTab === 'system' && 'System status logs and device warnings will appear here.'}
                 </p>
               </div>
             </div>
           ) : (
             filteredNotifications.map((n) => {
               const isUnread = !n.readAt;
+              const stream = streams.find((s) => s.streamId === n.streamId);
               return (
                 <div
                   key={n.id}
@@ -222,6 +224,11 @@ export function NotificationDrawer({
                       <span className={`text-[0.65rem] px-2 py-0.5 rounded border capitalize ${getSeverityBadgeClass(n.severity)}`}>
                         {n.severity}
                       </span>
+                      {stream && (
+                        <span className="text-[0.65rem] px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-300 bg-emerald-500/10 font-medium">
+                          Camera: {stream.name}
+                        </span>
+                      )}
                       {n.category === 'surveillance' && n.riskLevel && (
                         <span className={`text-[0.65rem] px-2 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10 uppercase font-semibold`}>
                           {n.riskLevel} risk

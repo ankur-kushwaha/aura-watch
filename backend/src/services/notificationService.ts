@@ -95,7 +95,9 @@ export async function createNotification(input: CreateNotificationInput) {
   try {
     const count = await getUnreadCount(input.orgId);
     broadcastToAllUIs({ type: 'notification_count', orgId: input.orgId, count });
-    broadcastToAllUIs({ type: 'new_notification', notification });
+    if (input.category === 'surveillance') {
+      broadcastToAllUIs({ type: 'new_notification', notification });
+    }
   } catch {
     // non-fatal
   }
@@ -382,6 +384,7 @@ export async function getNotifications(
   return prisma.notification.findMany({
     where: {
       orgId,
+      category: 'surveillance',
       ...(options.unreadOnly ? { readAt: null } : {}),
       ...(options.before ? { createdAt: { lt: options.before } } : {}),
     },
@@ -392,7 +395,7 @@ export async function getNotifications(
 
 export async function getUnreadCount(orgId: string): Promise<number> {
   return prisma.notification.count({
-    where: { orgId, readAt: null },
+    where: { orgId, readAt: null, category: 'surveillance' },
   });
 }
 

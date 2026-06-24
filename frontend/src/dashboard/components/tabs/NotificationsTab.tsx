@@ -48,13 +48,14 @@ export function NotificationsTab({
   const [searchParams] = useSearchParams();
   const [selectedStreamIdFilter, setSelectedStreamIdFilter] = useState('');
   const [selectedRuleIdFilter, setSelectedRuleIdFilter] = useState('');
-  const [filterCategory, setFilterCategory] = useState<'all' | 'ai' | 'custom' | 'system'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'ai' | 'custom'>('all');
   const [filterUnreadOnly, setFilterUnreadOnly] = useState(false);
   const [rules, setRules] = useState<AlertRule[]>([]);
 
   useEffect(() => {
     const streamIdParam = searchParams.get('streamId');
     if (streamIdParam) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedStreamIdFilter(streamIdParam);
     }
   }, [searchParams]);
@@ -99,19 +100,21 @@ export function NotificationsTab({
 
   // Filter notifications
   const filteredNotifications = notifications.filter((n) => {
+    // Hide system notifications entirely
+    if (n.category !== 'surveillance' && !n.alertRuleId) {
+      return false;
+    }
+
     // Stream ID Filter
     if (selectedStreamIdFilter && n.streamId !== selectedStreamIdFilter) {
       return false;
     }
 
-    // Category Filter: ai vs custom (has alertRuleId) vs system (no alertRuleId)
+    // Category Filter: ai vs custom (has alertRuleId)
     if (filterCategory === 'ai' && (n.category !== 'surveillance' || n.alertRuleId)) {
       return false;
     }
     if (filterCategory === 'custom' && !n.alertRuleId) {
-      return false;
-    }
-    if (filterCategory === 'system' && (n.category === 'surveillance' || n.alertRuleId)) {
       return false;
     }
 
@@ -179,21 +182,19 @@ export function NotificationsTab({
             <div className="flex flex-col gap-2">
               <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Source Category</label>
               <div className="flex flex-col gap-1">
-                {(['all', 'ai', 'custom', 'system'] as const).map((cat) => (
+                {(['all', 'ai', 'custom'] as const).map((cat) => (
                   <button
                     key={cat}
                     type="button"
                     onClick={() => setFilterCategory(cat)}
-                    className={`text-left py-2 px-3 rounded-lg text-[0.78rem] font-semibold transition-all duration-150 border-none cursor-pointer ${
-                      filterCategory === cat
+                    className={`text-left py-2 px-3 rounded-lg text-[0.78rem] font-semibold transition-all duration-150 border-none cursor-pointer ${filterCategory === cat
                         ? 'bg-[rgba(255,255,255,0.06)] text-white border border-border-glass'
                         : 'text-text-muted hover:text-text-secondary bg-transparent hover:bg-white/[0.01]'
-                    }`}
+                      }`}
                   >
                     {cat === 'all' && 'All Notifications'}
                     {cat === 'ai' && 'AI Security Alerts'}
                     {cat === 'custom' && 'Custom Alerts'}
-                    {cat === 'system' && 'System & Device Logs'}
                   </button>
                 ))}
               </div>
@@ -217,23 +218,21 @@ export function NotificationsTab({
             </div>
 
             {/* Rule Filter */}
-            {filterCategory !== 'system' && (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Filter by Alert Rule</label>
-                <select
-                  value={selectedRuleIdFilter}
-                  onChange={(e) => setSelectedRuleIdFilter(e.target.value)}
-                  className="bg-[#0b0f19] border border-border-glass text-[0.78rem] px-3 py-2 rounded-lg focus:border-primary text-white outline-none w-full cursor-pointer"
-                >
-                  <option value="">All Alert Rules</option>
-                  {rules.map((rule) => (
-                    <option key={rule.id} value={rule.id}>
-                      {rule.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Filter by Alert Rule</label>
+              <select
+                value={selectedRuleIdFilter}
+                onChange={(e) => setSelectedRuleIdFilter(e.target.value)}
+                className="bg-[#0b0f19] border border-border-glass text-[0.78rem] px-3 py-2 rounded-lg focus:border-primary text-white outline-none w-full cursor-pointer"
+              >
+                <option value="">All Alert Rules</option>
+                {rules.map((rule) => (
+                  <option key={rule.id} value={rule.id}>
+                    {rule.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             {/* Read/Unread Filter */}
             <label className="flex items-center gap-2 text-[0.78rem] text-text-secondary cursor-pointer select-none mt-2">
@@ -264,6 +263,7 @@ export function NotificationsTab({
             ) : (
               filteredNotifications.map((n) => {
                 const isUnread = !n.readAt;
+                const stream = streams.find((s) => s.streamId === n.streamId);
                 return (
                   <div
                     key={n.id}
@@ -271,11 +271,10 @@ export function NotificationsTab({
                       if (isUnread) onMarkRead(n.id);
                       onNotificationClick(n);
                     }}
-                    className={`group flex items-start gap-3 rounded-lg border p-3 transition-all duration-200 cursor-pointer text-left ${
-                      isUnread
+                    className={`group flex items-start gap-3 rounded-lg border p-3 transition-all duration-200 cursor-pointer text-left ${isUnread
                         ? 'bg-white/[0.04] border-white/10 hover:bg-white/[0.06] shadow-[0_2px_8px_rgba(0,0,0,0.15)]'
                         : 'bg-transparent border-transparent hover:bg-white/[0.015]'
-                    }`}
+                      }`}
                   >
                     <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 mt-0.5">
                       {getCategoryIcon(n.category, n.severity)}
@@ -297,6 +296,11 @@ export function NotificationsTab({
                         <span className={`text-[0.6rem] px-1.5 py-0.5 rounded border capitalize ${getSeverityBadgeClass(n.severity)}`}>
                           {n.category}: {n.severity}
                         </span>
+                        {stream && (
+                          <span className="text-[0.6rem] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-300 bg-emerald-500/10 font-medium">
+                            Camera: {stream.name}
+                          </span>
+                        )}
                         {n.riskLevel && (
                           <span className="text-[0.6rem] px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10 uppercase font-semibold">
                             {n.riskLevel} risk

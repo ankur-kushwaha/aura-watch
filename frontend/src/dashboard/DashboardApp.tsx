@@ -1148,6 +1148,7 @@ export default function DashboardApp() {
           setNotificationsDrawerOpen(false);
           navigate('/app/notifications');
         }}
+        streams={streams}
       />
 
       {/* MAIN CONTAINER */}
