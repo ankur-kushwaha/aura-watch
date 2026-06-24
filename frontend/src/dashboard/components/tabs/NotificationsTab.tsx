@@ -48,7 +48,7 @@ export function NotificationsTab({
   const [searchParams] = useSearchParams();
   const [selectedStreamIdFilter, setSelectedStreamIdFilter] = useState('');
   const [selectedRuleIdFilter, setSelectedRuleIdFilter] = useState('');
-  const [filterCategory, setFilterCategory] = useState<'all' | 'custom' | 'system'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'ai' | 'custom' | 'system'>('all');
   const [filterUnreadOnly, setFilterUnreadOnly] = useState(false);
   const [rules, setRules] = useState<AlertRule[]>([]);
 
@@ -104,11 +104,14 @@ export function NotificationsTab({
       return false;
     }
 
-    // Category Filter: custom (has alertRuleId) vs system (no alertRuleId)
+    // Category Filter: ai vs custom (has alertRuleId) vs system (no alertRuleId)
+    if (filterCategory === 'ai' && (n.category !== 'surveillance' || n.alertRuleId)) {
+      return false;
+    }
     if (filterCategory === 'custom' && !n.alertRuleId) {
       return false;
     }
-    if (filterCategory === 'system' && n.alertRuleId) {
+    if (filterCategory === 'system' && (n.category === 'surveillance' || n.alertRuleId)) {
       return false;
     }
 
@@ -176,7 +179,7 @@ export function NotificationsTab({
             <div className="flex flex-col gap-2">
               <label className="text-[0.68rem] font-bold uppercase tracking-wider text-text-muted">Source Category</label>
               <div className="flex flex-col gap-1">
-                {(['all', 'custom', 'system'] as const).map((cat) => (
+                {(['all', 'ai', 'custom', 'system'] as const).map((cat) => (
                   <button
                     key={cat}
                     type="button"
@@ -188,7 +191,8 @@ export function NotificationsTab({
                     }`}
                   >
                     {cat === 'all' && 'All Notifications'}
-                    {cat === 'custom' && 'AI Security Alerts'}
+                    {cat === 'ai' && 'AI Security Alerts'}
+                    {cat === 'custom' && 'Custom Alerts'}
                     {cat === 'system' && 'System & Device Logs'}
                   </button>
                 ))}

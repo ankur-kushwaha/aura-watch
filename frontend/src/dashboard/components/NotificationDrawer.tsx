@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { X, CheckCheck, Video, AlertTriangle, Info, ShieldAlert, Cpu, Bell } from 'lucide-react';
 import type { Notification } from '../types';
 
@@ -34,9 +35,24 @@ export function NotificationDrawer({
   onNotificationClick,
   onViewAll,
 }: NotificationDrawerProps) {
+  const [activeTab, setActiveTab] = useState<'all' | 'ai' | 'custom' | 'system'>('all');
+
   if (!isOpen) return null;
 
-  const unreadCount = notifications.filter((n) => !n.readAt).length;
+  const filteredNotifications = notifications.filter((n) => {
+    if (activeTab === 'ai') {
+      return n.category === 'surveillance' && !n.alertRuleId;
+    }
+    if (activeTab === 'custom') {
+      return !!n.alertRuleId;
+    }
+    if (activeTab === 'system') {
+      return n.category !== 'surveillance' && !n.alertRuleId;
+    }
+    return true;
+  });
+
+  const unreadCount = filteredNotifications.filter((n) => !n.readAt).length;
 
   const getCategoryIcon = (category: string, severity: string) => {
     const baseClass = "w-5 h-5 shrink-0";
@@ -112,15 +128,36 @@ export function NotificationDrawer({
             </button>
           </div>
         </div>
+        
+        {/* Tabs */}
+        <div className="flex border-b border-white/10 bg-white/[0.01] px-4 py-2 gap-1 select-none">
+          {(['all', 'ai', 'custom', 'system'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 text-center py-1.5 rounded-lg text-[0.75rem] font-semibold transition-all duration-150 border border-transparent cursor-pointer ${
+                activeTab === tab
+                  ? 'bg-white/[0.06] text-white border-white/10'
+                  : 'text-text-muted hover:text-text-secondary bg-transparent hover:bg-white/[0.01]'
+              }`}
+            >
+              {tab === 'all' && 'All'}
+              {tab === 'ai' && 'AI Alerts'}
+              {tab === 'custom' && 'Custom'}
+              {tab === 'system' && 'System'}
+            </button>
+          ))}
+        </div>
 
         {/* List Content */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-3 flex flex-col gap-2.5">
-          {loading && notifications.length === 0 ? (
+          {loading && filteredNotifications.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 gap-3">
               <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
               <p className="text-[0.8rem] text-text-muted">Loading notifications...</p>
             </div>
-          ) : notifications.length === 0 ? (
+          ) : filteredNotifications.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-3">
               <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-text-muted">
                 <Video size={24} className="opacity-40" />
@@ -128,12 +165,15 @@ export function NotificationDrawer({
               <div>
                 <p className="text-[0.9rem] font-semibold text-text-secondary">All caught up!</p>
                 <p className="text-[0.78rem] text-text-muted mt-1 max-w-[240px]">
-                  Surveillance alerts and device health notifications will appear here.
+                  {activeTab === 'all' && 'Surveillance alerts and device health notifications will appear here.'}
+                  {activeTab === 'ai' && 'AI surveillance alerts (such as watchlists) will appear here.'}
+                  {activeTab === 'custom' && 'Custom alert rule notifications will appear here.'}
+                  {activeTab === 'system' && 'System status logs and device warnings will appear here.'}
                 </p>
               </div>
             </div>
           ) : (
-            notifications.map((n) => {
+            filteredNotifications.map((n) => {
               const isUnread = !n.readAt;
               return (
                 <div
