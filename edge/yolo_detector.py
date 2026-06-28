@@ -210,7 +210,7 @@ class YoloDetector:
         self.confidence = confidence if confidence is not None else _env_float("YOLO_CONFIDENCE", 0.35)
         self.detect_interval = max(
             1,
-            detect_interval if detect_interval is not None else _env_int("YOLO_DETECT_INTERVAL", 3),
+            detect_interval if detect_interval is not None else _env_int("YOLO_DETECT_INTERVAL", 2),
         )
         self.detect_person = detect_person
         self.detect_vehicle = detect_vehicle
@@ -360,9 +360,8 @@ class YoloDetector:
         for det in detections:
             color = BOX_COLORS.get(det.class_id, (180, 180, 180))
             label = COCO_NAMES[det.class_id] if det.class_id < len(COCO_NAMES) else str(det.class_id)
-            text = f"{label} {det.confidence:.2f}"
             cv2.rectangle(annotated, (det.x1, det.y1), (det.x2, det.y2), color, 2)
-            (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             ty = max(det.y1 - 4, th + 4)
             cv2.rectangle(
                 annotated,
@@ -373,7 +372,7 @@ class YoloDetector:
             )
             cv2.putText(
                 annotated,
-                text,
+                label,
                 (det.x1 + 2, ty - 2),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
