@@ -13,6 +13,7 @@ import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
 import devicesRouter, {
   registerOnClipUploaded,
+  registerOnClipMetadata,
   registerOnClipMetadataUpdate,
   registerOnDevicesChanged,
   registerOnDeviceConfigUpdated,
@@ -33,7 +34,7 @@ import { trackEvent, shutdownPostHog } from './services/posthog';
 import { getOrgSettings } from './services/orgSettings';
 import { initQdrant } from './services/qdrant';
 import { aggregateTrackEvents, enrichDetectedObjects, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
-import { generateClipAiSummaryFromLocalFile } from './services/clipAiSummary';
+import { generateClipAiSummary, generateClipAiSummaryFromLocalFile } from './services/clipAiSummary';
 import { buildYoloSummary, selectReidTrackEvents } from './services/yoloSummary';
 import { extractYoloPreviewCrops } from './services/yoloCropExtract';
 import { analyzeVehicleAppearancesFromClip, mergeAppearanceMaps } from './services/cropAppearance';
@@ -325,6 +326,22 @@ async function pushDeviceConfigure(deviceId: string) {
 registerOnStreamsUpdated(pushDeviceConfigure);
 registerOnDeviceConfigUpdated(pushDeviceConfigure);
 
+function edgeClipFilepath(deviceId: string, filename: string): string {
+  return `edge://${deviceId}/${filename}`;
+}
+
+registerOnClipMetadata(async (filename, timestamp, deviceId, duration, streamId, frameWidth, frameHeight) => {
+  await processMotionClipMetadataInBackground(
+    filename,
+    timestamp,
+    deviceId,
+    duration,
+    streamId,
+    frameWidth,
+    frameHeight,
+  );
+});
+
 registerOnClipUploaded(async (filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight, reidProfiles) => {
   await processVideoClipInBackground(filepath, filename, timestamp, deviceId, duration, streamId, trackEvents, frameWidth, frameHeight, reidProfiles);
 });
@@ -496,6 +513,111 @@ app.get('/api/crops/:filename', async (req, res) => {
 });
 
 /**
+ * Process motion clip metadata from edge (video stays on device until hub pulls it).
+ */
+async function processMotionClipMetadataInBackground(
+  filename: string,
+  timestamp: Date,
+  deviceId: string,
+  duration: number,
+  streamId: string,
+  frameWidth?: number,
+  frameHeight?: number,
+) {
+  const stream = await prisma.cameraStream.findUnique({ where: { streamId } });
+  const cameraName = stream?.name ?? 'Unknown Camera';
+  const orgId = await getDeviceOrgId(deviceId);
+  const orgSettings = orgId ? await getOrgSettings(orgId) : null;
+
+  broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Motion clip recorded: ${filename}`);
+
+  try {
+    trackEvent(orgId || deviceId, 'process_motion_clip_metadata', {
+      duration,
+      cameraName,
+      streamId,
+    });
+
+    const summary = orgSettings?.videoSummary !== false
+      ? buildYoloSummary([], cameraName, duration, frameWidth, frameHeight)
+      : '';
+
+    const clipDb = await prisma.videoClip.create({
+      data: {
+        filepath: edgeClipFilepath(deviceId, filename),
+        filename,
+        timestamp,
+        summary,
+        duration: Number.isFinite(duration) && duration > 0 ? duration : 10.0,
+        camera: cameraName,
+        deviceId,
+        streamId,
+      },
+    });
+
+    broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata with ID: ${clipDb.id}`);
+    broadcastNewClipToAllUIs(clipDb, deviceId, streamId);
+
+    let clipForNotifications = clipDb;
+
+    if (
+      orgSettings?.videoSummary !== false &&
+      stream?.aiSummaryEnabled !== false
+    ) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Fetching clip from edge for AI summary...`);
+      try {
+        await generateClipAiSummary(clipDb.id);
+        const refreshed = await prisma.videoClip.findUnique({ where: { id: clipDb.id } });
+        if (refreshed) {
+          clipForNotifications = refreshed;
+        }
+        broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generated for clip ${filename}.`);
+        broadcastNewClipToAllUIs(clipForNotifications, deviceId, streamId);
+      } catch (err: any) {
+        console.error(`[AI Summary] Edge fetch/summary failed for ${filename}:`, err);
+        broadcastLogToSubscribedUIs(
+          deviceId,
+          `[${cameraName}] AI summary failed for ${filename}: ${err.message}`,
+        );
+      }
+    } else if (stream?.aiSummaryEnabled === false) {
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generation disabled for this camera stream.`);
+    }
+
+    if (orgId && orgSettings?.notificationsEnabled !== false) {
+      const aiSummaryRaw = (clipForNotifications as any).aiSummary as string | null | undefined;
+      const parsedAi = tryParseClipAiAnalysis(aiSummaryRaw);
+
+      void evaluateClipWithLLM({
+        clipId: clipForNotifications.id,
+        streamId,
+        deviceId,
+        orgId,
+        cameraName,
+        duration,
+        aiSummary: aiSummaryRaw ?? null,
+        objectCounts: {
+          person: parsedAi?.objectCounts?.person ?? 0,
+          vehicle: parsedAi?.objectCounts?.vehicle ?? 0,
+        },
+        identityLabels: [],
+      }).catch((err: any) => {
+        console.warn(`[Notifications] Clip evaluation failed for ${filename}:`, err.message);
+      });
+    }
+  } catch (error: any) {
+    console.error(`[Pipeline Error] Failed to process motion clip ${filename}:`, error);
+    broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);
+  } finally {
+    for (const ws of uiClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'clip_processing_complete', streamId, deviceId }));
+      }
+    }
+  }
+}
+
+/**
  * Upload to Gemini, fetch summary, generate vector embeddings, and save to MongoDB + Qdrant
  */
 async function processVideoClipInBackground(
@@ -585,7 +707,7 @@ async function processVideoClipInBackground(
         frameHeight,
         appearances,
       );
-      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Detection summary generated from YOLO metadata.`);
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Motion summary generated for clip.`);
     } else {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Video summary disabled for this organization.`);
     }
@@ -733,10 +855,9 @@ async function processVideoClipInBackground(
     if (
       orgSettings?.videoSummary !== false &&
       stream?.aiSummaryEnabled !== false &&
-      trackEvents.length > 0 &&
       fs.existsSync(filepath)
     ) {
-      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Generating AI summary for clip with detected objects...`);
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Generating AI summary for motion clip...`);
       try {
         clipForBroadcast = await generateClipAiSummaryFromLocalFile(
           clipDb,
@@ -752,7 +873,7 @@ async function processVideoClipInBackground(
           `[${cameraName}] AI summary generation failed for ${filename}: ${err.message}`,
         );
       }
-    } else if (stream?.aiSummaryEnabled === false && trackEvents.length > 0) {
+    } else if (stream?.aiSummaryEnabled === false) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generation disabled for this camera stream.`);
     }
 
@@ -948,7 +1069,7 @@ async function processVideoClipMetadataUpdateInBackground(
         frameHeight,
         appearances,
       );
-      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Detection summary generated from YOLO metadata.`);
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Motion summary generated for clip.`);
     } else {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Video summary disabled for this organization.`);
     }
@@ -1091,10 +1212,9 @@ async function processVideoClipMetadataUpdateInBackground(
     if (
       orgSettings?.videoSummary !== false &&
       stream?.aiSummaryEnabled !== false &&
-      trackEvents.length > 0 &&
       fs.existsSync(filepath)
     ) {
-      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Generating AI summary for clip with detected objects...`);
+      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Generating AI summary for motion clip...`);
       try {
         clipForBroadcast = await generateClipAiSummaryFromLocalFile(
           clipDb,
@@ -1110,7 +1230,7 @@ async function processVideoClipMetadataUpdateInBackground(
           `[${cameraName}] AI summary generation failed for ${filename}: ${err.message}`,
         );
       }
-    } else if (stream?.aiSummaryEnabled === false && trackEvents.length > 0) {
+    } else if (stream?.aiSummaryEnabled === false) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generation disabled for this camera stream.`);
     }
 

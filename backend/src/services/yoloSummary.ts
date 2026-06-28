@@ -285,7 +285,7 @@ export function buildYoloSummary(
   const analyses = analyzeTrackEvents(trackEvents, frameWidth, frameHeight, appearanceByTrack);
 
   if (analyses.length === 0) {
-    return `No objects were detected on ${cameraName} during this ${clipDuration.toFixed(0)}s clip.`;
+    return `Motion detected on ${cameraName} during this ${clipDuration.toFixed(0)}s clip.`;
   }
 
   const classCounts = new Map<string, number>();

@@ -47,39 +47,18 @@ else
 fi
 
 export PIP_DISABLE_PIP_VERSION_CHECK=1
-# Avoid stale/corrupt pip cache (common cause of "Cache entry deserialization failed")
 export PIP_NO_CACHE_DIR=1
 
 log "Upgrading pip..."
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 
-ARCH=$(uname -m)
 REQ="$DIR/requirements.txt"
+ARCH=$(uname -m)
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7l" ]; then
     REQ="$DIR/requirements-pi.txt"
-    log "ARM device detected — using Pi-optimized requirements (headless OpenCV)."
-    log "Installing CPU-only PyTorch first (recommended on Raspberry Pi)..."
-    "$VENV_DIR/bin/pip" install --no-cache-dir torch torchvision \
-        --index-url https://download.pytorch.org/whl/cpu || \
-        log "   ⚠️  CPU PyTorch wheel install failed; falling back to default torch via ultralytics."
+    log "ARM device detected — using Pi requirements (headless OpenCV)."
 fi
 
-log "Installing Python dependencies (opencv, ultralytics, etc.)..."
-log "   This may take several minutes on first install — large packages are downloading."
+log "Installing Python dependencies..."
 "$VENV_DIR/bin/pip" install --no-cache-dir -r "$REQ"
-
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv7l" ]; then
-    if [ ! -f "$DIR/yolov8n.onnx" ] && [ -f "$DIR/yolov8n.pt" ]; then
-        log ""
-        log "Tip: export ONNX after install for ~1.5–2× faster inference on Pi:"
-        log "   .venv/bin/python scripts/export_model.py onnx"
-        log "   (one-time; takes a few minutes on Pi)"
-    fi
-fi
-
 log "   ✅ Python dependencies installed."
-
-if ! sh "$DIR/scripts/setup-reid-model.sh"; then
-    log "   ⚠️  ReID OSNet model is missing — person ReID profiles will not be created until installed."
-    log "      Run: sh scripts/setup-reid-model.sh"
-fi

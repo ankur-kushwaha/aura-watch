@@ -1,10 +1,6 @@
 import deviceDefaults from '../../config/edge-device-defaults.json';
 
 export interface EdgeDeviceConfig {
-  yoloConfidence?: number | null;
-  yoloDevice?: string | null;
-  yoloImgsz?: number | null;
-  yoloDetectInterval?: number | null;
   cameraWidth?: number | null;
   cameraHeight?: number | null;
   cameraFps?: number | null;
@@ -19,9 +15,6 @@ export interface EdgeDeviceConfig {
   recordingCooldownSec?: number | null;
   minUploadDurationSec?: number | null;
   clipPrerollSec?: number | null;
-  reidConfidenceThreshold?: number | null;
-  reidMinBboxSize?: number | null;
-  reidVisibleSec?: number | null;
   debugLogs?: boolean | null;
 }
 

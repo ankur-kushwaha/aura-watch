@@ -60,21 +60,6 @@ export function DeviceConfigFields({
         Values are stored in the cloud and pushed to the edge device. Unset fields on the device still fall back to its local <code>.env</code> file.
       </p>
 
-      <Section title="YOLO / Detection">
-        <NumberField label="Confidence" value={config.yoloConfidence} onChange={(v) => set('yoloConfidence', v)} min={0.05} max={1} step={0.05} />
-        <div className="flex flex-col gap-1.5">
-          <label className="text-[0.72rem] text-text-secondary font-medium">Device</label>
-          <select value={config.yoloDevice} onChange={(e) => set('yoloDevice', e.target.value)}>
-            <option value="auto">auto</option>
-            <option value="cpu">cpu</option>
-            <option value="mps">mps</option>
-            <option value="cuda">cuda</option>
-          </select>
-        </div>
-        <NumberField label="Image size" value={config.yoloImgsz} onChange={(v) => set('yoloImgsz', v)} min={320} max={1280} step={32} />
-        <NumberField label="Detect interval (frames)" value={config.yoloDetectInterval} onChange={(v) => set('yoloDetectInterval', v)} min={1} max={30} />
-      </Section>
-
       <Section title="Recording">
         <NumberField label="Max clip length (sec)" value={config.recordingMaxSec} onChange={(v) => set('recordingMaxSec', v)} min={5} max={300} />
         <NumberField
@@ -84,7 +69,7 @@ export function DeviceConfigFields({
           min={0}
           max={30}
           step={0.5}
-          hint="Stop recording after objects leave the frame for this long."
+          hint="Stop recording after motion ends for this long."
         />
         <NumberField
           label="Wait before next clip (sec)"
@@ -112,20 +97,6 @@ export function DeviceConfigFields({
           step={0.5}
           hint="Seconds of footage to include before motion is detected."
         />
-      </Section>
-
-      <Section title="ReID">
-        <NumberField label="Confidence threshold" value={config.reidConfidenceThreshold} onChange={(v) => set('reidConfidenceThreshold', v)} min={0.1} max={1} step={0.05} />
-        <NumberField
-          label="Min bbox area (px²)"
-          value={config.reidMinBboxSize}
-          onChange={(v) => set('reidMinBboxSize', v)}
-          min={400}
-          max={50000}
-          step={100}
-          hint="Minimum person box area (width × height). Use 600–800 for overhead/distant cameras; 1500+ for eye-level close-ups."
-        />
-        <NumberField label="Visible before crop (sec)" value={config.reidVisibleSec} onChange={(v) => set('reidVisibleSec', v)} min={0.1} max={10} step={0.1} />
       </Section>
 
       <label className="flex items-center gap-2 text-[0.82rem] cursor-pointer select-none">

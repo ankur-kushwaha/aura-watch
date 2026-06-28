@@ -1,9 +1,5 @@
 {
   "deviceConfig": {
-    "yoloConfidence": 0.35,
-    "yoloDevice": "auto",
-    "yoloImgsz": 416,
-    "yoloDetectInterval": 2,
     "cameraWidth": 640,
     "cameraHeight": 480,
     "cameraFps": 15,
@@ -18,15 +14,10 @@
     "recordingCooldownSec": 10,
     "minUploadDurationSec": 8,
     "clipPrerollSec": 3,
-    "reidConfidenceThreshold": 0.5,
-    "reidMinBboxSize": 800,
-    "reidVisibleSec": 0.5,
     "debugLogs": true
   },
   "streamDefaults": {
     "trackingEnabled": true,
-    "detectPerson": true,
-    "detectVehicle": true,
     "motionThreshold": 25,
     "pixelChangeThreshold": 0.02
   }

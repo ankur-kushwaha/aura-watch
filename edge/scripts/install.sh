@@ -298,15 +298,8 @@ cat <<EOT > .env
 CLOUD_URL=$CLOUD_URL
 DEVICE_NAME="$DEVICE_NAME"
 ${ENROLLMENT_TOKEN_LINE}
-LOCAL_VIDEO_DIR=./storage/temp_clips
 
-# Gemini Video Upload Optimization Settings
-GEMINI_OPTIMIZE=true
-GEMINI_OPTIMIZE_FPS=1
-GEMINI_OPTIMIZE_RESOLUTION=640:480
-GEMINI_OPTIMIZE_CRF=28
-
-# Control whether verbose FFmpeg output/errors are logged in the console (true/false)
+# Verbose edge + FFmpeg logs (true/false)
 DEBUG_LOGS=false
 EOT
 

@@ -2,10 +2,6 @@ import fs from 'fs';
 import path from 'path';
 
 export interface EdgeDeviceConfigDefaults {
-  yoloConfidence: number;
-  yoloDevice: string;
-  yoloImgsz: number;
-  yoloDetectInterval: number;
   cameraWidth: number;
   cameraHeight: number;
   cameraFps: number;
@@ -20,16 +16,11 @@ export interface EdgeDeviceConfigDefaults {
   recordingCooldownSec: number;
   minUploadDurationSec: number;
   clipPrerollSec: number;
-  reidConfidenceThreshold: number;
-  reidMinBboxSize: number;
-  reidVisibleSec: number;
   debugLogs: boolean;
 }
 
 export interface StreamConfigDefaults {
   trackingEnabled: boolean;
-  detectPerson: boolean;
-  detectVehicle: boolean;
   motionThreshold: number;
   pixelChangeThreshold: number;
 }
@@ -42,8 +33,8 @@ interface EdgeDefaultsFile {
 function findDefaultsFile(): string {
   const candidates = [
     path.resolve(__dirname, '../../../config/edge-device-defaults.json'),
-    path.resolve(process.cwd(), 'config/edge-device-defaults.json'),
     path.resolve(__dirname, '../../config/edge-device-defaults.json'),
+    path.resolve(process.cwd(), 'config/edge-device-defaults.json'),
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {

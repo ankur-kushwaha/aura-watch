@@ -179,7 +179,7 @@ export function ClipPreviewPanel({
             )}
           </div>
         )}
-        {orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0) && (
+        {false && orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0) && (
           <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
             <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
               <Fingerprint size={12} />Detected Objects
@@ -294,7 +294,7 @@ export function ClipPreviewPanel({
             )}
           </div>
         )}
-        {orgSettings.reidProcessing && !loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
+        {false && orgSettings.reidProcessing && !loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
           <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-2.5">
             <button
               type="button"

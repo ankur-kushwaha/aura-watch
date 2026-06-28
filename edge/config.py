@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from device_defaults import device_config_defaults, stream_config_defaults
-from yolo_tracker import resolve_yolo_device
 
 _DEVICE_DEFAULTS = device_config_defaults()
 _STREAM_DEFAULTS = stream_config_defaults()
@@ -62,22 +61,6 @@ def rtsp_local_addr_value() -> str:
 
 @dataclass
 class DeviceRuntimeConfig:
-    yolo_confidence: float = field(
-        default_factory=lambda: _env_float("YOLO_CONFIDENCE", float(_DEVICE_DEFAULTS["yoloConfidence"]))
-    )
-    yolo_device: str = field(
-        default_factory=lambda: resolve_yolo_device(
-            os.getenv("YOLO_DEVICE", str(_DEVICE_DEFAULTS["yoloDevice"]))
-        )
-    )
-    yolo_imgsz: int = field(
-        default_factory=lambda: _env_int("YOLO_IMGSZ", int(_DEVICE_DEFAULTS["yoloImgsz"]))
-    )
-    yolo_detect_interval: int = field(
-        default_factory=lambda: max(
-            _env_int("YOLO_DETECT_INTERVAL", int(_DEVICE_DEFAULTS["yoloDetectInterval"])), 1
-        )
-    )
     camera_width: int = field(
         default_factory=lambda: _env_int("CAMERA_WIDTH", int(_DEVICE_DEFAULTS["cameraWidth"]))
     )
@@ -139,17 +122,6 @@ class DeviceRuntimeConfig:
     clip_preroll_sec: float = field(
         default_factory=lambda: _env_float("CLIP_PREROLL_SEC", float(_DEVICE_DEFAULTS["clipPrerollSec"]))
     )
-    reid_confidence_threshold: float = field(
-        default_factory=lambda: _env_float(
-            "REID_CONFIDENCE_THRESHOLD", float(_DEVICE_DEFAULTS["reidConfidenceThreshold"])
-        )
-    )
-    reid_min_bbox_size: int = field(
-        default_factory=lambda: _env_int("REID_MIN_BBOX_SIZE", int(_DEVICE_DEFAULTS["reidMinBboxSize"]))
-    )
-    reid_visible_sec: float = field(
-        default_factory=lambda: _env_float("REID_VISIBLE_SEC", float(_DEVICE_DEFAULTS["reidVisibleSec"]))
-    )
     debug_logs: bool = field(
         default_factory=lambda: _env_bool("DEBUG_LOGS", bool(_DEVICE_DEFAULTS["debugLogs"]))
     )
@@ -160,10 +132,6 @@ class DeviceRuntimeConfig:
             return cls()
         baseline = cls()
         return cls(
-            yolo_confidence=_pick(data, "yoloConfidence", baseline.yolo_confidence, float),
-            yolo_device=resolve_yolo_device(str(data["yoloDevice"])) if data.get("yoloDevice") else baseline.yolo_device,
-            yolo_imgsz=_pick(data, "yoloImgsz", baseline.yolo_imgsz, int),
-            yolo_detect_interval=max(_pick(data, "yoloDetectInterval", baseline.yolo_detect_interval, int), 1),
             camera_width=_pick(data, "cameraWidth", baseline.camera_width, int),
             camera_height=_pick(data, "cameraHeight", baseline.camera_height, int),
             camera_fps=max(_pick(data, "cameraFps", baseline.camera_fps, int), 1),
@@ -182,11 +150,6 @@ class DeviceRuntimeConfig:
             recording_cooldown_sec=_pick(data, "recordingCooldownSec", baseline.recording_cooldown_sec, float),
             min_upload_duration_sec=_pick(data, "minUploadDurationSec", baseline.min_upload_duration_sec, float),
             clip_preroll_sec=_pick(data, "clipPrerollSec", baseline.clip_preroll_sec, float),
-            reid_confidence_threshold=_pick(
-                data, "reidConfidenceThreshold", baseline.reid_confidence_threshold, float
-            ),
-            reid_min_bbox_size=_pick(data, "reidMinBboxSize", baseline.reid_min_bbox_size, int),
-            reid_visible_sec=_pick(data, "reidVisibleSec", baseline.reid_visible_sec, float),
             debug_logs=_pick(data, "debugLogs", baseline.debug_logs, bool) if "debugLogs" in data else baseline.debug_logs,
         )
 

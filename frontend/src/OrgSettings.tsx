@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Sparkles,
-  Fingerprint,
   Search,
   MessageSquare,
   Save,
@@ -280,18 +279,10 @@ export default function OrgSettingsPage({
             <SettingRow
               icon={<Sparkles size={18} />}
               title="Video summary"
-              description="Generate detection summaries when clips are uploaded, and AI vision summaries for clips with detected objects. Hides summaries in the event archive when off."
+              description="Generate motion summaries when clips are uploaded, and AI vision summaries when enabled on the camera stream."
               checked={draft.videoSummary}
               disabled={!canEdit}
               onChange={(v) => updateDraft('videoSummary', v)}
-            />
-            <SettingRow
-              icon={<Fingerprint size={18} />}
-              title="ReID processing"
-              description="Extract person profiles from clip track events. Hides detection details in the event archive when off."
-              checked={draft.reidProcessing}
-              disabled={!canEdit}
-              onChange={(v) => updateDraft('reidProcessing', v)}
             />
 
             <p className="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-2 mt-6">

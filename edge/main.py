@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aura Watch edge agent — motion-triggered clips with post-record YOLO + ReID."""
+"""Aura Watch edge agent — motion-triggered clip recording."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 import base64
 import json
 import platform
-import queue
 import shutil
 import signal
 import subprocess
@@ -29,20 +28,17 @@ import websocket
 
 from agent_log import AgentLogger
 from camera import CameraCapture
-from clip_processor import process_clip
 from pipeline import PipelineSettings, VisionPipeline, encode_preview_jpeg
 from recorder import (
     ClipEncoder,
     clip_meets_upload_threshold,
     get_video_duration_seconds,
     kill_ffmpeg_for_path,
+    notify_clip_generated,
     subsample_frames,
-    upload_clip,
 )
 from device_defaults import stream_config_defaults
-from reid_embedder import ReidEmbedder
 from rtsp_scanner import scan_rtsp_cameras
-from yolo_tracker import YoloByteTracker, class_names_from_flags, parse_class_names
 
 _STREAM_DEFAULTS = stream_config_defaults()
 _DEFAULT_RUNTIME = DeviceRuntimeConfig()
@@ -60,12 +56,10 @@ def derive_ws_url(http_url: str) -> str:
 CLOUD_URL = os.getenv("CLOUD_URL", "https://aura-watch.adboardtools.com").rstrip("/")
 CLOUD_WS_URL = derive_ws_url(CLOUD_URL)
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Office Edge Device")
-LOCAL_VIDEO_DIR = os.getenv("LOCAL_VIDEO_DIR", os.path.join(BASE_DIR, "storage", "temp_clips"))
-LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage", "crops"))
 LOCAL_CLIPS_DIR = os.path.join(BASE_DIR, "storage", "clips")
+LOCAL_CROPS_DIR = os.getenv("LOCAL_CROPS_DIR", os.path.join(BASE_DIR, "storage", "crops"))
 DEVICE_ID_FILE = os.path.join(BASE_DIR, ".device-id")
 AGENT_LOG_FILE = os.path.join(BASE_DIR, "storage", "agent.log")
-WORKER_LOG_FILE = os.path.join(BASE_DIR, "storage", "worker.log")
 HEALTH_HEARTBEAT_SEC = max(60, int(os.getenv("HEALTH_HEARTBEAT_SEC", "300")))
 DEBUG_LOGS = _DEFAULT_RUNTIME.debug_logs
 PREVIEW_STALL_TIMEOUT_SEC = _DEFAULT_RUNTIME.preview_stall_timeout_sec
@@ -186,30 +180,8 @@ class EdgeConfig:
     pixel_change_threshold: float = field(
         default_factory=lambda: float(_STREAM_DEFAULTS["pixelChangeThreshold"])
     )
-    detect_person: bool = field(default_factory=lambda: bool(_STREAM_DEFAULTS["detectPerson"]))
-    detect_vehicle: bool = field(default_factory=lambda: bool(_STREAM_DEFAULTS["detectVehicle"]))
-
     def runtime(self, device: DeviceRuntimeConfig) -> DeviceRuntimeConfig:
         return device
-
-    def detection_classes(self) -> list[str]:
-        classes = class_names_from_flags(self.detect_person, self.detect_vehicle)
-        if classes:
-            return classes
-        return parse_class_names(os.getenv("YOLO_CLASSES", "person,vehicle"))
-
-
-@dataclass
-class ClipProcessingJob:
-    stream_id: str
-    output_path: str
-    filename: str
-    timestamp_ms: int
-    width: int
-    height: int
-    actual_duration: float
-    clip_fps: int
-    preroll_frame_count: int
 
 
 class EdgeAgent:
@@ -230,15 +202,6 @@ class EdgeAgent:
         self.streams_config: dict[str, EdgeConfig] = {}
         self.pipelines: dict[str, dict[str, Any]] = {}
         self._recent_logs: list[tuple[str, str]] = []
-        self._clip_job_queue: queue.Queue[ClipProcessingJob] = queue.Queue()
-        self._clip_jobs_lock = threading.Lock()
-        self._clip_jobs_pending: dict[str, int] = {}
-        self.reid_embedder = ReidEmbedder()
-        reid_error = self.reid_embedder.validate()
-        if reid_error:
-            print(f"[ReID] WARNING: {reid_error}", flush=True)
-        else:
-            print(f"[ReID] OSNet ready at {self.reid_embedder.model_path}", flush=True)
 
         if not self.live_preview_enabled:
             print(
@@ -247,19 +210,8 @@ class EdgeAgent:
                 flush=True,
             )
 
-        os.makedirs(LOCAL_VIDEO_DIR, exist_ok=True)
         os.makedirs(LOCAL_CLIPS_DIR, exist_ok=True)
         os.makedirs(os.path.join(BASE_DIR, "storage"), exist_ok=True)
-
-        self.worker_proc = None
-        self._start_clip_worker()
-        
-        self._status_poll_thread = threading.Thread(
-            target=self._status_polling_loop,
-            name="status-poll",
-            daemon=True,
-        )
-        self._status_poll_thread.start()
 
     @property
     def live_preview_enabled(self) -> bool:
@@ -379,22 +331,6 @@ class EdgeAgent:
         if p_data is not None:
             p_data["stream_in_error"] = True
 
-    def _increment_clip_jobs(self, stream_id: str) -> None:
-        pass
-
-    def _decrement_clip_jobs(self, stream_id: str) -> None:
-        pass
-
-    def _clip_jobs_active(self, stream_id: str) -> bool:
-        try:
-            for filename in os.listdir(LOCAL_VIDEO_DIR):
-                if filename.endswith(".json"):
-                    if f"_{stream_id}.json" in filename:
-                        return True
-        except Exception:
-            pass
-        return False
-
     def _resolve_stream_status(self, stream_id: str) -> str:
         p_data = self.pipelines.get(stream_id)
         config = self.streams_config.get(stream_id)
@@ -402,8 +338,6 @@ class EdgeAgent:
             return "Offline"
         if p_data.get("is_recording"):
             return "Recording"
-        if self._clip_jobs_active(stream_id):
-            return "Processing"
         if p_data.get("stream_in_error"):
             return "Error"
         camera = p_data.get("camera")
@@ -414,53 +348,6 @@ class EdgeAgent:
     def _restore_stream_status(self, stream_id: str) -> None:
         if self.pipelines.get(stream_id):
             self.send_status(stream_id, self._resolve_stream_status(stream_id))
-
-    def _start_clip_worker(self) -> None:
-        worker_script = os.path.join(BASE_DIR, "clip_worker.py")
-        
-        def run_worker_loop():
-            while not self.shutdown_event.is_set():
-                self.send_log("Starting background clip processing worker...")
-                try:
-                    worker_env = os.environ.copy()
-                    worker_env["WORKER_LOG_FILE"] = WORKER_LOG_FILE
-                    self.worker_proc = subprocess.Popen(
-                        [sys.executable, "-u", worker_script],
-                        cwd=BASE_DIR,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        env=worker_env,
-                    )
-                    
-                    # Read stdout line by line
-                    for line in iter(self.worker_proc.stdout.readline, ""):
-                        if self.shutdown_event.is_set():
-                            break
-                        line_str = line.strip()
-                        if line_str:
-                            self.send_log(line_str)
-                            
-                    self.worker_proc.wait()
-                except Exception as exc:
-                    self.send_log(f"[Agent] Worker process error: {exc}")
-                
-                if not self.shutdown_event.is_set():
-                    self.send_log("Worker process stopped. Restarting in 5s...")
-                    time.sleep(5)
-                    
-        threading.Thread(target=run_worker_loop, name="worker-monitor", daemon=True).start()
-
-    def _status_polling_loop(self) -> None:
-        last_pending = {}
-        while not self.shutdown_event.is_set():
-            time.sleep(2.0)
-            for stream_id in list(self.pipelines.keys()):
-                is_active = self._clip_jobs_active(stream_id)
-                if is_active != last_pending.get(stream_id, False):
-                    last_pending[stream_id] = is_active
-                    self._restore_stream_status(stream_id)
 
     def _apply_hub_configure(
         self,
@@ -580,10 +467,6 @@ class EdgeAgent:
         if settings is not None:
             settings.tracking_enabled = config.tracking_enabled
 
-        tracker = p_data.get("tracker")
-        if tracker and not config.tracking_enabled:
-            tracker.reset_detection_edge()
-
         if not config.tracking_enabled:
             self._cancel_active_recording(stream_id)
 
@@ -611,16 +494,12 @@ class EdgeAgent:
                 tracking_enabled=bool(s.get("trackingEnabled", default_stream_tracking_enabled())),
                 motion_threshold=int(s.get("motionThreshold", 25)),
                 pixel_change_threshold=float(s.get("pixelChangeThreshold", 0.02)),
-                detect_person=bool(s.get("detectPerson", True)),
-                detect_vehicle=bool(s.get("detectVehicle", True)),
             )
 
             existing = self.streams_config.get(stream_id)
             needs_restart = not existing or (
                 existing.camera_type != config.camera_type
                 or existing.stream_url != config.stream_url
-                or existing.detect_person != config.detect_person
-                or existing.detect_vehicle != config.detect_vehicle
                 or existing.motion_threshold != config.motion_threshold
                 or existing.pixel_change_threshold != config.pixel_change_threshold
             )
@@ -668,7 +547,6 @@ class EdgeAgent:
             "preview_stalled": False,
             "recording_started_at_mono": None,
             "recording_started_at_ms": None,
-            "tracker": None,
             "stream_in_error": False,
         }
         self.pipelines[stream_id] = pipeline_data
@@ -744,13 +622,12 @@ class EdgeAgent:
         ws_ok = bool(self.ws)
         cpu_usage = _cpu_usage_percent(interval=0.1)
         cpu_str = f"cpu={cpu_usage}%" if cpu_usage is not None else "cpu=N/A"
-        q_len = self._clip_job_queue.qsize()
         self.send_log(
             "[Health] "
             f"pid={os.getpid()} "
             f"ws={'up' if ws_ok else 'down'} "
             f"streams={len(self.pipelines)} "
-            f"{cpu_str} queue_len={q_len} "
+            f"{cpu_str} "
             f"[{'; '.join(stream_states) or 'none'}]"
         )
 
@@ -892,8 +769,6 @@ class EdgeAgent:
             retry_delay = 10.0
             consecutive_failures = 0
             self.send_stream_error_cleared(stream_id)
-            detection_classes = config.detection_classes()
-
             pipeline_data = self.pipelines.get(stream_id)
             if not pipeline_data:
                 camera.release()
@@ -902,14 +777,12 @@ class EdgeAgent:
             pipeline_data["camera"] = camera
             pipeline_data["frame_width"] = camera.width
             pipeline_data["frame_height"] = camera.height
-            pipeline_data["detection_classes"] = detection_classes
 
             self.send_log(
-                f"[{config.name}] Motion watch active ({camera.width}x{camera.height}) | "
-                f"targets={', '.join(detection_classes)} when clips are processed"
+                f"[{config.name}] Motion watch active ({camera.width}x{camera.height})"
             )
             if pipeline_data.get("stream_frames") and self.live_preview_enabled:
-                self.send_log(f"[{config.name}] Live preview streaming enabled (no live YOLO).")
+                self.send_log(f"[{config.name}] Live preview streaming enabled.")
             self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
             settings = PipelineSettings(
@@ -1049,9 +922,6 @@ class EdgeAgent:
                 pipeline.join_capture()
                 self._stop_active_clip_encoder(pipeline_data)
                 camera.release()
-                tracker = pipeline_data.get("tracker")
-                if tracker:
-                    tracker.reset()
 
             if stop_event.is_set() or self.shutdown_event.is_set():
                 break
@@ -1118,38 +988,6 @@ class EdgeAgent:
             elif p_data.get("preview_stalled"):
                 p_data["preview_stalled"] = False
                 self._ws_send({"type": "preview_resumed", "streamId": stream_id})
-
-    def _get_stream_tracker(self, stream_id: str) -> YoloByteTracker:
-        p_data = self.pipelines.get(stream_id)
-        if not p_data:
-            raise RuntimeError(f"No pipeline data for stream {stream_id}")
-
-        existing = p_data.get("tracker")
-        if existing is not None:
-            return existing
-
-        config = self.streams_config.get(stream_id)
-        runtime = p_data.get("runtime")
-        if runtime is None and config is not None:
-            runtime = config.runtime(self.device_runtime_config)
-        if runtime is None:
-            runtime = _DEFAULT_RUNTIME
-
-        detection_classes = p_data.get("detection_classes")
-        if not detection_classes and config is not None:
-            detection_classes = config.detection_classes()
-
-        tracker = YoloByteTracker(
-            confidence=runtime.yolo_confidence,
-            device=runtime.yolo_device,
-            class_names=detection_classes,
-            imgsz=runtime.yolo_imgsz,
-            reid_confidence_threshold=runtime.reid_confidence_threshold,
-            reid_min_bbox_size=runtime.reid_min_bbox_size,
-            reid_visible_sec=runtime.reid_visible_sec,
-        )
-        p_data["tracker"] = tracker
-        return tracker
 
     def _try_start_clip_recording(
         self,
@@ -1269,7 +1107,7 @@ class EdgeAgent:
                 list(p_data.get("preroll_frames") or []),
                 max(int(clip_preroll_sec * clip_fps), 1),
             )
-            preroll_written = clip_encoder.write_frames_blocking(preroll_frames)
+            clip_encoder.write_frames_blocking(preroll_frames)
 
             with p_data["clip_encoder_lock"]:
                 p_data["clip_encoder"] = clip_encoder
@@ -1348,84 +1186,49 @@ class EdgeAgent:
             with p_data["recording_lock"]:
                 p_data["is_recording"] = False
 
-            preroll_frames = list(p_data.get("preroll_frames") or [])
-            self.send_log(f"[{name}] Queuing clip for background YOLO + upload: {filename}")
-            
-            # Immediate upload to Cloud (without metadata)
-            uploaded_immediately = False
-            self.send_log(f"[{name}] Uploading clip to Cloud (immediate, no metadata): {filename}")
-            try:
-                upload_clip(
-                    CLOUD_URL,
-                    self.device_id,
-                    output_path,
-                    filename,
-                    duration=actual_duration,
-                    stream_id=stream_id,
-                    track_events=[],
-                    frame_width=width,
-                    frame_height=height,
-                    clip_start_ms=timestamp_ms,
-                    reid_profiles=[],
-                )
-                uploaded_immediately = True
-                self.send_log(f"[{name}] Successfully uploaded clip to Cloud (immediate): {filename}")
-            except Exception as upload_exc:
-                self.send_log(f"[{name}] Failed immediate clip upload (will retry in background): {upload_exc}")
+            self.send_log(f"[{name}] Notifying hub about motion clip: {filename}")
 
-            # Resolve config values for JSON sidecar metadata
-            runtime = p_data.get("runtime")
-            if runtime is None and config is not None:
-                runtime = config.runtime(self.device_runtime_config)
-            if runtime is None:
-                runtime = _DEFAULT_RUNTIME
-
-            detection_classes = p_data.get("detection_classes")
-            if not detection_classes and config is not None:
-                detection_classes = config.detection_classes()
-            if not detection_classes:
-                detection_classes = ["person", "vehicle"]
-
-            json_filename = filename.replace(".mp4", ".json")
-            json_path = os.path.join(LOCAL_VIDEO_DIR, json_filename)
-            
-            metadata = {
-                "stream_id": stream_id,
-                "filename": filename,
-                "timestamp_ms": timestamp_ms,
-                "width": width,
-                "height": height,
-                "actual_duration": actual_duration,
-                "clip_fps": clip_fps,
-                "preroll_frame_count": preroll_written,
-                "yolo_detect_interval": getattr(runtime, "yolo_detect_interval", 1),
-                "yolo_confidence": getattr(runtime, "yolo_confidence", 0.35),
-                "yolo_device": getattr(runtime, "yolo_device", "cpu"),
-                "yolo_imgsz": getattr(runtime, "yolo_imgsz", 320),
-                "reid_confidence_threshold": getattr(runtime, "reid_confidence_threshold", 0.70),
-                "reid_min_bbox_size": getattr(runtime, "reid_min_bbox_size", 50),
-                "reid_visible_sec": getattr(runtime, "reid_visible_sec", 4.0),
-                "detection_classes": detection_classes,
-                "min_upload_duration_sec": getattr(runtime, "min_upload_duration_sec", 3.0),
-                "attempts": 0,
-                "uploaded": uploaded_immediately,
-            }
-
-            temp_json_path = json_path + ".tmp"
-            try:
-                with open(temp_json_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, indent=2)
-                os.rename(temp_json_path, json_path)
-                self.send_log(f"[{name}] Saved sidecar metadata: {json_filename}")
-                self._restore_stream_status(stream_id)
-            except Exception as e:
-                self.send_log(f"[{name}] Failed to save sidecar metadata: {e}")
-                # Clean up the temp file so it doesn't accumulate as a 0-byte orphan
+            def notify_hub() -> None:
                 try:
-                    if os.path.exists(temp_json_path):
-                        os.unlink(temp_json_path)
-                except OSError:
-                    pass
+                    notify_clip_generated(
+                        CLOUD_URL,
+                        self.device_id,
+                        filename,
+                        duration=actual_duration,
+                        stream_id=stream_id,
+                        frame_width=width,
+                        frame_height=height,
+                        clip_start_ms=timestamp_ms,
+                    )
+                    self.send_log(f"[{name}] Hub notified about clip: {filename}")
+                    self.send_device_event(
+                        category="surveillance",
+                        severity="info",
+                        event_type="clip_generated",
+                        message=f"Motion clip recorded ({actual_duration:.1f}s)",
+                        detail={
+                            "filename": filename,
+                            "duration": actual_duration,
+                            "streamId": stream_id,
+                        },
+                        stream_id=stream_id,
+                    )
+                except Exception as notify_exc:
+                    self.send_log(f"[{name}] Failed to notify hub about clip: {notify_exc}")
+                    self.send_device_event(
+                        category="surveillance",
+                        severity="error",
+                        event_type="clip_notify_failed",
+                        message=f"Failed to notify hub about clip: {notify_exc}",
+                        detail={"filename": filename},
+                        stream_id=stream_id,
+                    )
+
+            threading.Thread(
+                target=notify_hub,
+                name=f"clip-notify-{filename}",
+                daemon=True,
+            ).start()
         except Exception as exc:
             self.send_log(f"[{name}] Clip generation failed: {exc}")
             kill_ffmpeg_for_path(output_path)
@@ -1914,7 +1717,7 @@ class EdgeAgent:
         if command == "fetch_logs":
             lines = max(10, min(int(params.get("lines", 200)), 2000))
             source = str(params.get("source", "all")).lower()
-            allowed_sources = {"all", "agent", "journal", "worker"}
+            allowed_sources = {"all", "agent", "journal"}
             if source not in allowed_sources:
                 respond(False, error=f"Invalid log source '{source}'.")
                 return
@@ -1929,16 +1732,6 @@ class EdgeAgent:
                             return
                         sections.append(
                             f"=== Persistent agent log ({AGENT_LOG_FILE}, last {lines} lines) ===\n{file_logs}"
-                        )
-
-                if source in ("all", "worker"):
-                    worker_logs = AgentLogger(WORKER_LOG_FILE).tail(lines)
-                    if worker_logs:
-                        if source == "worker":
-                            respond(True, logs=worker_logs)
-                            return
-                        sections.append(
-                            f"=== Worker log ({WORKER_LOG_FILE}, last {lines} lines) ===\n{worker_logs}"
                         )
 
                 if source in ("all", "journal"):
@@ -1963,9 +1756,7 @@ class EdgeAgent:
                         sections.append(f"=== systemd journal (aura-watch-edge) ===\n{journal_logs}")
 
                 if not sections:
-                    if source == "worker":
-                        logs = "No worker logs available yet."
-                    elif source == "agent":
+                    if source == "agent":
                         logs = "No agent logs available yet."
                     elif source == "journal":
                         logs = "No journal logs available."
@@ -2073,8 +1864,6 @@ class EdgeAgent:
     def _handle_stream_file_request(self, request_id: str, filename: str):
         if filename.startswith("clip_") and filename.endswith(".mp4"):
             file_path = os.path.join(LOCAL_CLIPS_DIR, filename)
-            if not os.path.exists(file_path):
-                file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
             content_type = "video/mp4"
         elif filename.startswith("crop_") and filename.endswith(".jpg"):
             file_path = os.path.join(LOCAL_CROPS_DIR, filename)
@@ -2189,8 +1978,6 @@ class EdgeAgent:
                     file_path = os.path.join(LOCAL_CROPS_DIR, filename)
                 else:
                     file_path = os.path.join(LOCAL_CLIPS_DIR, filename)
-                    if not os.path.exists(file_path):
-                        file_path = os.path.join(LOCAL_VIDEO_DIR, filename)
                 if os.path.exists(file_path):
                     os.unlink(file_path)
                     self.send_log(f"Deleted file on edge: {filename}")
@@ -2338,16 +2125,6 @@ class EdgeAgent:
         self.send_log(f"Agent shutdown initiated (pid={os.getpid()}).")
         self.shutdown_event.set()
 
-        if hasattr(self, "worker_proc") and self.worker_proc:
-            try:
-                self.worker_proc.terminate()
-                self.worker_proc.wait(timeout=3)
-            except Exception:
-                try:
-                    self.worker_proc.kill()
-                except Exception:
-                    pass
-
         if self.heartbeat_timer:
             self.heartbeat_timer.cancel()
         if self.preview_stall_timer:
@@ -2368,23 +2145,8 @@ class EdgeAgent:
 
         print("[Edge] Cleanup complete.", flush=True)
 
-    def _sweep_stale_tmp_files(self) -> None:
-        """Remove any leftover .json.tmp files from a previous crash."""
-        try:
-            for name_entry in os.listdir(LOCAL_VIDEO_DIR):
-                if name_entry.endswith(".json.tmp"):
-                    stale_path = os.path.join(LOCAL_VIDEO_DIR, name_entry)
-                    try:
-                        os.unlink(stale_path)
-                        print(f"[Edge] Removed stale sidecar temp file: {name_entry}", flush=True)
-                    except OSError as exc:
-                        print(f"[Edge] Could not remove stale temp file {name_entry}: {exc}", flush=True)
-        except Exception as exc:
-            print(f"[Edge] Stale tmp sweep failed: {exc}", flush=True)
-
     def bootstrap(self):
         try:
-            self._sweep_stale_tmp_files()
             last_line = self.agent_logger.last_line()
             if last_line:
                 self.send_log(f"Agent starting (pid={os.getpid()}). Last persisted log: {last_line}")

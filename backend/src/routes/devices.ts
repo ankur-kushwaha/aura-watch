@@ -215,6 +215,16 @@ function handleMultipartClipUpload(
   req.pipe(busboy);
 }
 
+export type ClipMetadataCallback = (
+  filename: string,
+  timestamp: Date,
+  deviceId: string,
+  duration: number,
+  streamId: string,
+  frameWidth?: number,
+  frameHeight?: number,
+) => Promise<void>;
+
 export type ClipUploadCallback = (
   filepath: string,
   filename: string,
@@ -239,6 +249,7 @@ export type ClipMetadataUpdateCallback = (
 ) => Promise<void>;
 
 let onClipUploadedCallback: ClipUploadCallback | null = null;
+let onClipMetadataCallback: ClipMetadataCallback | null = null;
 let onClipMetadataUpdateCallback: ClipMetadataUpdateCallback | null = null;
 let onDevicesChangedCallback: (() => void) | null = null;
 let onDeviceConfigUpdatedCallback: ((deviceId: string) => Promise<void>) | null = null;
@@ -246,6 +257,10 @@ let onDeviceEventRecordedCallback: ((deviceId: string, event: object) => void) |
 
 export function registerOnClipUploaded(cb: ClipUploadCallback) {
   onClipUploadedCallback = cb;
+}
+
+export function registerOnClipMetadata(cb: ClipMetadataCallback) {
+  onClipMetadataCallback = cb;
 }
 
 export function registerOnClipMetadataUpdate(cb: ClipMetadataUpdateCallback) {
@@ -597,6 +612,59 @@ router.delete('/:deviceId', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error deleting device:', error);
     res.status(500).json({ error: 'Failed to delete device' });
+  }
+});
+
+/**
+ * POST /api/devices/:deviceId/clips
+ * Edge device notifies hub that a clip was recorded (metadata only — video stays on edge).
+ */
+router.post('/:deviceId/clips', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const {
+    filename,
+    streamId,
+    duration,
+    frameWidth,
+    frameHeight,
+    clipStartMs,
+  } = req.body ?? {};
+
+  if (!filename || !streamId) {
+    return res.status(400).json({ error: 'filename and streamId are required' });
+  }
+
+  try {
+    const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found. Register first.' });
+    }
+
+    const timestamp = clipStartMs ? new Date(Number(clipStartMs)) : new Date();
+    const clipDuration = Number.isFinite(Number(duration)) && Number(duration) > 0
+      ? Number(duration)
+      : 10.0;
+
+    console.log(
+      `[Cloud Hub] Clip metadata received: ${filename} for device: ${device.name}, stream: ${streamId}`,
+    );
+
+    res.status(200).json({ message: 'Clip metadata received', filename });
+
+    if (onClipMetadataCallback) {
+      onClipMetadataCallback(
+        String(filename),
+        timestamp,
+        deviceId,
+        clipDuration,
+        String(streamId),
+        frameWidth != null ? Number(frameWidth) : undefined,
+        frameHeight != null ? Number(frameHeight) : undefined,
+      ).catch((err) => console.error(`[Cloud Hub] Error processing clip metadata ${filename}:`, err));
+    }
+  } catch (error) {
+    console.error('Error receiving clip metadata:', error);
+    res.status(500).json({ error: 'Failed to process clip metadata' });
   }
 });
 

@@ -4,7 +4,6 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Camera,
   Settings,
-  Fingerprint,
   // AlertTriangle,
   Bell,
   BellRing,
@@ -47,7 +46,7 @@ import { fetchNotifications, fetchUnreadCount, markNotificationsRead, deleteNoti
 
 
 import { dashboardTabFromPath } from './utils/routing';
-import { EventsTab, type EventsTabRef, ReidTab, DevicesStreamsTab, NotificationsTab } from './components/tabs';
+import { EventsTab, type EventsTabRef, DevicesStreamsTab, NotificationsTab } from './components/tabs';
 import { ManageNotificationsTab } from './components/tabs/ManageNotificationsTab';
 import { LiveWallTab } from './components/tabs/LiveWallTab';
 import { ClipLibraryTab } from './components/tabs/ClipLibraryTab';
@@ -61,8 +60,6 @@ import {
   StreamConfigDialog,
   SystemStatusLogsDialog,
 } from './components/modals';
-import { useReidTab } from './hooks';
-
 function PremiseMapTab() {
   return (
     <div className="glass-panel p-5 rounded-2xl flex flex-col gap-4 animate-[slideUp_0.3s_ease-out] w-full min-h-[calc(100vh-140px)] justify-center items-center text-center">
@@ -279,7 +276,6 @@ export default function DashboardApp() {
   const selectedStreamIdRef = useRef(selectedStreamId);
   const selectedStreamDeviceIdRef = useRef<string | null>(null);
   const fetchClipsRef = useRef<() => Promise<void>>(async () => { });
-  const triggerReidRefreshRef = useRef<() => void>(() => { });
   const streamStatusRef = useRef<string>('Offline');
   const onlineDeviceIdsRef = useRef<Set<string>>(new Set());
   const deviceLogsDeviceRef = useRef(deviceLogsDevice);
@@ -305,8 +301,8 @@ export default function DashboardApp() {
     trackingEnabled: DEFAULT_STREAM_CONFIG.trackingEnabled,
     motionThreshold: DEFAULT_STREAM_CONFIG.motionThreshold,
     pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
-    detectPerson: DEFAULT_STREAM_CONFIG.detectPerson,
-    detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
+    detectPerson: true,
+    detectVehicle: true,
   });
   const [status, setStatus] = useState<string>('Offline');
   const [logs, setLogs] = useState<{ message: string; timestamp: string }[]>([]);
@@ -365,12 +361,6 @@ export default function DashboardApp() {
   }, [selectedStreamId, selectedStream?.deviceId]);
 
   const eventsTabRef = useRef<EventsTabRef>(null);
-
-  const reidTab = useReidTab({
-    streams,
-    hasOnlineDevices,
-    active: activeTab === 'reid',
-  });
 
   const handleNotificationClick = async (n: Notification) => {
     setNotificationsDrawerOpen(false);
@@ -444,8 +434,7 @@ export default function DashboardApp() {
 
   useEffect(() => {
     fetchClipsRef.current = () => eventsTabRef.current?.fetchClips() ?? Promise.resolve();
-    triggerReidRefreshRef.current = reidTab.triggerReidRefresh;
-  }, [reidTab.triggerReidRefresh]);
+  }, []);
 
   useEffect(() => {
     streamStatusRef.current = status;
@@ -604,9 +593,6 @@ export default function DashboardApp() {
         }
         case 'clip_processing_complete':
           fetchClipsRef.current();
-          break;
-        case 'new_reid_crop':
-          triggerReidRefreshRef.current();
           break;
         case 'frame':
           break;
@@ -807,8 +793,8 @@ export default function DashboardApp() {
       trackingEnabled: DEFAULT_STREAM_CONFIG.trackingEnabled,
       motionThreshold: DEFAULT_STREAM_CONFIG.motionThreshold,
       pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
-      detectPerson: DEFAULT_STREAM_CONFIG.detectPerson,
-      detectVehicle: DEFAULT_STREAM_CONFIG.detectVehicle,
+      detectPerson: true,
+      detectVehicle: true,
     });
     setAddingStreamForDeviceId(deviceId);
     setShowConfigDialog(true);
@@ -946,6 +932,10 @@ export default function DashboardApp() {
   };
 
 
+  if (location.pathname.startsWith('/app/reid')) {
+    return <Navigate to="/app/events" replace />;
+  }
+
   if (
     location.pathname.startsWith('/app') &&
     !location.pathname.startsWith('/app/settings') &&
@@ -1007,7 +997,6 @@ export default function DashboardApp() {
               { tab: 'live' as const, icon: Camera, title: 'Live wall' },
               { tab: 'events' as const, icon: Film, title: 'Event archive', hasBadge: true },
               // { tab: 'clips' as const, icon: Film, title: 'Clip library' },
-              { tab: 'reid' as const, icon: Fingerprint, title: 'Cross-Camera ReID' },
               { tab: 'ai' as const, icon: Monitor, title: 'Ask Camera AI' },
               // { tab: 'map' as const, icon: MapIcon, title: 'Premise map' },
               { tab: 'devices' as const, icon: Server, title: 'Streaming Devices' },
@@ -1169,7 +1158,6 @@ export default function DashboardApp() {
                 {activeTab === 'live' && 'Live monitoring'}
                 {activeTab === 'events' && 'Event archive'}
                 {activeTab === 'clips' && 'Clip library'}
-                {activeTab === 'reid' && 'Cross-Camera ReID'}
                 {activeTab === 'ai' && 'Ask Camera AI'}
                 {activeTab === 'map' && 'Premise map'}
                 {activeTab === 'devices' && (
@@ -1190,7 +1178,6 @@ export default function DashboardApp() {
                   {activeTab === 'live' && 'Control Room'}
                   {activeTab === 'events' && 'All zones · last 24 hours'}
                   {activeTab === 'clips' && 'Recorded & flagged footage'}
-                  {activeTab === 'reid' && 'Multi-camera tracking & path analysis'}
                   {activeTab === 'ai' && 'Natural-language video search'}
                   {activeTab === 'map' && 'Interactive camera location mapping'}
                   {activeTab === 'custom-alerts' && 'Alert subscriptions & integrations'}
@@ -1306,10 +1293,6 @@ export default function DashboardApp() {
               )}
 
               {activeTab === 'clips' && <ClipLibraryTab />}
-
-              {activeTab === 'reid' && (
-                <ReidTab reid={reidTab} view={reidTab.reidView} />
-              )}
 
               {activeTab === 'ai' && (
                 <AskCameraAiTab

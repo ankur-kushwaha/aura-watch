@@ -1,10 +1,7 @@
-"""On-demand clip encoding, transcoding, and cloud upload."""
+"""Clip encoding and hub notification."""
 
 from __future__ import annotations
 
-import json
-import os
-import queue
 import subprocess
 import threading
 import time
@@ -322,37 +319,6 @@ def get_video_duration_seconds(path: str) -> float:
         return 0.0
 
 
-def transcode_for_gemini(
-    input_path: str,
-    output_path: str,
-    fps: str = "1",
-    resolution: str = "640:480",
-    crf: str = "28",
-):
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            input_path,
-            "-vf",
-            f"fps={fps},scale={resolution}",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            crf,
-            "-an",
-            output_path,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg transcode failed: {result.stderr}")
-
 
 def clip_meets_upload_threshold(duration_sec: float, min_duration_sec: float) -> bool:
     """Return False when clip is below configured minimum duration (0 = no minimum)."""
@@ -361,76 +327,30 @@ def clip_meets_upload_threshold(duration_sec: float, min_duration_sec: float) ->
     return duration_sec >= min_duration_sec
 
 
-def upload_clip(
+def notify_clip_generated(
     cloud_url: str,
     device_id: str,
-    filepath: str,
     filename: str,
     duration: Optional[float] = None,
     stream_id: Optional[str] = None,
-    track_events: Optional[list] = None,
     frame_width: Optional[int] = None,
     frame_height: Optional[int] = None,
     clip_start_ms: Optional[int] = None,
-    reid_profiles: Optional[list] = None,
 ):
-    url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/upload"
-    metadata: dict = {"filename": filename}
+    """Notify hub that a clip was recorded on edge (metadata only — no video upload)."""
+    url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/clips"
+    payload: dict = {"filename": filename}
     if duration is not None and duration > 0:
-        metadata["duration"] = duration
+        payload["duration"] = duration
     if stream_id:
-        metadata["streamId"] = stream_id
-    if track_events:
-        metadata["trackEvents"] = track_events
+        payload["streamId"] = stream_id
     if frame_width is not None and frame_width > 0:
-        metadata["frameWidth"] = frame_width
-    if frame_height is not None and frame_height > 0:
-        metadata["frameHeight"] = frame_height
-    if clip_start_ms is not None:
-        metadata["clipStartMs"] = clip_start_ms
-    if reid_profiles:
-        metadata["reidProfiles"] = reid_profiles
-
-    with open(filepath, "rb") as handle:
-        response = requests.post(
-            url,
-            data={"metadata": json.dumps(metadata)},
-            files={"video": (filename, handle, "video/mp4")},
-            timeout=120,
-        )
-
-    if response.status_code < 200 or response.status_code >= 300:
-        raise RuntimeError(f"Upload failed ({response.status_code}): {response.text}")
-
-
-def update_clip_metadata(
-    cloud_url: str,
-    device_id: str,
-    filename: str,
-    stream_id: str,
-    track_events: list,
-    reid_profiles: Optional[list] = None,
-    frame_width: Optional[int] = None,
-    frame_height: Optional[int] = None,
-):
-    url = f"{cloud_url.rstrip('/')}/api/devices/{device_id}/metadata"
-    payload = {
-        "filename": filename,
-        "streamId": stream_id,
-        "trackEvents": track_events,
-    }
-    if reid_profiles is not None:
-        payload["reidProfiles"] = reid_profiles
-    if frame_width is not None:
         payload["frameWidth"] = frame_width
-    if frame_height is not None:
+    if frame_height is not None and frame_height > 0:
         payload["frameHeight"] = frame_height
+    if clip_start_ms is not None:
+        payload["clipStartMs"] = clip_start_ms
 
-    response = requests.post(
-        url,
-        json=payload,
-        timeout=60,
-    )
-
+    response = requests.post(url, json=payload, timeout=15)
     if response.status_code < 200 or response.status_code >= 300:
-        raise RuntimeError(f"Metadata update failed ({response.status_code}): {response.text}")
+        raise RuntimeError(f"Clip notify failed ({response.status_code}): {response.text}")
