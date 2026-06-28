@@ -300,10 +300,10 @@ export function EditStreamForm({ stream, allStreamIds = [], onClose, onSaved }: 
           <ToggleSwitch checked={personDetection} onChange={setPersonDetection} label="Person detection" />
           <ToggleSwitch checked={vehicleDetection} onChange={setVehicleDetection} label="Vehicle detection" />
           <ToggleSwitch
-            checked={stream.trackingEnabled && edgeYoloEnabled}
+            checked={!!stream?.trackingEnabled && edgeYoloEnabled}
             onChange={setEdgeYoloEnabled}
             label="Edge YOLO annotation"
-            disabled={!stream.trackingEnabled}
+            disabled={!stream?.trackingEnabled}
             description="Experimental — draws boxes on recorded clips (YOLO11n ONNX on Pi)"
           />
           {/* <ToggleSwitch checked={loiteringAlert} onChange={setLoiteringAlert} label="Loitering alert" /> */}
