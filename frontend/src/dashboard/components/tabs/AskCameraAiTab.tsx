@@ -575,7 +575,6 @@ function RagClipPreviewPanel({
   return (
     <ClipPreviewPanel
       clip={clip}
-      videoHeightClass="h-[min(40vh,280px)]"
       orgSettings={orgSettings}
       loadingClipDetections={loadingClipDetections}
       clipDetections={clipDetections}

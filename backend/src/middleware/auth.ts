@@ -13,6 +13,12 @@ function isPublicPath(method: string, path: string): boolean {
   return PUBLIC_PATHS.some((p) => p.method === method && p.pattern.test(path));
 }
 
+export function extractAccessToken(req: Request): string | null {
+  const header = req.headers.authorization;
+  const queryToken = typeof req.query.access_token === 'string' ? req.query.access_token : null;
+  return header?.startsWith('Bearer ') ? header.slice(7) : queryToken;
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.path.startsWith('/api')) {
     return next();
@@ -27,9 +33,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return next();
   }
 
-  const header = req.headers.authorization;
-  const queryToken = typeof req.query.access_token === 'string' ? req.query.access_token : null;
-  const rawToken = header?.startsWith('Bearer ') ? header.slice(7) : queryToken;
+  const rawToken = extractAccessToken(req);
 
   if (!rawToken) {
     return res.status(401).json({ error: 'Authentication required' });

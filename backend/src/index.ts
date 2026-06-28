@@ -44,6 +44,7 @@ import { resolveCropImageBuffer } from './services/cropResolve';
 import { resolveClipForDetection } from './services/reidClipResolve';
 import { extractCropFromClip } from './services/reidClipExtract';
 import { registerEdgeFileFetcher } from './services/edgeFileFetch';
+import { getRemoteHubUrl, tryProxyFromRemoteHub } from './services/remoteHubFetch';
 import { backfillStreamTrackIdentities, cleanupEmptyIdentities } from './services/reidPeople';
 import prisma from './services/db';
 import { recordDeviceEventFromLogSafe, recordDeviceEventSafe, recordDeviceEvent } from './services/deviceEvents';
@@ -107,6 +108,14 @@ app.get('/api/videos/:filename', async (req, res) => {
     if (localPath) {
       res.setHeader('Content-Type', 'video/mp4');
       return res.sendFile(localPath);
+    }
+
+    if (await tryProxyFromRemoteHub(req, res, `/videos/${encodeURIComponent(filename)}`)) {
+      return;
+    }
+
+    if (getRemoteHubUrl()) {
+      return res.status(404).json({ error: `Clip file not found for ${filename}` });
     }
 
     const deviceId = clip.deviceId;
@@ -496,7 +505,26 @@ app.get('/api/crops/:filename', async (req, res) => {
           console.warn(`[Crop Fallback] Failed lazy crop extraction for ${filename}:`, err.message);
         }
       }
+
+      if (await tryProxyFromRemoteHub(req, res, `/crops/${encodeURIComponent(filename)}`)) {
+        return;
+      }
+
       return res.status(404).json({ error: `Crop metadata not found for ${filename}` });
+    }
+
+    const localCropPath = path.join(CROPS_DIR, filename);
+    if (fs.existsSync(localCropPath)) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      return res.sendFile(localCropPath);
+    }
+
+    if (await tryProxyFromRemoteHub(req, res, `/crops/${encodeURIComponent(filename)}`)) {
+      return;
+    }
+
+    if (getRemoteHubUrl()) {
+      return res.status(404).json({ error: `Crop image not found for ${filename}` });
     }
 
     const buffer = await resolveCropImageBuffer(detection, fetchFileFromEdge);

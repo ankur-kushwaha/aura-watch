@@ -11,7 +11,7 @@ import { buildTimelineIdEntries } from './idEntries';
 
 export interface ClipPreviewPanelProps {
   clip: VideoClip;
-  videoHeightClass?: string;
+  videoContainerClass?: string;
   deviceName?: string;
   orgSettings: OrgSettings;
   loadingClipDetections: boolean;
@@ -27,7 +27,7 @@ export interface ClipPreviewPanelProps {
 
 export function ClipPreviewPanel({
   clip,
-  videoHeightClass = 'h-[min(38vh,260px)] lg:h-[min(82vh,640px)]',
+  videoContainerClass = 'aspect-[16/9] w-full',
   deviceName,
   orgSettings,
   generatingAiSummary = false,
@@ -170,7 +170,7 @@ export function ClipPreviewPanel({
           </div>
         )}
         </div>
-      <div className={`bg-black rounded-xl overflow-hidden ${videoHeightClass} border border-border-glass shrink-0 relative order-1 lg:order-2 lg:w-[44%] lg:max-w-[480px] lg:sticky lg:top-0 lg:self-start`}>
+      <div className={`bg-black rounded-xl overflow-hidden ${videoContainerClass} border border-border-glass shrink-0 relative order-1 lg:order-2 lg:flex-1 lg:min-w-0 lg:sticky lg:top-0 lg:self-start`}>
         <video
           key={clip.id}
           src={mediaUrl(`/videos/${clip.filename}`)}

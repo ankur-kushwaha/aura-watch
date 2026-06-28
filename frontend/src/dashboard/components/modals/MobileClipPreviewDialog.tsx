@@ -58,7 +58,6 @@ export function MobileClipPreviewDialog({
           {clip && (
             <ClipPreviewPanel
               clip={clip}
-              videoHeightClass="h-[min(40vh,280px)]"
               deviceName={deviceName}
               orgSettings={orgSettings}
               loadingClipDetections={loadingClipDetections}
