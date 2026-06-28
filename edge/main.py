@@ -703,6 +703,94 @@ class EdgeAgent:
         except Exception:
             pass
 
+    def _resolve_remote_stream_url(self, stream_id: str, config: Optional[EdgeConfig] = None) -> Optional[str]:
+        global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip() or "rtsp://mediamtx.adboardtools.com:8554/live"
+        if not global_remote_url:
+            return None
+
+        if global_remote_url.endswith("/"):
+            remote_url = f"{global_remote_url}{stream_id}"
+        elif "/" not in global_remote_url.split("://", 1)[-1]:
+            remote_url = f"{global_remote_url}/{stream_id}"
+        else:
+            remote_url = f"{global_remote_url}_{stream_id}"
+
+        if config and config.stream_url:
+            try:
+                from urllib.parse import urlparse
+
+                stream_host = urlparse(config.stream_url).hostname
+                remote_host = urlparse(remote_url).hostname
+                if stream_host and remote_host and stream_host.lower() == remote_host.lower():
+                    return None
+            except Exception:
+                pass
+
+        return remote_url
+
+    def _stop_rtsp_pusher(self, stream_id: str, *, wait: bool = True) -> None:
+        p_data = self.pipelines.get(stream_id)
+        if not p_data:
+            return
+
+        pusher_stop = p_data.pop("pusher_stop_event", None)
+        if pusher_stop:
+            pusher_stop.set()
+
+        pusher_thread = p_data.pop("pusher_thread", None)
+        if wait and pusher_thread and pusher_thread.is_alive():
+            pusher_thread.join(timeout=5.0)
+
+    def _start_live_remote_push(
+        self,
+        stream_id: str,
+        config: EdgeConfig,
+        pipeline_data: dict[str, Any],
+        runtime: DeviceRuntimeConfig,
+    ) -> None:
+        remote_url = self._resolve_remote_stream_url(stream_id, config)
+        if not remote_url:
+            return
+
+        if pipeline_data.get("pusher_thread") and pipeline_data["pusher_thread"].is_alive():
+            return
+
+        if config.camera_type == "rtsp":
+            pusher_stop_event = threading.Event()
+            thread = threading.Thread(
+                target=self._run_continuous_rtsp_push,
+                args=(stream_id, config.stream_url, remote_url, pusher_stop_event),
+                name=f"pusher-{stream_id}",
+                daemon=True,
+            )
+            pipeline_data["pusher_thread"] = thread
+            pipeline_data["pusher_stop_event"] = pusher_stop_event
+            thread.start()
+            return
+
+        if pipeline_data.get("continuous_encoder"):
+            return
+
+        camera = pipeline_data.get("camera")
+        pipeline = pipeline_data.get("pipeline")
+        if not camera or not pipeline:
+            return
+
+        self.send_log(
+            f"[{config.name}] Starting continuous webcam transcode push to {remote_url} (CPU intensive)"
+        )
+        continuous_encoder = ClipEncoder(
+            output_path="",
+            width=camera.width,
+            height=camera.height,
+            fps=effective_clip_encode_fps(runtime),
+            remote_stream_url=remote_url,
+            only_remote=True,
+        )
+        continuous_encoder.start()
+        pipeline_data["continuous_encoder"] = continuous_encoder
+        pipeline.start_continuous_feed(continuous_encoder)
+
     def _run_continuous_rtsp_push(self, stream_id: str, stream_url: str, remote_url: str, stop_event: threading.Event):
         self.send_log(f"[Pusher] Starting continuous RTSP stream copy to {remote_url}")
         transport = rtsp_transport_value()
@@ -908,54 +996,11 @@ class EdgeAgent:
 
             try:
                 pipeline.start_capture()
-                
-                global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip() or "rtsp://mediamtx.adboardtools.com:8554/live"
-                if global_remote_url:
-                    pusher_stop_event = threading.Event()
-                    if global_remote_url.endswith("/"):
-                        remote_url = f"{global_remote_url}{stream_id}"
-                    elif "/" not in global_remote_url.split("://", 1)[-1]:
-                        remote_url = f"{global_remote_url}/{stream_id}"
-                    else:
-                        remote_url = f"{global_remote_url}_{stream_id}"
-                    
-                    # Check if the camera stream is already on the target MediaMTX host to avoid redundancy/feedback loops
-                    is_same_server = False
-                    try:
-                        from urllib.parse import urlparse
-                        stream_host = urlparse(config.stream_url).hostname
-                        remote_host = urlparse(remote_url).hostname
-                        if stream_host and remote_host and stream_host.lower() == remote_host.lower():
-                            is_same_server = True
-                    except Exception:
-                        pass
 
-                    if is_same_server:
-                        self.send_log(f"[{config.name}] Stream URL is already on the target MediaMTX server ({stream_host}). Skipping continuous push.")
-                    else:
-                        if config.camera_type == "rtsp":
-                            t = threading.Thread(
-                                target=self._run_continuous_rtsp_push,
-                                args=(stream_id, config.stream_url, remote_url, pusher_stop_event),
-                                name=f"pusher-{stream_id}",
-                                daemon=True
-                            )
-                            pipeline_data["pusher_thread"] = t
-                            pipeline_data["pusher_stop_event"] = pusher_stop_event
-                            t.start()
-                        else:
-                            self.send_log(f"[{config.name}] Starting continuous webcam transcode push to {remote_url} (CPU intensive)")
-                            continuous_encoder = ClipEncoder(
-                                output_path="",
-                                width=camera.width,
-                                height=camera.height,
-                                fps=effective_clip_encode_fps(runtime),
-                                remote_stream_url=remote_url,
-                                only_remote=True
-                            )
-                            continuous_encoder.start()
-                            pipeline_data["continuous_encoder"] = continuous_encoder
-                            pipeline.start_continuous_feed(continuous_encoder)
+                runtime = pipeline_data.get("runtime")
+                if runtime is None:
+                    runtime = config.runtime(self.device_runtime_config)
+                self._start_live_remote_push(stream_id, config, pipeline_data, runtime)
 
                 pipeline.run()
             except Exception as exc:
@@ -970,18 +1015,12 @@ class EdgeAgent:
                 self._mark_stream_error(stream_id)
                 self.send_status(stream_id, "Error")
             finally:
-                pusher_stop = pipeline_data.pop("pusher_stop_event", None)
-                if pusher_stop:
-                    pusher_stop.set()
-                pusher_thread = pipeline_data.pop("pusher_thread", None)
-                if pusher_thread and pusher_thread.is_alive():
-                    pusher_thread.join(timeout=3.0)
-                    
+                self._stop_rtsp_pusher(stream_id, wait=True)
+
                 continuous_encoder = pipeline_data.pop("continuous_encoder", None)
                 if continuous_encoder:
                     pipeline.stop_continuous_feed()
                     continuous_encoder.stop()
-
                 pipeline_data.pop("pipeline", None)
                 pipeline.join_capture()
                 self._stop_active_clip_encoder(pipeline_data)
@@ -1145,28 +1184,7 @@ class EdgeAgent:
         )
 
         try:
-            global_remote_url = os.getenv("REMOTE_STREAM_URL", "").strip() or "rtsp://mediamtx.adboardtools.com:8554/live"
-            remote_url = None
-            if global_remote_url:
-                if global_remote_url.endswith("/"):
-                    remote_url = f"{global_remote_url}{stream_id}"
-                elif "/" not in global_remote_url.split("://", 1)[-1]:
-                    remote_url = f"{global_remote_url}/{stream_id}"
-                else:
-                    remote_url = f"{global_remote_url}_{stream_id}"
-                
-                # If the input camera stream is already on the target MediaMTX host, do not push to avoid feedback loops
-                if config and config.stream_url:
-                    try:
-                        from urllib.parse import urlparse
-                        stream_host = urlparse(config.stream_url).hostname
-                        remote_host = urlparse(remote_url).hostname
-                        if stream_host and remote_host and stream_host.lower() == remote_host.lower():
-                            remote_url = None
-                    except Exception:
-                        pass
-
-            clip_encoder = ClipEncoder(output_path, width, height, fps=clip_fps, remote_stream_url=remote_url)
+            clip_encoder = ClipEncoder(output_path, width, height, fps=clip_fps)
             clip_encoder.start()
 
             preroll_frames = subsample_frames(
