@@ -146,6 +146,7 @@ export interface CameraStream {
   loiteringAlert?: boolean | null;
   crossCameraReid?: boolean | null;
   aiSummaryEnabled?: boolean | null;
+  edgeYoloEnabled?: boolean | null;
   plateRecognition?: boolean | null;
   locationName?: string | null;
   latitude?: number | null;
@@ -161,6 +162,7 @@ export interface CameraConfig {
   pixelChangeThreshold?: number;
   detectPerson: boolean;
   detectVehicle: boolean;
+  edgeYoloEnabled?: boolean;
 }
 
 export interface RagResponseClip {

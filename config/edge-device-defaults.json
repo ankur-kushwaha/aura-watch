@@ -19,6 +19,7 @@
   "streamDefaults": {
     "trackingEnabled": true,
     "motionThreshold": 25,
-    "pixelChangeThreshold": 0.02
+    "pixelChangeThreshold": 0.02,
+    "edgeYoloEnabled": false
   }
 }

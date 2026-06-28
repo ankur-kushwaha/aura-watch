@@ -303,6 +303,7 @@ export default function DashboardApp() {
     pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
     detectPerson: true,
     detectVehicle: true,
+    edgeYoloEnabled: DEFAULT_STREAM_CONFIG.edgeYoloEnabled,
   });
   const [status, setStatus] = useState<string>('Offline');
   const [logs, setLogs] = useState<{ message: string; timestamp: string }[]>([]);
@@ -531,6 +532,7 @@ export default function DashboardApp() {
                       pixelChangeThreshold: data.cameraConfig.pixelChangeThreshold,
                       detectPerson: data.cameraConfig.detectPerson ?? true,
                       detectVehicle: data.cameraConfig.detectVehicle ?? true,
+                      edgeYoloEnabled: data.cameraConfig.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled,
                       streamHost: data.cameraConfig.streamHost,
                       crossCameraReid: data.cameraConfig.crossCameraReid ?? true,
                       aiSummaryEnabled: data.cameraConfig.aiSummaryEnabled ?? true,
@@ -557,6 +559,7 @@ export default function DashboardApp() {
                   pixelChangeThreshold: cfg.pixelChangeThreshold,
                   detectPerson: cfg.detectPerson ?? true,
                   detectVehicle: cfg.detectVehicle ?? true,
+                  edgeYoloEnabled: cfg.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled,
                 });
               }
             }
@@ -677,6 +680,7 @@ export default function DashboardApp() {
           pixelChangeThreshold: stream.pixelChangeThreshold,
           detectPerson: stream.detectPerson ?? true,
           detectVehicle: stream.detectVehicle ?? true,
+          edgeYoloEnabled: stream.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled,
         });
         setStatus(stream.status);
         setSelectedDeviceId(stream.deviceId);
@@ -775,6 +779,7 @@ export default function DashboardApp() {
           ...(patch.pixelChangeThreshold !== undefined ? { pixelChangeThreshold: patch.pixelChangeThreshold } : {}),
           ...(patch.detectPerson !== undefined ? { detectPerson: patch.detectPerson } : {}),
           ...(patch.detectVehicle !== undefined ? { detectVehicle: patch.detectVehicle } : {}),
+          ...(patch.edgeYoloEnabled !== undefined ? { edgeYoloEnabled: patch.edgeYoloEnabled } : {}),
         }));
       }
       fetchDevices();
@@ -795,6 +800,7 @@ export default function DashboardApp() {
       pixelChangeThreshold: DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
       detectPerson: true,
       detectVehicle: true,
+      edgeYoloEnabled: DEFAULT_STREAM_CONFIG.edgeYoloEnabled,
     });
     setAddingStreamForDeviceId(deviceId);
     setShowConfigDialog(true);

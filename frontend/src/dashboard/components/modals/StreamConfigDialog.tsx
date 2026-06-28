@@ -57,6 +57,7 @@ export function StreamConfigDialog({
             pixelChangeThreshold: config.pixelChangeThreshold ?? DEFAULT_STREAM_CONFIG.pixelChangeThreshold,
             detectPerson: config.detectPerson,
             detectVehicle: config.detectVehicle,
+            edgeYoloEnabled: config.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled,
           }),
         });
         if (res.ok) {
@@ -85,6 +86,7 @@ export function StreamConfigDialog({
           pixelChangeThreshold: config.pixelChangeThreshold !== undefined ? Number(config.pixelChangeThreshold) : 0.02,
           detectPerson: config.detectPerson,
           detectVehicle: config.detectVehicle,
+          edgeYoloEnabled: config.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled,
         }),
       });
       if (res.ok) {
@@ -192,10 +194,28 @@ export function StreamConfigDialog({
                 </label>
               </div>
             </div>
-            <p className="text-[0.72rem] text-text-muted leading-relaxed">
-              Enable Active AI tracking and choose object classes to monitor.
-            </p>
-          </div>
+              <p className="text-[0.72rem] text-text-muted leading-relaxed">
+                Enable Active AI tracking and choose object classes to monitor.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <label className="text-[0.78rem] text-text-secondary font-medium">Experimental</label>
+              <label className={`flex items-center gap-2 text-[0.82rem] select-none ${!config.trackingEnabled ? 'opacity-40 cursor-not-allowed pointer-events-none' : 'cursor-pointer'}`}>
+                <input
+                  type="checkbox"
+                  disabled={!config.trackingEnabled}
+                  checked={config.trackingEnabled && (config.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled)}
+                  onChange={(e) => setConfig({ ...config, edgeYoloEnabled: e.target.checked })}
+                  className="w-4 h-4 accent-[#a78bfa]"
+                />
+                Edge YOLO annotation (YOLO11n ONNX)
+              </label>
+              <p className="text-[0.72rem] text-text-muted leading-relaxed">
+                Draws person/vehicle boxes on recorded clips on the edge device. Requires{' '}
+                <code className="text-[0.68rem]">models/yolo11n.onnx</code> on the Pi.
+              </p>
+            </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5 text-left">

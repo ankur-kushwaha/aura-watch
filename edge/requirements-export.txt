@@ -1,0 +1,4 @@
+# One-time model export (scripts/export_model.py) — not needed on Pi at runtime.
+# Install on a dev machine, or on Pi only while exporting:
+#   .venv/bin/pip install -r requirements-export.txt
+ultralytics>=8.3.0

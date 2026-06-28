@@ -19,6 +19,7 @@ from camera import CameraCapture
 from frame_buffer import FrameRingBuffer
 from motion_detector import MotionDetector
 from recorder import ClipEncoder
+from yolo_detector import YoloDetector
 
 
 @dataclass
@@ -28,6 +29,9 @@ class PipelineSettings:
     stream_fps: float = 12.0
     jpeg_quality: int = 70
     tracking_enabled: bool = False
+    edge_yolo_enabled: bool = False
+    detect_person: bool = True
+    detect_vehicle: bool = True
     camera_stall_timeout_sec: float = CAMERA_STALL_TIMEOUT_SEC
     motion_threshold: int = 25
     pixel_change_threshold: float = 0.02
@@ -83,6 +87,49 @@ class VisionPipeline:
             round(max(settings.capture_fps, 1) / max(min(settings.capture_fps, settings.clip_fps), 1)),
         )
         self._encode_frame_idx = 0
+        self._yolo: Optional[YoloDetector] = None
+        self._yolo_warned = False
+
+    def update_yolo_settings(
+        self,
+        *,
+        edge_yolo_enabled: bool,
+        detect_person: bool,
+        detect_vehicle: bool,
+    ) -> None:
+        self.settings.edge_yolo_enabled = edge_yolo_enabled
+        self.settings.detect_person = detect_person
+        self.settings.detect_vehicle = detect_vehicle
+        if self._yolo is not None:
+            self._yolo.set_class_filters(
+                detect_person=detect_person,
+                detect_vehicle=detect_vehicle,
+            )
+        if not edge_yolo_enabled:
+            self._yolo = None
+            self._yolo_warned = False
+
+    def annotate_clip_frame(self, frame: np.ndarray) -> np.ndarray:
+        if not self.settings.edge_yolo_enabled:
+            return frame
+        yolo = self._get_yolo()
+        if yolo is None:
+            return frame
+        return yolo.annotate(frame)
+
+    def _get_yolo(self) -> Optional[YoloDetector]:
+        if not self.settings.edge_yolo_enabled:
+            return None
+        if self._yolo is None:
+            self._yolo = YoloDetector(
+                detect_person=self.settings.detect_person,
+                detect_vehicle=self.settings.detect_vehicle,
+            )
+            if not self._yolo.available and not self._yolo_warned:
+                self._yolo_warned = True
+                detail = self._yolo.load_error or "model unavailable"
+                print(f"[YOLO] Edge annotation disabled: {detail}", flush=True)
+        return self._yolo if self._yolo and self._yolo.available else None
 
     def start_clip_feed(self, encoder: ClipEncoder) -> None:
         """Register encoder so each captured camera frame is written once (no duplicate ticks)."""
@@ -162,7 +209,7 @@ class VisionPipeline:
 
         clip_encoder = self._clip_feed_encoder
         if clip_encoder and clip_encoder.is_running():
-            clip_encoder.write_frame(frame)
+            clip_encoder.write_frame(self.annotate_clip_frame(frame))
 
         live_encoder = self._continuous_feed_encoder
         if live_encoder and live_encoder.is_running():

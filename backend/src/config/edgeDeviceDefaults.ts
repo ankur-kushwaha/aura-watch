@@ -23,6 +23,7 @@ export interface StreamConfigDefaults {
   trackingEnabled: boolean;
   motionThreshold: number;
   pixelChangeThreshold: number;
+  edgeYoloEnabled: boolean;
 }
 
 interface EdgeDefaultsFile {

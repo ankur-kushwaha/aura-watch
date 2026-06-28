@@ -159,3 +159,7 @@ class DeviceRuntimeConfig:
 
 def default_stream_tracking_enabled() -> bool:
     return bool(_STREAM_DEFAULTS["trackingEnabled"])
+
+
+def default_stream_edge_yolo_enabled() -> bool:
+    return bool(_STREAM_DEFAULTS.get("edgeYoloEnabled", False))

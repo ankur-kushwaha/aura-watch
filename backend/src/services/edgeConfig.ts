@@ -86,6 +86,7 @@ export function buildConfigurePayload(
       detectVehicle: stream.detectVehicle,
       crossCameraReid: stream.crossCameraReid,
       aiSummaryEnabled: stream.aiSummaryEnabled,
+      edgeYoloEnabled: stream.edgeYoloEnabled,
     })),
   };
 }

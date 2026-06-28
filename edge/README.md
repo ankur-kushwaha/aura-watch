@@ -225,6 +225,9 @@ The installer does **not** run model export automatically. Do this once after in
 ```bash
 cd ~/aura-watch-edge/edge   # or your edge directory
 
+# One-time export deps (ultralytics + PyTorch) — not in requirements-pi.txt
+.venv/bin/pip install -r requirements-export.txt
+
 # IMPORTANT: Use the virtual environment's python to avoid ModuleNotFoundError
 .venv/bin/python scripts/export_model.py onnx
 ```

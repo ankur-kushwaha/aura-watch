@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from config import DeviceRuntimeConfig, default_stream_tracking_enabled, rtsp_local_addr_value, rtsp_transport_value
+from config import DeviceRuntimeConfig, default_stream_edge_yolo_enabled, default_stream_tracking_enabled, rtsp_local_addr_value, rtsp_transport_value
 
 import requests
 import websocket
@@ -183,6 +183,11 @@ class EdgeConfig:
     camera_type: str = "webcam"
     stream_url: str = "0"
     tracking_enabled: bool = field(default_factory=lambda: bool(_STREAM_DEFAULTS["trackingEnabled"]))
+    edge_yolo_enabled: bool = field(
+        default_factory=lambda: bool(_STREAM_DEFAULTS.get("edgeYoloEnabled", False))
+    )
+    detect_person: bool = True
+    detect_vehicle: bool = True
     motion_threshold: int = field(default_factory=lambda: int(_STREAM_DEFAULTS["motionThreshold"]))
     pixel_change_threshold: float = field(
         default_factory=lambda: float(_STREAM_DEFAULTS["pixelChangeThreshold"])
@@ -479,6 +484,29 @@ class EdgeAgent:
 
         self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
+    def _apply_stream_detection_settings(self, stream_id: str, config: EdgeConfig) -> None:
+        """Apply YOLO / class-filter toggles without restarting the camera pipeline."""
+        p_data = self.pipelines.get(stream_id)
+        if not p_data:
+            return
+
+        settings = p_data.get("settings")
+        if settings is not None:
+            settings.edge_yolo_enabled = config.edge_yolo_enabled
+            settings.detect_person = config.detect_person
+            settings.detect_vehicle = config.detect_vehicle
+
+        pipeline = p_data.get("pipeline")
+        if pipeline is not None:
+            pipeline.update_yolo_settings(
+                edge_yolo_enabled=config.edge_yolo_enabled,
+                detect_person=config.detect_person,
+                detect_vehicle=config.detect_vehicle,
+            )
+
+        if config.edge_yolo_enabled:
+            self.send_log(f"[{config.name}] Edge YOLO annotation enabled (experimental).")
+
     def update_device_config(self, device_data: Optional[dict[str, Any]]) -> None:
         new_config = DeviceRuntimeConfig.from_db(device_data)
         if new_config == self.device_runtime_config:
@@ -499,6 +527,9 @@ class EdgeAgent:
                 camera_type=s.get("cameraType", "webcam"),
                 stream_url=s.get("streamUrl", "0"),
                 tracking_enabled=bool(s.get("trackingEnabled", default_stream_tracking_enabled())),
+                edge_yolo_enabled=bool(s.get("edgeYoloEnabled", default_stream_edge_yolo_enabled())),
+                detect_person=bool(s.get("detectPerson", True)),
+                detect_vehicle=bool(s.get("detectVehicle", True)),
                 motion_threshold=int(s.get("motionThreshold", 25)),
                 pixel_change_threshold=float(s.get("pixelChangeThreshold", 0.02)),
             )
@@ -511,6 +542,11 @@ class EdgeAgent:
                 or existing.pixel_change_threshold != config.pixel_change_threshold
             )
             tracking_changed = not existing or existing.tracking_enabled != config.tracking_enabled
+            yolo_settings_changed = existing and (
+                existing.edge_yolo_enabled != config.edge_yolo_enabled
+                or existing.detect_person != config.detect_person
+                or existing.detect_vehicle != config.detect_vehicle
+            )
 
             if needs_restart:
                 self.streams_config[stream_id] = config
@@ -519,6 +555,9 @@ class EdgeAgent:
                 self.restart_stream_pipeline(stream_id)
             elif tracking_changed:
                 self._apply_tracking_toggle(stream_id, config)
+            elif yolo_settings_changed:
+                self.streams_config[stream_id] = config
+                self._apply_stream_detection_settings(stream_id, config)
             else:
                 self.streams_config[stream_id] = config
 
@@ -798,6 +837,9 @@ class EdgeAgent:
                 stream_fps=runtime.frame_stream_fps,
                 jpeg_quality=runtime.preview_jpeg_quality,
                 tracking_enabled=config.tracking_enabled,
+                edge_yolo_enabled=config.edge_yolo_enabled,
+                detect_person=config.detect_person,
+                detect_vehicle=config.detect_vehicle,
                 camera_stall_timeout_sec=runtime.camera_stall_timeout_sec,
                 motion_threshold=config.motion_threshold,
                 pixel_change_threshold=config.pixel_change_threshold,
@@ -805,6 +847,8 @@ class EdgeAgent:
             )
             pipeline_data["settings"] = settings
             pipeline_data["runtime"] = runtime
+            if config.edge_yolo_enabled:
+                self.send_log(f"[{config.name}] Edge YOLO annotation enabled (experimental).")
 
             def get_clip_encoder() -> Optional[ClipEncoder]:
                 p_data = self.pipelines.get(stream_id)
@@ -1122,6 +1166,9 @@ class EdgeAgent:
                 list(p_data.get("preroll_frames") or []),
                 max(int(clip_preroll_sec * clip_fps), 1),
             )
+            pipeline = p_data.get("pipeline")
+            if pipeline and config and config.edge_yolo_enabled:
+                preroll_frames = [pipeline.annotate_clip_frame(frame) for frame in preroll_frames]
             clip_encoder.write_frames_blocking(preroll_frames)
 
             with p_data["clip_encoder_lock"]:

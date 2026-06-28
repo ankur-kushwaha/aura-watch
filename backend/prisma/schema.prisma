@@ -148,6 +148,7 @@ model CameraStream {
   loiteringAlert       Boolean         @default(true)
   crossCameraReid      Boolean         @default(true)
   aiSummaryEnabled     Boolean         @default(true)
+  edgeYoloEnabled      Boolean         @default(false)
   plateRecognition     Boolean         @default(true)
   streamHost           String          @default("")
   locationName         String?
