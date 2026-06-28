@@ -3,7 +3,7 @@
     "cameraWidth": 640,
     "cameraHeight": 480,
     "cameraFps": 15,
-    "clipEncodeFps": 10,
+    "clipEncodeFps": 15,
     "cameraStallTimeoutSec": 45,
     "livePreviewEnabled": false,
     "frameStreamFps": 8,
