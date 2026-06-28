@@ -206,6 +206,7 @@ class EdgeAgent:
         self.health_heartbeat_timer: Optional[threading.Timer] = None
         self.reconnect_timer: Optional[threading.Timer] = None
         self.ws_lock = threading.Lock()
+        self.streams_config_lock = threading.Lock()
         self.shutdown_event = threading.Event()
         self.agent_logger = AgentLogger(AGENT_LOG_FILE)
 
@@ -517,8 +518,14 @@ class EdgeAgent:
             self.restart_stream_pipeline(stream_id)
 
     def update_streams_config(self, streams_data: list[dict[str, Any]]):
+        with self.streams_config_lock:
+            self._update_streams_config_locked(streams_data)
+
+    def _update_streams_config_locked(self, streams_data: list[dict[str, Any]]):
         active_ids = set()
         for s in streams_data:
+            if s.get("isActive") is False:
+                continue
             stream_id = s.get("streamId")
             active_ids.add(stream_id)
 

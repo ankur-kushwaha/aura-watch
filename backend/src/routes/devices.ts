@@ -15,6 +15,7 @@ import {
 } from '../services/deviceEvents';
 import {
   extractDeviceConfigPatch,
+  filterActiveStreams,
   mergeDeviceConfig,
   mergeDeviceConfigUpdate,
   withEffectiveDeviceConfig,
@@ -526,11 +527,14 @@ router.post('/register', async (req: Request, res: Response) => {
       },
     });
 
-    const streams = await prisma.cameraStream.findMany({
+    const allStreams = await prisma.cameraStream.findMany({
       where: { deviceId },
     });
+    const streams = filterActiveStreams(allStreams);
 
-    console.log(`[Cloud Hub] Device registered/updated: ${name} (${deviceId}) with ${streams.length} stream(s)`);
+    console.log(
+      `[Cloud Hub] Device registered/updated: ${name} (${deviceId}) with ${streams.length} active stream(s) (${allStreams.length} total)`,
+    );
     notifyDevicesChanged();
     res.json({ device, streams });
   } catch (error) {

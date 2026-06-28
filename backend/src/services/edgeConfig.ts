@@ -66,11 +66,15 @@ export function extractDeviceConfigPatch(body: Record<string, unknown>): Partial
   ) as Partial<EdgeDeviceConfig>;
 }
 
+export function filterActiveStreams<T extends { isActive?: boolean | null }>(streams: T[]): T[] {
+  return streams.filter((stream) => stream.isActive !== false);
+}
+
 export function buildConfigurePayload(
   device: Pick<EdgeDevice, 'config'>,
   streams: CameraStream[],
 ) {
-  const activeStreams = streams.filter((stream) => stream.isActive !== false);
+  const activeStreams = filterActiveStreams(streams);
   return {
     type: 'configure' as const,
     deviceConfig: device.config ?? {},
