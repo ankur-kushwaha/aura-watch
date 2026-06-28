@@ -53,6 +53,37 @@ def _escape_tee_target(target: str) -> str:
     return target.replace("\\", "\\\\").replace(":", "\\:").replace(",", "\\,")
 
 
+def _clip_video_encode_args(fps: int, *, low_latency: bool = False) -> list[str]:
+    """x264 settings tuned for surveillance clips (smooth motion, modest CPU)."""
+    if low_latency:
+        return [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-g",
+            str(fps),
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+        ]
+    return [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "22",
+        "-g",
+        str(max(fps * 2, 1)),
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+    ]
+
+
 class ClipEncoder:
     """Pipe annotated BGR frames into FFmpeg for a single MP4 clip file."""
 
@@ -64,7 +95,7 @@ class ClipEncoder:
         self.remote_stream_url = remote_stream_url
         self.only_remote = only_remote
         self.process: Optional[subprocess.Popen] = None
-        self._write_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
+        self._write_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=8)
         self._writer_thread: Optional[threading.Thread] = None
         self._stop_writer = threading.Event()
         self.frames_written = 0
@@ -92,17 +123,7 @@ class ClipEncoder:
                 "pipe:0",
                 "-map",
                 "0:v",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "ultrafast",
-                "-tune",
-                "zerolatency",
-                "-g",
-                str(self.fps),
-                "-pix_fmt",
-                "yuv420p",
-                "-an",
+                *_clip_video_encode_args(self.fps, low_latency=True),
                 "-f",
                 "rtsp",
                 "-rtsp_transport",
@@ -129,17 +150,7 @@ class ClipEncoder:
                 "pipe:0",
                 "-map",
                 "0:v",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "ultrafast",
-                "-tune",
-                "zerolatency",
-                "-g",
-                str(self.fps),
-                "-pix_fmt",
-                "yuv420p",
-                "-an",
+                *_clip_video_encode_args(self.fps, low_latency=True),
                 "-flags",
                 "+global_header",
                 "-f",
@@ -164,17 +175,7 @@ class ClipEncoder:
                 "pipe:0",
                 "-map",
                 "0:v",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "ultrafast",
-                "-tune",
-                "zerolatency",
-                "-g",
-                str(self.fps),
-                "-pix_fmt",
-                "yuv420p",
-                "-an",
+                *_clip_video_encode_args(self.fps),
                 "-movflags",
                 "+faststart",
                 self.output_path,

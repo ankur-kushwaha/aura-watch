@@ -44,6 +44,13 @@ _STREAM_DEFAULTS = stream_config_defaults()
 _DEFAULT_RUNTIME = DeviceRuntimeConfig()
 
 
+def effective_clip_encode_fps(runtime: DeviceRuntimeConfig) -> int:
+    """Match encoder rate to what the camera can actually deliver."""
+    capture_fps = max(runtime.camera_fps, 1)
+    encode_fps = max(runtime.clip_encode_fps, 1)
+    return min(capture_fps, encode_fps)
+
+
 def derive_ws_url(http_url: str) -> str:
     url = http_url.rstrip("/")
     if url.startswith("https://"):
@@ -786,7 +793,8 @@ class EdgeAgent:
             self.send_status(stream_id, "Monitoring" if config.tracking_enabled else "Idle")
 
             settings = PipelineSettings(
-                clip_fps=runtime.camera_fps,
+                clip_fps=max(runtime.clip_encode_fps, 1),
+                capture_fps=max(runtime.camera_fps, 1),
                 stream_fps=runtime.frame_stream_fps,
                 jpeg_quality=runtime.preview_jpeg_quality,
                 tracking_enabled=config.tracking_enabled,
@@ -890,7 +898,7 @@ class EdgeAgent:
                                 output_path="",
                                 width=camera.width,
                                 height=camera.height,
-                                fps=runtime.camera_fps,
+                                fps=effective_clip_encode_fps(runtime),
                                 remote_stream_url=remote_url,
                                 only_remote=True
                             )
@@ -1066,7 +1074,9 @@ class EdgeAgent:
         recording_end_grace_sec = runtime.recording_end_grace_sec if runtime else _DEFAULT_RUNTIME.recording_end_grace_sec
         recording_cooldown_sec = runtime.recording_cooldown_sec if runtime else _DEFAULT_RUNTIME.recording_cooldown_sec
         min_upload_duration_sec = runtime.min_upload_duration_sec if runtime else _DEFAULT_RUNTIME.min_upload_duration_sec
-        clip_fps = runtime.camera_fps if runtime else _DEFAULT_RUNTIME.camera_fps
+        clip_fps = (
+            effective_clip_encode_fps(runtime) if runtime else effective_clip_encode_fps(_DEFAULT_RUNTIME)
+        )
         clip_preroll_sec = runtime.clip_preroll_sec if runtime else _DEFAULT_RUNTIME.clip_preroll_sec
 
         timestamp_ms = p_data.get("recording_started_at_ms") or int(time.time() * 1000)

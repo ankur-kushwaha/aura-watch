@@ -24,6 +24,7 @@ from recorder import ClipEncoder
 @dataclass
 class PipelineSettings:
     clip_fps: int = 15
+    capture_fps: int = 15
     stream_fps: float = 12.0
     jpeg_quality: int = 70
     tracking_enabled: bool = False
@@ -71,84 +72,31 @@ class VisionPipeline:
         )
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
         self._capture_thread: Optional[threading.Thread] = None
-        self._clip_feed_thread: Optional[threading.Thread] = None
-        self._clip_feed_stop = threading.Event()
         self._clip_feed_encoder: Optional[ClipEncoder] = None
         self._latest_frame: Optional[np.ndarray] = None
         self._clip_frame_interval = 1.0 / max(settings.clip_fps, 1)
         self._last_preroll_at = 0.0
         self._motion_active = False
-        self._continuous_feed_thread: Optional[threading.Thread] = None
-        self._continuous_feed_stop = threading.Event()
         self._continuous_feed_encoder: Optional[ClipEncoder] = None
+        self._encode_every_n = max(
+            1,
+            round(max(settings.capture_fps, 1) / max(min(settings.capture_fps, settings.clip_fps), 1)),
+        )
+        self._encode_frame_idx = 0
 
     def start_clip_feed(self, encoder: ClipEncoder) -> None:
-        """Write the latest camera frame on a wall-clock tick so clip length matches recording time."""
-        self.stop_clip_feed()
+        """Register encoder so each captured camera frame is written once (no duplicate ticks)."""
         self._clip_feed_encoder = encoder
-        self._clip_feed_stop.clear()
-        self._clip_feed_thread = threading.Thread(
-            target=self._clip_feed_loop,
-            name="clip-feed",
-            daemon=True,
-        )
-        self._clip_feed_thread.start()
 
     def stop_clip_feed(self) -> None:
-        self._clip_feed_stop.set()
-        if self._clip_feed_thread and self._clip_feed_thread.is_alive():
-            self._clip_feed_thread.join(timeout=2.0)
-        self._clip_feed_thread = None
         self._clip_feed_encoder = None
 
-    def _clip_feed_loop(self) -> None:
-        next_tick = time.monotonic()
-        while not self._clip_feed_stop.is_set():
-            encoder = self._clip_feed_encoder
-            frame = self._latest_frame
-            if encoder and frame is not None and encoder.is_running():
-                encoder.write_frame(frame.copy())
-
-            next_tick += self._clip_frame_interval
-            sleep_for = next_tick - time.monotonic()
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            else:
-                next_tick = time.monotonic()
-
     def start_continuous_feed(self, encoder: ClipEncoder) -> None:
-        """Write the latest camera frame continuously so live push stays active."""
-        self.stop_continuous_feed()
+        """Register encoder for live push; frames are written from the capture loop."""
         self._continuous_feed_encoder = encoder
-        self._continuous_feed_stop.clear()
-        self._continuous_feed_thread = threading.Thread(
-            target=self._continuous_feed_loop,
-            name="continuous-feed",
-            daemon=True,
-        )
-        self._continuous_feed_thread.start()
 
     def stop_continuous_feed(self) -> None:
-        self._continuous_feed_stop.set()
-        if self._continuous_feed_thread and self._continuous_feed_thread.is_alive():
-            self._continuous_feed_thread.join(timeout=2.0)
-        self._continuous_feed_thread = None
         self._continuous_feed_encoder = None
-
-    def _continuous_feed_loop(self) -> None:
-        next_tick = time.monotonic()
-        while not self._continuous_feed_stop.is_set():
-            encoder = self._continuous_feed_encoder
-            frame = self._latest_frame
-            if encoder and frame is not None and encoder.is_running():
-                encoder.write_frame(frame.copy())
-
-            next_tick += self._clip_frame_interval
-            sleep_for = next_tick - time.monotonic()
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            else:
-                next_tick = time.monotonic()
 
     def start_capture(self):
         self._capture_thread = threading.Thread(
@@ -161,7 +109,6 @@ class VisionPipeline:
     def run(self):
         stream_interval = 1.0 / max(self.settings.stream_fps, 1.0)
         last_stream_time = 0.0
-        last_frame_time = time.monotonic()
         last_frame_received_at = time.monotonic()
 
         while not self.should_stop():
@@ -208,11 +155,18 @@ class VisionPipeline:
                 self.on_preview_frame(frame)
                 last_stream_time = now
 
-            elapsed = time.monotonic() - last_frame_time
-            sleep_for = self._clip_frame_interval - elapsed
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            last_frame_time = time.monotonic()
+    def _feed_active_encoders(self, frame: np.ndarray) -> None:
+        self._encode_frame_idx += 1
+        if self._encode_frame_idx % self._encode_every_n != 0:
+            return
+
+        clip_encoder = self._clip_feed_encoder
+        if clip_encoder and clip_encoder.is_running():
+            clip_encoder.write_frame(frame)
+
+        live_encoder = self._continuous_feed_encoder
+        if live_encoder and live_encoder.is_running():
+            live_encoder.write_frame(frame)
 
     def _capture_loop(self):
         consecutive_failures = 0
@@ -231,6 +185,7 @@ class VisionPipeline:
 
             consecutive_failures = 0
             self._latest_frame = frame
+            self._feed_active_encoders(frame)
 
             now = time.monotonic()
             if now - self._last_preroll_at >= self._clip_frame_interval:
