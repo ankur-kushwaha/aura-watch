@@ -12,7 +12,7 @@ FROM node:20-bookworm-slim AS backend-builder
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
-COPY backend/package*.json ./
+COPY backend/package*.json backend/.npmrc ./
 RUN npm ci
 COPY backend/ ./
 COPY config/ ../config/
