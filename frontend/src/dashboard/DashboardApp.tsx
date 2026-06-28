@@ -779,7 +779,9 @@ export default function DashboardApp() {
           ...(patch.pixelChangeThreshold !== undefined ? { pixelChangeThreshold: patch.pixelChangeThreshold } : {}),
           ...(patch.detectPerson !== undefined ? { detectPerson: patch.detectPerson } : {}),
           ...(patch.detectVehicle !== undefined ? { detectVehicle: patch.detectVehicle } : {}),
-          ...(patch.edgeYoloEnabled !== undefined ? { edgeYoloEnabled: patch.edgeYoloEnabled } : {}),
+          ...(patch.edgeYoloEnabled !== undefined
+            ? { edgeYoloEnabled: patch.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled }
+            : {}),
         }));
       }
       fetchDevices();
