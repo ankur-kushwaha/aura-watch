@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Bell } from 'lucide-react';
 
 export interface NotificationBellProps {
@@ -7,16 +7,15 @@ export interface NotificationBellProps {
 }
 
 export function NotificationBell({ unreadCount, onClick }: NotificationBellProps) {
-  const [animate, setAnimate] = useState(false);
+  const [prevCount, setPrevCount] = useState(unreadCount);
+  const [animationKey, setAnimationKey] = useState(0);
 
-  // Trigger shake animation when unread count increases
-  useEffect(() => {
-    if (unreadCount > 0) {
-      setAnimate(true);
-      const timer = setTimeout(() => setAnimate(false), 500);
-      return () => clearTimeout(timer);
+  if (unreadCount !== prevCount) {
+    if (unreadCount > prevCount && unreadCount > 0) {
+      setAnimationKey((key) => key + 1);
     }
-  }, [unreadCount]);
+    setPrevCount(unreadCount);
+  }
 
   return (
     <button
@@ -26,9 +25,10 @@ export function NotificationBell({ unreadCount, onClick }: NotificationBellProps
       title="View notifications"
     >
       <Bell
+        key={animationKey}
         size={18}
         className={`text-text-secondary hover:text-text-primary transition-colors ${
-          animate ? 'animate-bell-shake text-primary' : ''
+          animationKey > 0 ? 'animate-bell-shake text-primary' : ''
         }`}
       />
       {unreadCount > 0 && (

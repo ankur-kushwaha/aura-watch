@@ -1,9 +1,77 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, RefreshCw, X, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { apiFetch } from '../../../api';
 import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
-import type { DeviceSystemMetrics } from '../../types';
+import type { DeviceEvent, DeviceSystemMetrics } from '../../types';
 import { formatBytes, formatPercent, formatUptime } from '../../utils/format';
+
+interface UptimeTimelineSlot {
+  label: string;
+  status: 'online' | 'warning' | 'offline';
+  message: string;
+  eventsCount: number;
+  events: DeviceEvent[];
+}
+
+function buildUptimeTimeline(events: DeviceEvent[], now: number): UptimeTimelineSlot[] {
+  const slots: UptimeTimelineSlot[] = [];
+  for (let i = 23; i >= 0; i--) {
+    const targetTime = new Date(now - i * 60 * 60 * 1000);
+    const hourStart = new Date(targetTime.getFullYear(), targetTime.getMonth(), targetTime.getDate(), targetTime.getHours(), 0, 0);
+    const hourEnd = new Date(targetTime.getFullYear(), targetTime.getMonth(), targetTime.getDate(), targetTime.getHours(), 59, 59);
+
+    const slotEvents = events.filter((e) => {
+      const d = new Date(e.createdAt);
+      return d >= hourStart && d <= hourEnd;
+    });
+
+    const healthEvents = slotEvents.filter((e) => e.eventType === 'health_check');
+    const otherEvents = slotEvents.filter((e) => e.eventType !== 'health_check');
+
+    let status: UptimeTimelineSlot['status'] = 'online';
+    let message = 'Healthy connection, no incidents';
+
+    const hasOffline = otherEvents.some((e) =>
+      /disconnect|offline|heartbeat timed out/i.test(e.message) || e.eventType === 'websocket_error',
+    ) || (healthEvents.length > 0 && healthEvents.every((e) => e.detail?.ws === 'down'));
+    const hasRecovery = otherEvents.some((e) =>
+      /reconnect|connected|recovered/i.test(e.message),
+    );
+
+    let avgCpu = 0;
+    if (healthEvents.length > 0) {
+      const cpus = healthEvents
+        .map((e) => e.detail?.cpu)
+        .filter((c): c is number => typeof c === 'number');
+      if (cpus.length > 0) {
+        avgCpu = Math.round(cpus.reduce((a, b) => a + b, 0) / cpus.length);
+      }
+    }
+
+    if (hasOffline) {
+      status = 'offline';
+      message = 'Connection lost / offline event';
+    } else if (
+      otherEvents.some((e) => e.severity === 'warn' || e.severity === 'error')
+      || (hasRecovery && otherEvents.length > 1)
+      || healthEvents.some((e) => e.severity === 'warn')
+    ) {
+      status = 'warning';
+      message = avgCpu > 0 ? `Unstable • Avg CPU: ${avgCpu}%` : 'High jitter / connection unstable';
+    } else if (avgCpu > 0) {
+      message = `Healthy • Avg CPU: ${avgCpu}%`;
+    }
+
+    slots.push({
+      label: `${hourStart.getHours().toString().padStart(2, '0')}:00`,
+      status,
+      message,
+      eventsCount: slotEvents.length,
+      events: slotEvents,
+    });
+  }
+  return slots;
+}
 
 export interface DeviceMetricsDialogProps {
   device: { deviceId: string; name: string } | null;
@@ -12,30 +80,44 @@ export interface DeviceMetricsDialogProps {
 
 export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProps) {
   const [metrics, setMetrics] = useState<DeviceSystemMetrics | null>(null);
-  const [events, setEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<DeviceEvent[]>([]);
   const [pingLatency, setPingLatency] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [hoveredHour, setHoveredHour] = useState<any | null>(null);
+  const [hoveredHour, setHoveredHour] = useState<UptimeTimelineSlot | null>(null);
+  const [timelineAnchor, setTimelineAnchor] = useState(() => Date.now());
+  const deviceId = device?.deviceId ?? null;
+  const [activeDeviceId, setActiveDeviceId] = useState(deviceId);
 
-  const fetchMetricsAndEvents = useCallback(async (deviceId: string) => {
+  if (deviceId !== activeDeviceId) {
+    setActiveDeviceId(deviceId);
+    if (!deviceId) {
+      setMetrics(null);
+      setEvents([]);
+      setPingLatency(null);
+      setError('');
+      setHoveredHour(null);
+    }
+  }
+
+  const fetchMetricsAndEvents = useCallback(async (targetDeviceId: string) => {
     setLoading(true);
     setError('');
     const startTime = Date.now();
     try {
       const [resMetrics, resEvents] = await Promise.all([
-        apiFetch(`/devices/${deviceId}/metrics`),
-        apiFetch(`/devices/${deviceId}/events?limit=300`)
+        apiFetch(`/devices/${targetDeviceId}/metrics`),
+        apiFetch(`/devices/${targetDeviceId}/events?limit=300`),
       ]);
 
       const latency = Date.now() - startTime;
       setPingLatency(latency);
+      setTimelineAnchor(Date.now());
 
       if (resMetrics.ok) {
         const dataMetrics = await resMetrics.json();
         setMetrics(dataMetrics.metrics || null);
         if (!dataMetrics.metrics) {
-          // If Linux metrics are not supported but device is online, we still show the container status
           console.warn('No platform metrics returned');
         }
       } else {
@@ -56,77 +138,15 @@ export function DeviceMetricsDialog({ device, onClose }: DeviceMetricsDialogProp
   }, []);
 
   useEffect(() => {
-    if (!device) {
-      setMetrics(null);
-      setEvents([]);
-      setPingLatency(null);
-      setError('');
-      setHoveredHour(null);
-      return;
-    }
+    if (!device) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load metrics when device dialog opens
     void fetchMetricsAndEvents(device.deviceId);
   }, [device, fetchMetricsAndEvents]);
 
-  // Generate 24-hour timeline slots
-  const generateUptimeTimeline = () => {
-    const slots = [];
-    const now = Date.now();
-    for (let i = 23; i >= 0; i--) {
-      const targetTime = new Date(now - i * 60 * 60 * 1000);
-      const hourStart = new Date(targetTime.getFullYear(), targetTime.getMonth(), targetTime.getDate(), targetTime.getHours(), 0, 0);
-      const hourEnd = new Date(targetTime.getFullYear(), targetTime.getMonth(), targetTime.getDate(), targetTime.getHours(), 59, 59);
-
-      // Find events in this hour slot
-      const slotEvents = events.filter(e => {
-        const d = new Date(e.createdAt);
-        return d >= hourStart && d <= hourEnd;
-      });
-
-      const healthEvents = slotEvents.filter(e => e.eventType === 'health_check');
-      const otherEvents = slotEvents.filter(e => e.eventType !== 'health_check');
-
-      // Determine state
-      let status: 'online' | 'warning' | 'offline' = 'online';
-      let message = 'Healthy connection, no incidents';
-      
-      const hasOffline = otherEvents.some(e => 
-        /disconnect|offline|heartbeat timed out/i.test(e.message) || e.eventType === 'websocket_error'
-      ) || (healthEvents.length > 0 && healthEvents.every(e => e.detail?.ws === 'down'));
-      const hasRecovery = otherEvents.some(e => 
-        /reconnect|connected|recovered/i.test(e.message)
-      );
-
-      // Average CPU in this hour slot
-      let avgCpu = 0;
-      if (healthEvents.length > 0) {
-        const cpus = healthEvents.map(e => e.detail?.cpu).filter((c): c is number => typeof c === 'number');
-        if (cpus.length > 0) {
-          avgCpu = Math.round(cpus.reduce((a, b) => a + b, 0) / cpus.length);
-        }
-      }
-
-      if (hasOffline) {
-        status = 'offline';
-        message = 'Connection lost / offline event';
-      } else if (otherEvents.some(e => e.severity === 'warn' || e.severity === 'error') || (hasRecovery && otherEvents.length > 1) || (healthEvents.some(e => e.severity === 'warn'))) {
-        status = 'warning';
-        message = avgCpu > 0 ? `Unstable • Avg CPU: ${avgCpu}%` : 'High jitter / connection unstable';
-      } else if (avgCpu > 0) {
-        message = `Healthy • Avg CPU: ${avgCpu}%`;
-      }
-
-      slots.push({
-        label: `${hourStart.getHours().toString().padStart(2, '0')}:00`,
-        status,
-        message,
-        eventsCount: slotEvents.length,
-        events: slotEvents
-      });
-    }
-    return slots;
-  };
-
-  const timelineSlots = generateUptimeTimeline();
+  const timelineSlots = useMemo(
+    () => buildUptimeTimeline(events, timelineAnchor),
+    [events, timelineAnchor],
+  );
   const healthyCount = timelineSlots.filter(s => s.status === 'online').length;
   const uptimePercentage = Math.round((healthyCount / 24) * 100);
 

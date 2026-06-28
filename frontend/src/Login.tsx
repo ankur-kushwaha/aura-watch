@@ -26,8 +26,8 @@ export default function Login() {
       });
       trackEvent('user_logged_in', { orgId: session.org?.id });
       navigate('/app/live', { replace: true });
-    } catch (err: any) {
-      setError(err.message || 'Invalid email or password.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Invalid email or password.');
       setSubmitting(false);
     }
   };

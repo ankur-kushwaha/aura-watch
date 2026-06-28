@@ -111,6 +111,7 @@ export default function OrgSettingsPage({
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load settings when org changes
     setLoading(true);
     setError(null);
     Promise.all([fetchOrgSettings(org.id), fetchOrgMembers(org.id)])

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -274,6 +273,7 @@ export default function DashboardApp() {
   }, [currentOrg, loadNotifications]);
 
   const selectedStreamIdRef = useRef(selectedStreamId);
+  const currentOrgRef = useRef(currentOrg);
   const selectedStreamDeviceIdRef = useRef<string | null>(null);
   const fetchClipsRef = useRef<() => Promise<void>>(async () => { });
   const streamStatusRef = useRef<string>('Offline');
@@ -355,6 +355,10 @@ export default function DashboardApp() {
 
 
 
+
+  useEffect(() => {
+    currentOrgRef.current = currentOrg;
+  }, [currentOrg]);
 
   useEffect(() => {
     selectedStreamIdRef.current = selectedStreamId;
@@ -494,12 +498,12 @@ export default function DashboardApp() {
 
       switch (data.type) {
         case 'notification_count':
-          if (currentOrg && data.orgId === currentOrg.id) {
+          if (currentOrgRef.current && data.orgId === currentOrgRef.current.id) {
             setUnreadNotificationCount(data.count);
           }
           break;
         case 'new_notification':
-          if (currentOrg && data.notification && data.notification.orgId === currentOrg.id) {
+          if (currentOrgRef.current && data.notification && data.notification.orgId === currentOrgRef.current.id) {
             setNotifications((prev) => {
               if (prev.some((n) => n.id === data.notification.id)) return prev;
               return [data.notification, ...prev];

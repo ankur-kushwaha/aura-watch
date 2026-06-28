@@ -45,6 +45,12 @@ function DeviceLogsPanel({
   const [savedEvents, setSavedEvents] = useState<DeviceEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [activeTab, setActiveTab] = useState<DeviceLogTab>(initialTab);
+  const [tabSyncKey, setTabSyncKey] = useState(`${device.deviceId}:${initialTab}`);
+  const tabKey = `${device.deviceId}:${initialTab}`;
+  if (tabKey !== tabSyncKey) {
+    setTabSyncKey(tabKey);
+    setActiveTab(initialTab);
+  }
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
   const eventsContainerRef = useRef<HTMLDivElement | null>(null);
   const fileLogsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -114,10 +120,6 @@ function DeviceLogsPanel({
       fetchSavedEvents(deviceId),
     ]);
   }, [fetchJournalLogs, fetchAgentLogs, fetchWorkerLogs, fetchSavedEvents]);
-
-  useEffect(() => {
-    setActiveTab(initialTab);
-  }, [device.deviceId, initialTab]);
 
   useEffect(() => {
     const deviceId = device.deviceId;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '../../../api';
 import { DEFAULT_STREAM_CONFIG } from '../../../edgeConfig';
@@ -24,12 +24,9 @@ export function AddStreamModal({ open, devices, onClose, onSaved }: AddStreamMod
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Set default device when open
-  useEffect(() => {
-    if (open && devices.length > 0 && !deviceId) {
-      setDeviceId(devices[0].deviceId);
-    }
-  }, [open, devices, deviceId]);
+  if (open && devices.length > 0 && !deviceId) {
+    setDeviceId(devices[0].deviceId);
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

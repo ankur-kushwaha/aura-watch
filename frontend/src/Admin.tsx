@@ -167,6 +167,7 @@ function AdminOrgList() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load org list on mount
     load();
   }, [load]);
 
@@ -263,6 +264,7 @@ function AdminOrgDetail() {
   useEffect(() => {
     if (!orgId) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load org detail when route changes
     setLoading(true);
     setError(null);
     fetchAdminOrg(orgId)

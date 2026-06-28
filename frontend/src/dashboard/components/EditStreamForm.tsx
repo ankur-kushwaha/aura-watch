@@ -44,6 +44,7 @@ export function EditStreamForm({ stream, allStreamIds = [], onClose, onSaved }: 
   // Fetch alert rules and sync state when stream changes
   useEffect(() => {
     if (stream) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync form fields when stream changes
       setCameraName(stream.name);
       setStreamUrl(stream.streamUrl);
       setPersonDetection(stream.detectPerson ?? true);

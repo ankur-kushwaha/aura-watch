@@ -22,13 +22,13 @@ export const initPostHog = () => {
   }
 };
 
-export const trackEvent = (eventName: string, properties?: Record<string, any>) => {
+export const trackEvent = (eventName: string, properties?: Record<string, unknown>) => {
   if (POSTHOG_KEY) {
     posthog.capture(eventName, properties);
   }
 };
 
-export const identifyUser = (userId: string, properties?: Record<string, any>) => {
+export const identifyUser = (userId: string, properties?: Record<string, unknown>) => {
   if (POSTHOG_KEY) {
     posthog.identify(userId, properties);
   }

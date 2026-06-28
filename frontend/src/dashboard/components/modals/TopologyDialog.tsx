@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Network, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { apiFetch } from '../../../api';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../../../components/ui/dialog';
@@ -36,13 +36,15 @@ export function TopologyDialog({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [prevOpen, setPrevOpen] = useState(open);
 
-  useEffect(() => {
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (open) {
       setDraft(EMPTY_ROUTE);
       setEditingId(null);
     }
-  }, [open]);
+  }
 
   const resetForm = () => {
     setDraft(EMPTY_ROUTE);
