@@ -88,6 +88,18 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     || detectionFilterEndTime,
   );
 
+  const [prevHasOnlineDevices, setPrevHasOnlineDevices] = useState(hasOnlineDevices);
+  if (hasOnlineDevices !== prevHasOnlineDevices) {
+    setPrevHasOnlineDevices(hasOnlineDevices);
+    if (!hasOnlineDevices && reidView !== 'people') {
+      setReidView('people');
+      setSelectedPerson(null);
+      setSelectedDetection(null);
+      setPersonSuggestions([]);
+      setShowIdentitySuggestions(false);
+    }
+  }
+
   useEffect(() => {
     reidViewRef.current = reidView;
   }, [reidView]);
@@ -398,7 +410,7 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
     } finally {
       setDeletingIdentityId(null);
     }
-  }, [selectedPerson?.id, closePersonDetail]);
+  }, [selectedPerson, closePersonDetail]);
 
   const handleLinkDetectionsSelection = useCallback((detectionId: string) => {
     setLinkDetectionsSelection((prev) => {
@@ -458,6 +470,7 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
 
   useEffect(() => {
     if (active) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load tab data when Reid becomes active
       void fetchReidPeople();
       void fetchReidDetections();
       void fetchTopology();
@@ -466,19 +479,10 @@ export function useReidTab({ streams, hasOnlineDevices, active }: UseReidTabOpti
 
   useEffect(() => {
     if (showTopology) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh topology when dialog opens
       void fetchTopology();
     }
   }, [showTopology, fetchTopology]);
-
-  useEffect(() => {
-    if (!hasOnlineDevices && reidView !== 'people') {
-      setReidView('people');
-      setSelectedPerson(null);
-      setSelectedDetection(null);
-      setPersonSuggestions([]);
-      setShowIdentitySuggestions(false);
-    }
-  }, [hasOnlineDevices, reidView]);
 
   return {
     streams,
