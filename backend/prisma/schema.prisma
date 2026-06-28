@@ -135,7 +135,8 @@ model CameraStream {
   cameraType           String          @default("webcam") // "webcam" or "rtsp"
   streamUrl            String          @default("0")
   trackingEnabled      Boolean         @default(true)
-  status               String          @default("Offline") // "Offline", "Idle", "Monitoring", "Recording", "Processing", "Error"
+  isActive             Boolean         @default(true)
+  status               String          @default("Offline") // "Offline", "Idle", "Monitoring", "Recording", "Processing", "Error", "Disabled"
   motionThreshold      Int             @default(25)
   pixelChangeThreshold Float           @default(0.02)
   detectPerson         Boolean         @default(true)

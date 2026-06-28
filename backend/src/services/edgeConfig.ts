@@ -70,10 +70,11 @@ export function buildConfigurePayload(
   device: Pick<EdgeDevice, 'config'>,
   streams: CameraStream[],
 ) {
+  const activeStreams = streams.filter((stream) => stream.isActive !== false);
   return {
     type: 'configure' as const,
     deviceConfig: device.config ?? {},
-    streams: streams.map((stream) => ({
+    streams: activeStreams.map((stream) => ({
       streamId: stream.streamId,
       name: stream.name,
       cameraType: stream.cameraType,

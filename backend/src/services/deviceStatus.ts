@@ -28,11 +28,15 @@ export function getEffectiveStreamStatus(
   storedStatus: string,
   deviceOnline: boolean,
   trackingEnabled: boolean,
+  isActive: boolean = true,
 ): string {
+  if (!isActive) {
+    return 'Disabled';
+  }
   if (!deviceOnline) {
     return 'Offline';
   }
-  if (storedStatus === 'Offline') {
+  if (storedStatus === 'Offline' || storedStatus === 'Disabled') {
     return trackingEnabled ? 'Monitoring' : 'Idle';
   }
   return storedStatus;

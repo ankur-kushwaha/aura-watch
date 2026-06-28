@@ -100,6 +100,8 @@ export function LiveWallTab({ streams = [], onUpdateStreamConfig }: LiveWallTabP
   const [selectedCameraCode, setSelectedCameraCode] = useState<string | null>(null);
   const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
 
+  const activeStreams = streams.filter((stream) => stream.isActive !== false);
+
   const handleRefreshStream = (streamId: string) => {
     setRefreshKeys((prev) => ({
       ...prev,
@@ -109,8 +111,8 @@ export function LiveWallTab({ streams = [], onUpdateStreamConfig }: LiveWallTabP
 
 
   // Derive actual camera feeds from backend streams
-  const actualCameras: CameraFeed[] = (streams && streams.length > 0)
-    ? streams.map((stream, idx) => {
+  const actualCameras: CameraFeed[] = (activeStreams && activeStreams.length > 0)
+    ? activeStreams.map((stream, idx) => {
       const isOnline = stream.status !== 'Offline' && stream.status !== 'Error';
       return {
         code: `C-${String(idx + 1).padStart(2, '0')}`,
@@ -139,7 +141,7 @@ export function LiveWallTab({ streams = [], onUpdateStreamConfig }: LiveWallTabP
   });
 
   const selectedFeed = actualCameras.find((c) => c.code === selectedCameraCode) || null;
-  const selectedStream = selectedFeed && streams ? streams.find((s) => s.streamId === selectedFeed.streamId) : null;
+  const selectedStream = selectedFeed && activeStreams ? activeStreams.find((s) => s.streamId === selectedFeed.streamId) : null;
 
 
 
@@ -205,7 +207,7 @@ export function LiveWallTab({ streams = [], onUpdateStreamConfig }: LiveWallTabP
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
             {filteredFeeds.map((feed) => {
               const isSelected = selectedCameraCode === feed.code;
-              const stream = feed.streamId ? streams.find((s) => s.streamId === feed.streamId) : undefined;
+              const stream = feed.streamId ? activeStreams.find((s) => s.streamId === feed.streamId) : undefined;
               return (
                 <div
                   key={feed.code}
@@ -223,7 +225,7 @@ export function LiveWallTab({ streams = [], onUpdateStreamConfig }: LiveWallTabP
                     {feed.streamId && feed.isOnline && feed.streamUrl ? (
                       <iframe
                         key={`${feed.streamId}-${refreshKeys[feed.streamId] || 0}`}
-                        src={getWebRtcPreviewUrl(streams.find((s) => s.streamId === feed.streamId)!)!}
+                        src={getWebRtcPreviewUrl(activeStreams.find((s) => s.streamId === feed.streamId)!)!}
                         title={`Live Stream ${feed.name}`}
                         className="w-full h-full border-0 rounded-lg block bg-[#090d16]"
                         allow="autoplay; fullscreen"
@@ -395,7 +397,7 @@ export function LiveWallTab({ streams = [], onUpdateStreamConfig }: LiveWallTabP
         {selectedFeed && selectedStream ? (
           <EditStreamForm
             stream={selectedStream}
-            allStreamIds={streams.map((s) => s.streamId)}
+            allStreamIds={activeStreams.map((s) => s.streamId)}
             onClose={() => setSelectedCameraCode(null)}
             onSaved={async () => {
               if (onUpdateStreamConfig) {

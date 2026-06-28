@@ -1354,6 +1354,19 @@ wss.on('connection', async (ws: WebSocket, req) => {
     const streams = await prisma.cameraStream.findMany({ where: { deviceId } });
     for (const stream of streams) {
       streamDeviceCache.set(stream.streamId, deviceId);
+      if (stream.isActive === false) {
+        await prisma.cameraStream.update({
+          where: { streamId: stream.streamId },
+          data: { status: 'Disabled' },
+        });
+        broadcastToSubscribedUIs(deviceId, {
+          type: 'status',
+          streamId: stream.streamId,
+          status: 'Disabled',
+          cameraConfig: stream,
+        });
+        continue;
+      }
       const streamStatus = stream.trackingEnabled ? 'Monitoring' : 'Idle';
       await prisma.cameraStream.update({
         where: { streamId: stream.streamId },
@@ -1370,7 +1383,8 @@ wss.on('connection', async (ws: WebSocket, req) => {
       const device = await prisma.edgeDevice.findUnique({ where: { deviceId } });
       if (device) {
         const payload = buildConfigurePayload(device, streams);
-        console.log(`[WS Hub] Syncing ${streams.length} stream config(s) to edge device: ${deviceId}`);
+        const activeCount = streams.filter((s) => s.isActive !== false).length;
+        console.log(`[WS Hub] Syncing ${activeCount} active stream config(s) to edge device: ${deviceId}`);
         ws.send(JSON.stringify(payload));
       }
     }
@@ -1606,6 +1620,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
               stream.status || 'Offline',
               isOnline,
               stream.trackingEnabled,
+              stream.isActive,
             );
             ws.send(JSON.stringify({
               type: 'status',
@@ -1629,6 +1644,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
               stream.status || 'Offline',
               isOnline,
               stream.trackingEnabled,
+              stream.isActive,
             );
 
             ws.send(JSON.stringify({

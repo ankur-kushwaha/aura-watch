@@ -190,6 +190,26 @@ export function DevicesStreamsTab({
     };
   };
 
+  const handleToggleStreamActive = async (stream: CameraStream, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextActive = stream.isActive === false;
+    const actionLabel = nextActive ? 'activate' : 'deactivate';
+    if (!confirm(`${nextActive ? 'Activate' : 'Deactivate'} camera "${stream.name}"?`)) return;
+
+    try {
+      const res = await apiFetch(`/streams/${stream.streamId}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: nextActive }),
+      });
+      if (res.ok) {
+        await fetchDevices();
+      }
+    } catch (err) {
+      console.error(`Failed to ${actionLabel} camera`, err);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-8 animate-[slideUp_0.3s_ease-out] w-full min-h-[calc(100vh-140px)] pb-10">
       {/* DEVICES SECTION */}
@@ -380,7 +400,8 @@ export function DevicesStreamsTab({
               <tbody>
                 {streams.map((stream) => {
                   const device = devices.find((d) => d.deviceId === stream.deviceId);
-                  const isStreamLive = stream.status !== 'Offline' && stream.status !== 'Error';
+                  const isDisabled = stream.isActive === false;
+                  const isStreamLive = !isDisabled && stream.status !== 'Offline' && stream.status !== 'Error' && stream.status !== 'Disabled';
                   const meta = getStreamMeta(stream);
 
                   return (
@@ -413,11 +434,21 @@ export function DevicesStreamsTab({
                       {/* STATUS Badge */}
                       <td className="py-4 px-4 text-center">
                         <div className="flex items-center justify-center">
-                          <span className={`inline-flex items-center gap-1 text-[0.7rem] font-bold px-2 py-0.5 rounded-full ${isStreamLive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-[rgba(255,255,255,0.05)] text-text-muted'
+                          <span className={`inline-flex items-center gap-1 text-[0.7rem] font-bold px-2 py-0.5 rounded-full ${
+                            isDisabled
+                              ? 'bg-amber-500/10 text-amber-400'
+                              : isStreamLive
+                                ? 'bg-emerald-500/10 text-emerald-400'
+                                : 'bg-[rgba(255,255,255,0.05)] text-text-muted'
                             }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${isStreamLive ? 'bg-emerald-400 animate-pulse' : 'bg-text-muted'
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              isDisabled
+                                ? 'bg-amber-400'
+                                : isStreamLive
+                                  ? 'bg-emerald-400 animate-pulse'
+                                  : 'bg-text-muted'
                               }`} />
-                            {isStreamLive ? 'live' : 'offline'}
+                            {isDisabled ? 'disabled' : isStreamLive ? 'live' : 'offline'}
                           </span>
                         </div>
                       </td>
@@ -426,7 +457,18 @@ export function DevicesStreamsTab({
                       <td className="py-4 px-5 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => {
+                            onClick={(e) => handleToggleStreamActive(stream, e)}
+                            className={`py-1 px-3 border rounded-lg text-[0.72rem] font-bold transition-all cursor-pointer ${
+                              isDisabled
+                                ? 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-400 hover:text-emerald-300'
+                                : 'bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.07)] border-border-glass text-text-secondary hover:text-white'
+                            }`}
+                          >
+                            {isDisabled ? 'Activate' : 'Deactivate'}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setSelectedEditStream(stream);
                               setEditStreamOpen(true);
                             }}

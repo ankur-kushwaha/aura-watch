@@ -131,6 +131,7 @@ export interface CameraStream {
   cameraType: 'webcam' | 'rtsp';
   streamUrl: string;
   trackingEnabled: boolean;
+  isActive?: boolean;
   status: string;
   lastHeartbeat: string;
   motionThreshold: number;

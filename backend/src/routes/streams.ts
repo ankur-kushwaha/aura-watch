@@ -52,6 +52,7 @@ router.get('/', async (req: Request, res: Response) => {
           stream.status,
           onlineSet.has(stream.deviceId),
           stream.trackingEnabled,
+          stream.isActive,
         ),
       })),
     );
@@ -95,6 +96,7 @@ router.get('/device/:deviceId', async (req: Request, res: Response) => {
           stream.status,
           deviceOnline,
           stream.trackingEnabled,
+          stream.isActive,
         ),
       })),
     );
@@ -215,6 +217,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
     locationName,
     latitude,
     longitude,
+    isActive,
   } = req.body;
 
   if (!req.auth) {
@@ -230,6 +233,14 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Camera stream not found' });
     }
 
+    const nextIsActive = isActive !== undefined ? Boolean(isActive) : existing.isActive;
+    const nextStatus =
+      isActive === false
+        ? 'Disabled'
+        : status !== undefined
+          ? status
+          : existing.status;
+
     const updatedStream = await prisma.cameraStream.update({
       where: { streamId },
       data: {
@@ -241,7 +252,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
         pixelChangeThreshold: pixelChangeThreshold !== undefined ? Number(pixelChangeThreshold) : existing.pixelChangeThreshold,
         detectPerson: detectPerson !== undefined ? Boolean(detectPerson) : existing.detectPerson,
         detectVehicle: detectVehicle !== undefined ? Boolean(detectVehicle) : existing.detectVehicle,
-        status: status !== undefined ? status : existing.status,
+        status: nextStatus,
         streamHost: streamHost !== undefined ? streamHost : existing.streamHost,
         resolution: resolution !== undefined ? (resolution ? String(resolution).trim() : null) : existing.resolution,
         fps: fps !== undefined ? (fps ? String(fps).trim() : null) : existing.fps,
@@ -254,6 +265,7 @@ router.post('/:streamId/config', async (req: Request, res: Response) => {
         locationName: locationName !== undefined ? (locationName ? String(locationName).trim() : null) : existing.locationName,
         latitude: latitude !== undefined ? (latitude !== null ? Number(latitude) : null) : existing.latitude,
         longitude: longitude !== undefined ? (longitude !== null ? Number(longitude) : null) : existing.longitude,
+        isActive: nextIsActive,
       },
     });
 
