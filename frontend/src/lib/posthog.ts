@@ -8,7 +8,7 @@ export const initPostHog = () => {
     posthog.init(POSTHOG_KEY, {
       api_host: POSTHOG_HOST,
       person_profiles: 'identified_only',
-      capture_pageview: false,
+      capture_pageview: 'history_change',
       loaded: (ph) => {
         if (import.meta.env.DEV) {
           ph.debug();

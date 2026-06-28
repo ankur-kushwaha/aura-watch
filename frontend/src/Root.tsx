@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import App from './App.tsx';
 import Admin from './Admin.tsx';
 import Landing from './Landing.tsx';
@@ -13,8 +13,6 @@ import Pricing from './Pricing.tsx';
 import Privacy from './Privacy.tsx';
 import { isLoggedIn } from './auth.ts';
 import ScrollToTop from './components/ScrollToTop.tsx';
-import { useEffect } from 'react';
-import posthog from 'posthog-js';
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   if (isLoggedIn()) {
@@ -30,23 +28,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return children;
 }
 
-function PostHogPageviewTracker() {
-  const location = useLocation();
-
-  useEffect(() => {
-    if (import.meta.env.VITE_POSTHOG_KEY) {
-      posthog.capture('$pageview');
-    }
-  }, [location]);
-
-  return null;
-}
-
 export default function Root() {
   return (
     <BrowserRouter>
       <ScrollToTop />
-      <PostHogPageviewTracker />
       <Routes>
         <Route
           path="/"
