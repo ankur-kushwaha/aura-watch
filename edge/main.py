@@ -805,6 +805,10 @@ class EdgeAgent:
                 with p_data["clip_encoder_lock"]:
                     return p_data.get("clip_encoder")
 
+            def is_clip_recording() -> bool:
+                p_data = self.pipelines.get(stream_id)
+                return bool(p_data and p_data.get("is_recording"))
+
             def on_preview(frame):
                 if not self.live_preview_enabled:
                     return
@@ -835,6 +839,7 @@ class EdgeAgent:
                 camera=camera,
                 settings=settings,
                 get_clip_encoder=get_clip_encoder,
+                is_clip_recording=is_clip_recording,
                 on_preview_frame=on_preview if self.live_preview_enabled else None,
                 on_motion_start=on_motion_start,
                 on_motion_active=on_motion_active,
@@ -1139,6 +1144,8 @@ class EdgeAgent:
 
                 since_motion = time.monotonic() - last_motion_at
                 if since_motion >= recording_end_grace_sec:
+                    if min_upload_duration_sec > 0 and elapsed < min_upload_duration_sec:
+                        continue
                     self.send_log(
                         f"[{name}] No motion for {recording_end_grace_sec:.0f}s "
                         f"(recorded {elapsed:.1f}s) — finalizing clip."

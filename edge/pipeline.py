@@ -37,6 +37,7 @@ FrameCallback = Callable[[np.ndarray], None]
 MotionStartCallback = Callable[[float, Callable[[], list[np.ndarray]]], None]
 MotionActiveCallback = Callable[[], None]
 ClipEncoderGetter = Callable[[], Optional[ClipEncoder]]
+IsClipRecordingCallback = Callable[[], bool]
 
 
 class VisionPipeline:
@@ -47,6 +48,7 @@ class VisionPipeline:
         camera: CameraCapture,
         settings: PipelineSettings,
         get_clip_encoder: Optional[ClipEncoderGetter] = None,
+        is_clip_recording: Optional[IsClipRecordingCallback] = None,
         on_preview_frame: Optional[FrameCallback] = None,
         on_motion_start: Optional[MotionStartCallback] = None,
         on_motion_active: Optional[MotionActiveCallback] = None,
@@ -55,6 +57,7 @@ class VisionPipeline:
         self.camera = camera
         self.settings = settings
         self.get_clip_encoder = get_clip_encoder
+        self.is_clip_recording = is_clip_recording
         self.on_preview_frame = on_preview_frame
         self.on_motion_start = on_motion_start
         self.on_motion_active = on_motion_active
@@ -177,18 +180,26 @@ class VisionPipeline:
 
             if self.settings.tracking_enabled:
                 motion_detected, ratio = self._motion.detect(frame)
-                is_recording = False
-                if self.get_clip_encoder:
-                    encoder = self.get_clip_encoder()
-                    is_recording = encoder is not None and encoder.is_running()
+                clip_recording = (
+                    self.is_clip_recording() if self.is_clip_recording else False
+                )
 
-                if motion_detected:
-                    if not self._motion_active or not is_recording:
+                if clip_recording:
+                    # During an active clip, use a lower keepalive threshold so subtle
+                    # frame changes (slow movement, compression drift) still extend
+                    # recording instead of tripping the end-grace timer early.
+                    keepalive_ratio = max(
+                        self.settings.pixel_change_threshold * 0.25, 0.002
+                    )
+                    if ratio >= keepalive_ratio:
+                        self._motion_active = True
+                        if self.on_motion_active:
+                            self.on_motion_active()
+                elif motion_detected:
+                    if not self._motion_active:
                         self._motion_active = True
                         if self.on_motion_start:
                             self.on_motion_start(ratio, self._preroll.snapshot)
-                    elif self.on_motion_active:
-                        self.on_motion_active()
                 else:
                     self._motion_active = False
 
