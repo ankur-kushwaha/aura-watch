@@ -7,6 +7,7 @@ import { bindAIServiceMethods } from './bindService';
 import { AIService, Tool, ToolExecutionResult } from './types';
 import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
+import { createMonitoredOpenAIClient, POSTHOG_VISION_PRIVACY } from './posthogClients';
 
 const execAsync = promisify(exec);
 
@@ -20,7 +21,7 @@ export class OpenRouterService implements AIService {
   private client: OpenAI;
 
   constructor() {
-    this.client = new OpenAI({
+    this.client = createMonitoredOpenAIClient({
       apiKey: process.env.OPENROUTER_API_KEY,
       baseURL: 'https://openrouter.ai/api/v1',
       defaultHeaders: {
@@ -42,39 +43,26 @@ export class OpenRouterService implements AIService {
     return EMBEDDING_MODEL;
   }
 
-  private getOpenRouterHeaders(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://camera-active.local',
-      'X-Title': process.env.OPENROUTER_APP_NAME || 'Camera Active',
-    };
-  }
-
   private async chatCompletion(
     model: string,
     messages: any[],
-    options?: { tools?: any[]; jsonMode?: boolean },
+    options?: { tools?: any[]; jsonMode?: boolean; visionPrivacy?: boolean },
   ): Promise<any> {
-    const body: Record<string, unknown> = { model, messages };
-    if (options?.tools) body.tools = options.tools;
-    if (options?.jsonMode) body.response_format = { type: 'json_object' };
+    const params: Record<string, unknown> = { model, messages };
+    if (options?.tools) params.tools = options.tools;
+    if (options?.jsonMode) params.response_format = { type: 'json_object' };
+    if (options?.visionPrivacy) Object.assign(params, POSTHOG_VISION_PRIVACY);
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: this.getOpenRouterHeaders(),
-      body: JSON.stringify(body),
-    });
-
-    const data = await response.json() as any;
-    if (!response.ok) {
-      const error: any = new Error(data?.error?.message || `OpenRouter request failed (${response.status})`);
-      error.status = response.status;
-      error.code = data?.error?.code;
-      throw error;
+    try {
+      return await this.client.chat.completions.create(params as any);
+    } catch (error: any) {
+      const status = error?.status;
+      const code = error?.code ?? error?.error?.code;
+      const wrapped: any = new Error(error?.error?.message || error?.message || `OpenRouter request failed (${status || 'unknown'})`);
+      wrapped.status = status;
+      wrapped.code = code;
+      throw wrapped;
     }
-
-    return data;
   }
 
   private encodeVideoToBase64(filepath: string): string {
@@ -146,7 +134,7 @@ export class OpenRouterService implements AIService {
           },
         ],
       },
-    ], { jsonMode: true });
+    ], { jsonMode: true, visionPrivacy: true });
 
     const raw = data.choices[0].message?.content || '';
     return normalizeAiSummaryJson(raw);
@@ -178,7 +166,7 @@ export class OpenRouterService implements AIService {
           })),
         ],
       },
-    ], { jsonMode: true });
+    ], { jsonMode: true, visionPrivacy: true });
 
     const raw = data.choices[0].message?.content || '';
     return normalizeAiSummaryJson(raw);

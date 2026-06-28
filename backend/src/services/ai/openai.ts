@@ -7,6 +7,7 @@ import { bindAIServiceMethods } from './bindService';
 import { AIService, Tool, ToolExecutionResult } from './types';
 import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
+import { createMonitoredOpenAIClient, POSTHOG_VISION_PRIVACY } from './posthogClients';
 
 const execAsync = promisify(exec);
 
@@ -14,7 +15,7 @@ export class OpenAIService implements AIService {
   private openai: OpenAI;
 
   constructor() {
-    this.openai = new OpenAI({
+    this.openai = createMonitoredOpenAIClient({
       apiKey: process.env.OPENAI_API_KEY,
     });
   }
@@ -109,6 +110,7 @@ export class OpenAIService implements AIService {
           },
         ],
         response_format: { type: 'json_object' },
+        ...POSTHOG_VISION_PRIVACY,
       });
 
       const raw = response.choices[0].message?.content || '';

@@ -4,14 +4,16 @@ import { bindAIServiceMethods } from './bindService';
 import { AIService, Tool, ToolExecutionResult } from './types';
 import { buildVideoAnalysisPrompt, normalizeAiSummaryJson } from './clipAiAnalysis';
 import { formatClipContextSummary } from '../yoloSummary';
+import { createGeminiClients, POSTHOG_VISION_PRIVACY } from './posthogClients';
 
 export class GeminiService implements AIService {
-  private ai: GoogleGenAI;
+  private fileClient: GoogleGenAI;
+  private models: GoogleGenAI['models'];
 
   constructor() {
-    this.ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-    });
+    const geminiClients = createGeminiClients(process.env.GEMINI_API_KEY || '');
+    this.fileClient = geminiClients.files;
+    this.models = geminiClients.models;
   }
 
   /**
@@ -26,7 +28,7 @@ export class GeminiService implements AIService {
     console.log(`[Gemini] Starting video upload for: ${filepath}`);
 
     // 1. Upload the video file
-    const uploadResult = await this.ai.files.upload({
+    const uploadResult = await this.fileClient.files.upload({
       file: filepath,
       config: {
         mimeType: 'video/mp4',
@@ -40,14 +42,14 @@ export class GeminiService implements AIService {
     console.log(`[Gemini] Uploaded successfully, file reference ID: ${fileId}. Waiting for processing...`);
 
     // 2. Poll until the file state is ACTIVE
-    let fileInfo = await this.ai.files.get({ name: fileId });
+    let fileInfo = await this.fileClient.files.get({ name: fileId });
     let attempts = 0;
     const maxAttempts = 24; // 2 minutes max
 
     while (fileInfo.state === 'PROCESSING' && attempts < maxAttempts) {
       console.log(`[Gemini] Processing state: ${fileInfo.state}. Waiting 5 seconds...`);
       await new Promise((resolve) => setTimeout(resolve, 5000));
-      fileInfo = await this.ai.files.get({ name: fileId });
+      fileInfo = await this.fileClient.files.get({ name: fileId });
       attempts++;
     }
 
@@ -58,7 +60,7 @@ export class GeminiService implements AIService {
     if (fileInfo.state !== 'ACTIVE') {
       // If it failed or timed out, attempt cleanup and throw
       try {
-        await this.ai.files.delete({ name: fileId });
+        await this.fileClient.files.delete({ name: fileId });
       } catch (e) { }
       throw new Error(`Gemini video processing failed or timed out. State: ${fileInfo.state}`);
     }
@@ -67,7 +69,7 @@ export class GeminiService implements AIService {
 
     try {
       // 3. Generate content from the video
-      const response = await this.ai.models.generateContent({
+      const response = await this.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: [
           {
@@ -81,6 +83,7 @@ export class GeminiService implements AIService {
         config: {
           responseMimeType: 'application/json',
         },
+        ...POSTHOG_VISION_PRIVACY,
       });
 
       const raw = response.text || '';
@@ -92,7 +95,7 @@ export class GeminiService implements AIService {
       // 4. Cleanup the file from Gemini storage
       try {
         console.log(`[Gemini] Cleaning up file reference ${fileId} from Gemini storage...`);
-        await this.ai.files.delete({ name: fileId });
+        await this.fileClient.files.delete({ name: fileId });
       } catch (cleanupError) {
         console.error(`[Gemini] Failed to delete file reference ${fileId} from Gemini:`, cleanupError);
       }
@@ -107,7 +110,7 @@ export class GeminiService implements AIService {
     console.log(`[Gemini] Generating embedding for text: "${text.substring(0, 40)}..."`);
 
     try {
-      const response = await this.ai.models.embedContent({
+      const response = await this.models.embedContent({
         model: 'gemini-embedding-2',
         contents: text,
         config: {
@@ -152,7 +155,7 @@ If the summaries do not contain enough information to answer the question, state
 Cite the relevant Clips (e.g. "[Clip 1]", "[Clip 2]") in your response where appropriate. Keep the answer concise and helpful.`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
       });
@@ -247,7 +250,7 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
     };
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: contents,
         config: {
@@ -350,7 +353,7 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
         ];
 
         console.log('[Gemini] Resubmitting tool response(s) to get final answer...');
-        const secondResponse = await this.ai.models.generateContent({
+        const secondResponse = await this.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: secondContents,
           config: {
@@ -423,7 +426,7 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
       while (loop && iterations < maxIterations) {
         iterations++;
         console.log('[Gemini] Calling generateContent in tool loop...');
-        const response = await this.ai.models.generateContent({
+        const response = await this.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: contents,
           config: {
@@ -497,7 +500,7 @@ Cite the relevant sources (e.g. "[Clip 1]", "[Detection 1]") in your response wh
 
       if (iterations >= maxIterations && loop) {
         console.warn(`[Gemini] Reached maximum tool loop iterations (${maxIterations}). Terminating.`);
-        const finalResponse = await this.ai.models.generateContent({
+        const finalResponse = await this.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: contents,
           config: {

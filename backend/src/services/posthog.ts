@@ -1,7 +1,7 @@
 import { PostHog } from 'posthog-node';
 
 const POSTHOG_KEY = process.env.POSTHOG_KEY;
-const POSTHOG_HOST = process.env.POSTHOG_HOST || 'https://us.i.posthog.com';
+const POSTHOG_HOST = process.env.POSTHOG_HOST || 'https://eu.i.posthog.com';
 
 let posthogClient: PostHog | null = null;
 
@@ -39,3 +39,5 @@ export const shutdownPostHog = async () => {
     await posthogClient.shutdown();
   }
 };
+
+export const getPostHogClient = (): PostHog | null => posthogClient;

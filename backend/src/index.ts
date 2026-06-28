@@ -1,13 +1,14 @@
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import * as http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as path from 'path';
 import * as fs from 'fs';
-import dotenv from 'dotenv';
-
-// Load environment variables
-dotenv.config();
 
 import clipsRouter, { registerOnClipDeleted } from './routes/clips';
 import ragRouter from './routes/rag';
