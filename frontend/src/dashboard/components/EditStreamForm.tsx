@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Loader2, Film, Server } from 'lucide-react';
 import { apiFetch } from '../../api';
+import { DEFAULT_STREAM_CONFIG } from '../../edgeConfig';
 import { fetchAlertRules, updateAlertRule, type AlertRule } from '../../alertRulesApi';
 import { ToggleSwitch } from './ToggleSwitch';
 import type { CameraStream } from '../types';
@@ -28,6 +29,7 @@ export function EditStreamForm({ stream, allStreamIds = [], onClose, onSaved }: 
   // Standard AI Detection Toggles
   const [personDetection, setPersonDetection] = useState(true);
   const [vehicleDetection, setVehicleDetection] = useState(true);
+  const [edgeYoloEnabled, setEdgeYoloEnabled] = useState(DEFAULT_STREAM_CONFIG.edgeYoloEnabled);
   const [loiteringAlert, setLoiteringAlert] = useState(true);
   const [crossCameraReid, setCrossCameraReid] = useState(true);
   const [plateRecognition, setPlateRecognition] = useState(true);
@@ -46,6 +48,7 @@ export function EditStreamForm({ stream, allStreamIds = [], onClose, onSaved }: 
       setStreamUrl(stream.streamUrl);
       setPersonDetection(stream.detectPerson ?? true);
       setVehicleDetection(stream.detectVehicle ?? true);
+      setEdgeYoloEnabled(stream.edgeYoloEnabled ?? DEFAULT_STREAM_CONFIG.edgeYoloEnabled);
 
       setResolution(stream.resolution || '4MP');
       setFps(stream.fps || '25');
@@ -118,6 +121,7 @@ export function EditStreamForm({ stream, allStreamIds = [], onClose, onSaved }: 
           pixelChangeThreshold: stream.pixelChangeThreshold,
           detectPerson: personDetection,
           detectVehicle: vehicleDetection,
+          edgeYoloEnabled: stream.trackingEnabled ? edgeYoloEnabled : false,
           resolution,
           fps,
           codec,
@@ -294,6 +298,13 @@ export function EditStreamForm({ stream, allStreamIds = [], onClose, onSaved }: 
         <div className="flex flex-col gap-2 bg-[rgba(15,23,42,0.25)] p-3 rounded-xl border border-border-glass">
           <ToggleSwitch checked={personDetection} onChange={setPersonDetection} label="Person detection" />
           <ToggleSwitch checked={vehicleDetection} onChange={setVehicleDetection} label="Vehicle detection" />
+          <ToggleSwitch
+            checked={stream.trackingEnabled && edgeYoloEnabled}
+            onChange={setEdgeYoloEnabled}
+            label="Edge YOLO annotation"
+            disabled={!stream.trackingEnabled}
+            description="Experimental — draws boxes on recorded clips (YOLO11n ONNX on Pi)"
+          />
           {/* <ToggleSwitch checked={loiteringAlert} onChange={setLoiteringAlert} label="Loitering alert" /> */}
           {/* <ToggleSwitch checked={crossCameraReid} onChange={setCrossCameraReid} label="Cross-camera ReID" /> */}
           {/* <ToggleSwitch checked={plateRecognition} onChange={setPlateRecognition} label="Plate recognition" /> */}
