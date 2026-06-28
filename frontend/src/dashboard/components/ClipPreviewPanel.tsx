@@ -1,14 +1,12 @@
-import { Activity, Clock, Cpu, Fingerprint, Loader2, ScanSearch, ScrollText, Sparkles, UserCircle, Car, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, Clock, Cpu, Loader2, ScanSearch, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import type { OrgSettings } from '../../api';
 import type { ClipObjectDetection, ClipReidLog, CropClipPlayback, VideoClip } from '../types';
 import { getClipDetectionCount } from '../utils/clips';
-import { formatClipDuration, formatClipOffsetMs, formatDate } from '../utils/format';
+import { formatClipDuration, formatDate } from '../utils/format';
 import { mediaUrl } from '../utils/media';
 import { tryParseClipAiAnalysis } from '../utils/summary';
-import { isVehicleClass } from '../utils';
-import { CropThumbnail } from './CropThumbnail';
-import { IdsInfoIcon, InlineCopyIds } from './IdsInfoIcon';
+import { InlineCopyIds } from './IdsInfoIcon';
 import { buildTimelineIdEntries } from './idEntries';
 
 export interface ClipPreviewPanelProps {
@@ -32,15 +30,9 @@ export function ClipPreviewPanel({
   videoHeightClass = 'h-[min(38vh,260px)] lg:h-[min(82vh,640px)]',
   deviceName,
   orgSettings,
-  loadingClipDetections,
-  clipDetections,
-  clipReidLog,
   generatingAiSummary = false,
   aiSummaryError = null,
   onGenerateAiSummary,
-  onOpenPersonRefs,
-  onCropPreview,
-  onPlayDetectionClip,
 }: ClipPreviewPanelProps) {
   const selectedDurationLabel = formatClipDuration(clip.duration);
   const selectedDetectionCount = getClipDetectionCount(clip);
@@ -48,8 +40,6 @@ export function ClipPreviewPanel({
   const aiAnalysis = tryParseClipAiAnalysis(clip.aiSummary);
   const canGenerateAiSummary = orgSettings.aiChat && !!onGenerateAiSummary;
   const [videoError, setVideoError] = useState<string | null>(null);
-  const [reidLogOpenClipId, setReidLogOpenClipId] = useState<string | null>(null);
-  const reidLogOpen = reidLogOpenClipId === clip.id;
 
   return (
     <div className="flex flex-col gap-3 min-h-0 h-full">
@@ -176,154 +166,6 @@ export function ClipPreviewPanel({
             )}
             {aiSummaryError && (
               <p className="text-[0.72rem] text-red-400 mt-1.5">{aiSummaryError}</p>
-            )}
-          </div>
-        )}
-        {false && orgSettings.reidProcessing && (loadingClipDetections || clipDetections.length > 0) && (
-          <div className="bg-[rgba(56,189,248,0.05)] border border-[rgba(56,189,248,0.15)] rounded-lg p-2.5">
-            <p className="text-[0.7rem] font-bold text-[#38bdf8] uppercase mb-2 tracking-wider flex items-center gap-1">
-              <Fingerprint size={12} />Detected Objects
-            </p>
-            {loadingClipDetections ? (
-              <p className="text-[0.75rem] text-text-muted">Loading detections…</p>
-            ) : clipDetections.length === 0 ? (
-              <p className="text-[0.75rem] text-text-muted mb-2">
-                No objects tracked during this clip.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-2 mb-2">
-                {clipDetections.map((obj) => {
-                  const detectionOffsetLabel = formatClipOffsetMs(obj.clipOffsetMs);
-                  const isReidEligible = obj.className === 'person' || isVehicleClass(obj.className);
-                  const isClickable = isReidEligible && !!obj.detectionId;
-                  const hasIdentity = !!obj.identityId;
-                  const personIds = [
-                    ...(obj.identityId ? [{ label: 'identity', value: obj.identityId }] : []),
-                    ...(obj.detectionId ? [{ label: 'detection', value: obj.detectionId }] : []),
-                  ];
-                  return (
-                    <div
-                      key={obj.trackId}
-                      role={isClickable ? 'button' : undefined}
-                      tabIndex={isClickable ? 0 : undefined}
-                      onClick={isClickable ? () => onOpenPersonRefs(obj) : undefined}
-                      onKeyDown={isClickable ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          onOpenPersonRefs(obj);
-                        }
-                      } : undefined}
-                      className={`flex flex-col gap-1.5 text-left w-full rounded-lg px-2 py-2 -mx-1 border border-transparent ${
-                        isClickable
-                          ? 'hover:bg-[rgba(56,189,248,0.08)] hover:border-[rgba(56,189,248,0.15)] cursor-pointer'
-                          : 'cursor-default'
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center gap-2 text-[0.78rem] text-text-secondary">
-                        {obj.cropFilename && (
-                          <CropThumbnail
-                            filename={obj.cropFilename}
-                            onPreview={onCropPreview}
-                            onPlayClip={onPlayDetectionClip}
-                            clipPlayback={(obj.detectionId || obj.clipOffsetMs != null) ? {
-                              clipFilename: clip.filename,
-                              clipOffsetMs: obj.clipOffsetMs ?? 0,
-                              cameraName: clip.camera ?? 'Camera',
-                              detectionId: obj.detectionId,
-                            } : undefined}
-                          />
-                        )}
-                        <span className="bg-[rgba(56,189,248,0.12)] text-[#38bdf8] px-2 py-0.5 rounded-full border border-[rgba(56,189,248,0.2)] capitalize">
-                          {obj.className}
-                          {obj.confidence != null && obj.confidence > 0 && (
-                            <span className="text-text-muted ml-1">{Math.round(obj.confidence * 100)}%</span>
-                          )}
-                        </span>
-                        {obj.trackId > 0 && (
-                          <span className="text-[0.68rem] text-text-muted">track {obj.trackId}</span>
-                        )}
-                        {detectionOffsetLabel && (
-                          <span className="text-[0.68rem] text-text-muted flex items-center gap-0.5">
-                            <Clock size={10} />
-                            {detectionOffsetLabel}
-                          </span>
-                        )}
-                        {obj.className === 'person' && (obj.upperColor || obj.lowerColor) && (
-                          <span className="text-[0.68rem] text-text-muted capitalize">
-                            {[obj.upperColor, obj.lowerColor].filter(Boolean).join(' / ')}
-                          </span>
-                        )}
-                        {obj.vehicleColor && (
-                          <span className="text-[0.68rem] text-text-muted capitalize">
-                            {obj.vehicleColor}
-                          </span>
-                        )}
-                        {isClickable && (
-                          <span className="text-[0.65rem] text-primary ml-auto">
-                            {hasIdentity ? 'Timeline & matches →' : 'Identify & matches →'}
-                          </span>
-                        )}
-                      </div>
-                      {isReidEligible && (
-                        <div className="pl-12 flex flex-col gap-1">
-                          {obj.labelStatus === 'confirmed' && obj.label && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {isVehicleClass(obj.className) ? (
-                                <Car size={12} className="text-green-400 shrink-0" />
-                              ) : (
-                                <UserCircle size={12} className="text-green-400 shrink-0" />
-                              )}
-                              <span className="text-[0.72rem] text-green-400 font-medium">{obj.label}</span>
-                              <IdsInfoIcon ids={personIds} />
-                            </div>
-                          )}
-                          {(obj.labelStatus === 'none' || obj.labelStatus === 'suggested') && isClickable && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-[0.72rem] text-amber-400">
-                                Unassigned — click to create a new identity or link to existing
-                              </span>
-                              <IdsInfoIcon ids={personIds} />
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-        {false && orgSettings.reidProcessing && !loadingClipDetections && clipReidLog && clipReidLog.entries.length > 0 && (
-          <div className="rounded-lg border border-border-glass bg-[rgba(255,255,255,0.02)] p-2.5">
-            <button
-              type="button"
-              onClick={() => setReidLogOpenClipId(reidLogOpen ? null : clip.id)}
-              className="w-full flex items-center justify-between gap-2 text-left py-0.5 text-text-muted hover:text-text-secondary transition-colors"
-            >
-              <span className="text-[0.65rem] font-bold uppercase tracking-wider flex items-center gap-1">
-                <ScrollText size={11} />
-                {reidLogOpen ? 'Hide ReID Log' : `Show ReID Log (${clipReidLog.entries.length})`}
-              </span>
-              {reidLogOpen ? <ChevronUp size={14} className="shrink-0" /> : <ChevronDown size={14} className="shrink-0" />}
-            </button>
-            {reidLogOpen && (
-              <div className="flex flex-col gap-1 mt-2 pt-2 border-t border-border-glass">
-                {clipReidLog.entries.map((entry, idx) => (
-                  <p
-                    key={idx}
-                    className={`text-[0.72rem] leading-snug ${
-                      entry.level === 'warn'
-                        ? 'text-amber-400'
-                        : entry.level === 'error'
-                          ? 'text-red-400'
-                          : 'text-text-muted'
-                    }`}
-                  >
-                    {entry.message}
-                  </p>
-                ))}
-              </div>
             )}
           </div>
         )}
