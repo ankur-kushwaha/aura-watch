@@ -9,7 +9,12 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@posthog/ai/openai": ["node_modules/@posthog/ai/dist/openai/index.d.ts"],
+      "@posthog/ai/gemini": ["node_modules/@posthog/ai/dist/gemini/index.d.ts"]
+    }
   },
   "include": ["src/**/*"],
   "files": ["src/types/express.d.ts"]

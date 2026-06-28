@@ -1,7 +1,7 @@
 import OpenAINative from 'openai';
-import { OpenAI as PostHogOpenAI } from '@posthog/ai/dist/openai';
+import { OpenAI as PostHogOpenAI } from '@posthog/ai/openai';
 import { GoogleGenAI as NativeGoogleGenAI } from '@google/genai';
-import { GoogleGenAI as PostHogGoogleGenAI } from '@posthog/ai/dist/gemini';
+import { GoogleGenAI as PostHogGoogleGenAI } from '@posthog/ai/gemini';
 import { getPostHogClient } from '../posthog';
 
 type OpenAIClientOptions = ConstructorParameters<typeof OpenAINative>[0];
