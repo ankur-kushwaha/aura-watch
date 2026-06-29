@@ -561,12 +561,6 @@ async function processMotionClipMetadataInBackground(
   broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Motion clip recorded: ${filename}`);
 
   try {
-    trackEvent(orgId || deviceId, 'process_motion_clip_metadata', {
-      duration,
-      cameraName,
-      streamId,
-    });
-
     const summary = orgSettings?.videoSummary !== false
       ? buildYoloSummary([], cameraName, duration, frameWidth, frameHeight)
       : '';
@@ -586,6 +580,16 @@ async function processMotionClipMetadataInBackground(
 
     broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Saved clip metadata with ID: ${clipDb.id}`);
     broadcastNewClipToAllUIs(clipDb, deviceId, streamId);
+
+    // Emitted once the clip metadata is persisted so `status` is honest: a
+    // per-camera freshness alert keys off the absence of this event, and the
+    // `failed` counterpart on the catch path surfaces pipeline breakage.
+    trackEvent(orgId || deviceId, 'process_motion_clip_metadata', {
+      duration,
+      cameraName,
+      streamId,
+      status: 'success',
+    });
 
     let clipForNotifications = clipDb;
 
@@ -637,6 +641,13 @@ async function processMotionClipMetadataInBackground(
   } catch (error: any) {
     console.error(`[Pipeline Error] Failed to process motion clip ${filename}:`, error);
     broadcastLogToSubscribedUIs(deviceId, `[Pipeline Error] Failed to process ${filename}: ${error.message}`);
+    trackEvent(orgId || deviceId, 'process_motion_clip_metadata', {
+      duration,
+      cameraName,
+      streamId,
+      status: 'failed',
+      error: error?.message,
+    });
   } finally {
     for (const ws of uiClients) {
       if (ws.readyState === WebSocket.OPEN) {
@@ -698,6 +709,7 @@ async function processVideoClipInBackground(
       cameraName,
       streamId,
       trackEventCount: trackEvents.length,
+      status: 'success',
     });
     const reidFromClipPromise =
       orgSettings?.reidProcessing !== false && stream?.crossCameraReid !== false && trackEvents.length > 0
@@ -1059,6 +1071,7 @@ async function processVideoClipMetadataUpdateInBackground(
       cameraName,
       streamId,
       trackEventCount: trackEvents.length,
+      status: 'success',
     });
 
     const reidFromClipPromise =

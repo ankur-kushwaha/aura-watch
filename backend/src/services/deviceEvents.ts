@@ -1,6 +1,7 @@
 import prisma from './db';
 import type { Prisma } from '@prisma/client';
 import { fromDeviceEvent } from './notificationService';
+import { trackEvent } from './posthog';
 
 export type DeviceEventCategory = 'camera' | 'websocket' | 'device' | 'preview' | 'recovery' | 'update';
 export type DeviceEventSeverity = 'info' | 'warn' | 'error';
@@ -289,6 +290,33 @@ export async function recordDeviceEvent(input: RecordDeviceEventInput) {
       detail: input.detail ?? undefined,
     },
   });
+
+  // Mirror the event to PostHog so edge camera/connectivity failures
+  // (camera_unreachable, camera_timeout, camera_stall, ...) are observable and
+  // alertable. Previously these only landed in the DB + notifications and never
+  // reached product analytics, so a camera going dark was invisible in the data.
+  // Dedupe above already gates repeats, so this won't spam on a flapping camera.
+  try {
+    let cameraName = input.streamName ?? null;
+    if (!cameraName && resolvedStreamId) {
+      const stream = await prisma.cameraStream.findUnique({
+        where: { streamId: resolvedStreamId },
+        select: { name: true },
+      });
+      cameraName = stream?.name ?? null;
+    }
+    trackEvent(resolvedOrgId || input.deviceId, 'edge_device_event', {
+      category: input.category,
+      severity: input.severity,
+      eventType: input.eventType,
+      deviceId: input.deviceId,
+      streamId: resolvedStreamId,
+      cameraName: cameraName ?? 'Unknown Camera',
+      message: input.message,
+    });
+  } catch (err) {
+    console.error(`[DeviceEvents] PostHog tracking failed for ${input.eventType}:`, err);
+  }
 
   // Fire notification for warn/error events (non-blocking)
   void fromDeviceEvent(input.deviceId, {
