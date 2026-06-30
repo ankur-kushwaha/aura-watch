@@ -31,7 +31,7 @@ import alertRulesRouter from './routes/alertRules';
 import { requireAuth } from './middleware/auth';
 import { bootstrapMultiOrg } from './services/bootstrap';
 import { getDeviceOrgId } from './services/orgScope';
-import { trackEvent, shutdownPostHog } from './services/posthog';
+import { trackEvent, trackException, shutdownPostHog } from './services/posthog';
 import { getOrgSettings } from './services/orgSettings';
 import { initQdrant } from './services/qdrant';
 import { aggregateTrackEvents, enrichDetectedObjects, type ClipReidLog, type ClipReidLogEntry } from './services/clipDetections';
@@ -589,10 +589,25 @@ async function processMotionClipMetadataInBackground(
 
     let clipForNotifications = clipDb;
 
-    if (
-      orgSettings?.videoSummary !== false &&
-      stream?.aiSummaryEnabled !== false
-    ) {
+    // Record an outcome for the AI summary of every clip so the data can tell
+    // "summarization off" from "summarization erroring" from "summarization succeeded".
+    // Without this the failure path below is invisible: $ai_generation only fires once the
+    // LLM is actually called, so a failure *before* that call (edge fetch, transcode,
+    // content-type check) leaves no trace at all.
+    const aiSummaryDistinctId = orgId || deviceId;
+    const aiSummaryEventProps = {
+      clipId: clipDb.id,
+      filename,
+      cameraName,
+      streamId,
+      deviceId,
+      duration,
+    };
+
+    const aiSummaryEnabled =
+      orgSettings?.videoSummary !== false && stream?.aiSummaryEnabled !== false;
+
+    if (aiSummaryEnabled) {
       broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] Fetching clip from edge for AI summary...`);
       try {
         await generateClipAiSummary(clipDb.id);
@@ -602,15 +617,37 @@ async function processMotionClipMetadataInBackground(
         }
         broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generated for clip ${filename}.`);
         broadcastNewClipToAllUIs(clipForNotifications, deviceId, streamId);
+        trackEvent(aiSummaryDistinctId, 'process_motion_clip_ai_summary', {
+          ...aiSummaryEventProps,
+          status: 'success',
+        });
       } catch (err: any) {
+        // Surface the failure instead of swallowing it: emit an outcome event and an
+        // exception so a silent regression in the pre-LLM path is visible in the data.
         console.error(`[AI Summary] Edge fetch/summary failed for ${filename}:`, err);
         broadcastLogToSubscribedUIs(
           deviceId,
           `[${cameraName}] AI summary failed for ${filename}: ${err.message}`,
         );
+        trackEvent(aiSummaryDistinctId, 'process_motion_clip_ai_summary', {
+          ...aiSummaryEventProps,
+          status: 'error',
+          errorMessage: err?.message ?? String(err),
+          errorName: err?.name,
+          errorStatus: err?.status ?? err?.code,
+        });
+        trackException(err, aiSummaryDistinctId, aiSummaryEventProps);
       }
-    } else if (stream?.aiSummaryEnabled === false) {
-      broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generation disabled for this camera stream.`);
+    } else {
+      const reason = orgSettings?.videoSummary === false ? 'org_video_summary_disabled' : 'stream_ai_summary_disabled';
+      if (stream?.aiSummaryEnabled === false) {
+        broadcastLogToSubscribedUIs(deviceId, `[${cameraName}] AI summary generation disabled for this camera stream.`);
+      }
+      trackEvent(aiSummaryDistinctId, 'process_motion_clip_ai_summary', {
+        ...aiSummaryEventProps,
+        status: 'skipped',
+        reason,
+      });
     }
 
     if (orgId && orgSettings?.notificationsEnabled !== false) {
