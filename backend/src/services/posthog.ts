@@ -25,6 +25,22 @@ export const trackEvent = (distinctId: string, eventName: string, properties?: R
   }
 };
 
+/**
+ * Capture an error to PostHog error tracking. Used to surface failures that are
+ * otherwise swallowed by a catch (e.g. background AI summary generation), so they
+ * stop being invisible in the data.
+ */
+export const trackException = (
+  error: unknown,
+  distinctId: string,
+  properties?: Record<string, any>,
+) => {
+  if (posthogClient) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    posthogClient.captureException(err, distinctId, properties);
+  }
+};
+
 export const identifyUser = (distinctId: string, properties?: Record<string, any>) => {
   if (posthogClient) {
     posthogClient.identify({
